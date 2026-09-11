@@ -505,5 +505,10 @@ class Runner:
             return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
                           summary=f"release {tag} found but its tag could not be resolved: {target.why}",
                           detail=detail, **base)
-        return Record(verdict="pass", revision=target, revision_time=detail.get("published_at"), summary=summary,
+        target_time = self.mirrors.commit_time(repo, target)
+        if target_time is None:
+            return Record(verdict="unavailable", revision=target, revision_time=None,
+                          summary=f"release {tag} found but its commit time could not be read",
+                          detail=detail, **base)
+        return Record(verdict="pass", revision=target, revision_time=target_time, summary=summary,
                       detail=detail, **base)

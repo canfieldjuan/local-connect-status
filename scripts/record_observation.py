@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +26,17 @@ sys.path.insert(0, str(ROOT))
 from lcstatus import catalogue as catmod  # noqa: E402
 from lcstatus.evidence import Record, Store  # noqa: E402
 from lcstatus.sources import Mirrors  # noqa: E402
+
+
+def normalize_observed_at(value: str) -> str:
+    """Validate an operator timestamp and normalize it for chronological string ordering."""
+    try:
+        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("--observed-at must be an ISO-8601 timestamp") from exc
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise ValueError("--observed-at must include a timezone offset")
+    return observed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def main() -> int:
@@ -38,6 +50,11 @@ def main() -> int:
     ap.add_argument("--observed-at", required=True)
     ap.add_argument("--observed-by", required=True)
     a = ap.parse_args()
+    try:
+        observed_at = normalize_observed_at(a.observed_at)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     cat = catmod.load(ROOT / "catalogue.json")
     chk = cat["checks"].get(a.check)
@@ -59,9 +76,9 @@ def main() -> int:
     tasks = [t["id"] for t in cat["tasks"] if any(c["check"] == a.check for c in t["conditions"])]
     rec = Record(kind="installed_demo", repo=primary, revision=sha, revision_time=mirrors.commit_time(primary, sha),
                  verdict=a.verdict, platform=a.platform, condition_ids=conds, task_ids=tasks,
-                 participants=parts, summary=a.summary,
+                 participants=parts, summary=a.summary, recorded_at=observed_at,
                  source={"type": "manual_observation", "check": a.check, "artifact": a.artifact,
-                         "observed_by": a.observed_by, "observed_at": a.observed_at})
+                         "observed_by": a.observed_by, "observed_at": observed_at})
     store = Store(ROOT / "data" / "records.jsonl")
     print("stored" if store.add(rec) else "already recorded (identical)")
     return 0

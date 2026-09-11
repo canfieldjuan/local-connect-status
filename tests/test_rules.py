@@ -302,3 +302,44 @@ def test_catalogue_rejects_source_condition_wired_to_manual_runner(tmp_path: Pat
     path.write_text(json.dumps(catalogue))
     with pytest.raises(ValueError, match="cannot use 'manual_observation' runner"):
         load(path)
+
+
+
+def test_current_release_failure_beats_old_pass_with_inflated_publication_time():
+    old_pass = rec(
+        "release_artifact", "pass", cond="r1", repo="ip",
+        revision_time="2026-09-11T20:00:00+00:00",
+        recorded_at="2026-09-11T10:00:00+00:00",
+    )
+    current_failure = rec(
+        "release_artifact", "fail", cond="r1", repo="ip",
+        revision_time="2026-09-11T09:00:00+00:00",
+        recorded_at="2026-09-11T11:00:00+00:00",
+    )
+    status = condition_status(
+        {"id": "r1", "kind": "release_artifact", "check": "t.rel"},
+        [old_pass, current_failure],
+        {"ip": NEW},
+        "ip",
+    )
+    assert status.state == "check_failed"
+    assert status.current is current_failure
+
+
+def test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure():
+    newer_failure = rec(
+        "installed_demo", "fail", cond="d1", repo="ip",
+        recorded_at="2026-09-11T16:00:00+00:00",
+    )
+    backfilled_pass = rec(
+        "installed_demo", "pass", cond="d1", repo="ip",
+        recorded_at="2026-09-11T15:00:00+00:00",
+    )
+    status = condition_status(
+        {"id": "d1", "kind": "installed_demo", "check": "t.demo"},
+        [newer_failure, backfilled_pass],
+        {"ip": NEW},
+        "ip",
+    )
+    assert status.state == "check_failed"
+    assert status.current is newer_failure

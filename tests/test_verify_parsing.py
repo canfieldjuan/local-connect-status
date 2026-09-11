@@ -234,3 +234,38 @@ def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path,
     assert record.detail["watcher_tree"] == str(trees["eom-email-watcher"])
     assert record.detail["contracts_tree"] == str(trees["connect-contracts"])
     assert not verify.WATCHER_COMPAT_PATH.exists()
+
+
+
+def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: Path):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    target = "f" * 40
+    commit_time = "2026-09-10T09:00:00+00:00"
+
+    class Mirrors:
+        def commit_time(self, repo, sha):
+            assert repo == "app" and sha == target
+            return commit_time
+
+    class GitHub:
+        def releases(self, repo):
+            return [{
+                "tag_name": "v1", "published_at": "2026-09-11T20:00:00Z",
+                "draft": False, "prerelease": False, "assets": [],
+            }]
+
+        def tag_commit(self, repo, tag):
+            return target
+
+    runner = Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+        {"repos": {"app": {"github": "example/app"}}},
+    )
+    record = runner.releases(
+        "app", Revision("app", target, commit_time, "release"), ["condition"], ["task"]
+    )
+    assert record.verdict == "pass"
+    assert record.revision == target
+    assert record.revision_time == commit_time

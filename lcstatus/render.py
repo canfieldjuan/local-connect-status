@@ -115,7 +115,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
     w(f"Generated {p['generated_at']} (collection run {p['collection_run']}). Release target: **{p['release']['target']}**.")
     w("")
     if p["source_failures"]:
-        w("> **Some sources could not be read this run.** Rows depending on them show the last proven result, not a fresh one.")
+        w("> **Some sources could not be read this run.** Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.")
         for f in p["source_failures"]:
             w(f"> - {f['repo']}: {f['what']} — {f['why']}")
         w("")
@@ -239,7 +239,7 @@ function render(view){
   const root=document.getElementById('root'); const p=DATA;
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.view===view));
   let h='';
-  if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Rows that depend on them show the last proven result, not a fresh one.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
+  if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
   const stale = p.tasks.filter(t=>t.freshness==='changed_since_verification').length, failed=p.tasks.filter(t=>t.freshness==='check_failed').length;
   if(failed) h+=`<div class="banner bad"><b>${failed} task(s) have a failing check</b> at the current code.</div>`;
   if(stale) h+=`<div class="banner warn"><b>${stale} task(s) changed since they were last verified.</b> The last proven result stays visible; it is not a current result.</div>`;

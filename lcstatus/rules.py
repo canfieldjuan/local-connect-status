@@ -89,25 +89,29 @@ def condition_status(cond: dict[str, Any], records: list[Record], heads: dict[st
         evid = [r for r in evid if r.platform == want_platform]
     plat = want_platform or (evid[0].platform if evid else "n/a")
 
-    def latest(items: list[Record]) -> Record:
-        # JSONL order is the final tie-breaker because recorded_at has one-second precision.
-        return max(
-            enumerate(items),
-            key=lambda item: (item[1].revision_time or "", item[1].recorded_at, item[0]),
-        )[1]
+    def latest(items: list[Record], *, same_revision: bool = False) -> Record:
+        # Current candidates already match the same exact head/participants. Their revision
+        # timestamp must not outrank a later observation at that same code revision.
+        def order(item: tuple[int, Record]) -> tuple:
+            index, record = item
+            if same_revision:
+                return (record.recorded_at, index)
+            return (record.revision_time or "", record.recorded_at, index)
+
+        return max(enumerate(items), key=order)[1]
 
     if kind == "source_inspection":
         # An inspection can point at code; it cannot prove behaviour, and a miss cannot prove absence.
         current = [r for r in evid if _matches_current(r, heads, check_repo)]
         return ConditionStatus(
-            cond, "inconclusive", current=latest(current) if current else None, platform=plat
+            cond, "inconclusive", current=latest(current, same_revision=True) if current else None, platform=plat
         )
 
     current = [r for r in evid if _matches_current(r, heads, check_repo)]
     proven = [r for r in evid if r.verdict in PROVING_VERDICT]
     last_proven = latest(proven) if proven else None
     if current:
-        best = latest(current)
+        best = latest(current, same_revision=True)
         if best.verdict in PROVING_VERDICT:
             return ConditionStatus(cond, "satisfied", current=best, last_proven=best, platform=plat)
         if best.verdict == "fail":

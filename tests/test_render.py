@@ -61,3 +61,21 @@ def test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_drive
     assert "\\u003c/script\\u003e" in dashboard
     assert "No app has a downloadable release" not in dashboard
     assert "Release status comes from the release-evidence rows above." in dashboard
+
+
+
+def test_source_failure_banner_matches_current_or_historical_row_evidence():
+    payload = payload_with_summary("Actions unavailable")
+    payload["source_failures"] = [
+        {"repo": "ew", "what": "github_actions", "why": "timed out"}
+    ]
+    report = report_md(payload, {"release": payload["release"]})
+    dashboard = dashboard_html(payload, {"release": payload["release"]})
+    accurate = (
+        "Affected rows are not treated as freshly verified; each row shows the applicable "
+        "current attempt or last proven result."
+    )
+    assert accurate in report
+    assert accurate in dashboard
+    assert "show the last proven result, not a fresh one" not in report
+    assert "show the last proven result, not a fresh one" not in dashboard
