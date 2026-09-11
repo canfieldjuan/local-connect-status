@@ -63,6 +63,22 @@ def test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_drive
     assert "Release status comes from the release-evidence rows above." in dashboard
 
 
+def test_dashboard_escapes_every_manual_revision_field_before_inner_html():
+    payload = payload_with_summary("manual observation")
+    evidence = payload["tasks"][0]["conditions"][0]["current"]
+    evidence["revision"] = '<img src=x onerror="alert(1)">'
+    evidence["participants"] = {
+        '<img src=x onerror="name()">': '<img src=x onerror="sha()">',
+    }
+
+    dashboard = dashboard_html(payload, {"release": payload["release"]})
+
+    assert "<img src=x onerror=" not in dashboard
+    assert "${esc(e.revision)}" in dashboard
+    assert "`${esc(r)}@${esc(v)}`" in dashboard
+    assert "${esc(c.last_proven.revision)}" in dashboard
+
+
 
 def test_source_failure_banner_matches_current_or_historical_row_evidence():
     payload = payload_with_summary("Actions unavailable")

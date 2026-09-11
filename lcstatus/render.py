@@ -222,19 +222,19 @@ const FRESH = {current:'verified at current code',changed_since_verification:'ch
 const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',no_evidence:'no evidence',inconclusive:'needs verification'};
 const condLabel = (c)=>c.label || COND[c.state];
 const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function evLine(e){ if(!e) return '—'; let s=`${e.kind} <code>${e.revision}</code> ${e.verdict} ${e.recorded_at.slice(0,10)}`;
-  if(e.executed!=null) s+=` · ${e.executed} run, ${e.failed||0} failed, ${e.skipped||0} skipped`;
-  if(e.exit_code!=null) s+=` · exit ${e.exit_code}`; if(e.platform && e.platform!=='n/a') s+=` · ${e.platform}`;
+function evLine(e){ if(!e) return '—'; let s=`${esc(e.kind)} <code>${esc(e.revision)}</code> ${esc(e.verdict)} ${esc(String(e.recorded_at).slice(0,10))}`;
+  if(e.executed!=null) s+=` · ${esc(e.executed)} run, ${esc(e.failed||0)} failed, ${esc(e.skipped||0)} skipped`;
+  if(e.exit_code!=null) s+=` · exit ${esc(e.exit_code)}`; if(e.platform && e.platform!=='n/a') s+=` · ${esc(e.platform)}`;
   if(e.summary) s+=` · ${esc(e.summary)}`;
-  if(e.participants && Object.keys(e.participants).length) s+=` · with `+Object.entries(e.participants).map(([r,v])=>`${r}@${v}`).join(', ');
+  if(e.participants && Object.keys(e.participants).length) s+=` · with `+Object.entries(e.participants).map(([r,v])=>`${esc(r)}@${esc(v)}`).join(', ');
   if(e.source && e.source.url) s+=` · <a href="${esc(e.source.url)}" target="_blank" rel="noopener">GitHub job</a>`;
   if(e.log_path){const name=String(e.log_path).split('/').pop(); s+=` · <span class="meta" title="${esc(e.log_path)}">log: ${esc(name)}</span>`;} return s; }
 function taskCard(t){
-  const plats = Object.entries(t.platforms).map(([p,s])=>`<span class="plat"><b>${p}</b>: ${COND[s]||s}</span>`).join('');
-  const conds = t.conditions.map(c=>{const ev=c.current||c.last_proven; return `<tr><td>${esc(c.proves)}<div class="meta">${esc(c.kind)} · check <code>${esc(c.check)}</code>${c.platform&&c.platform!=='n/a'?' · '+esc(c.platform):''}</div></td><td><span class="pill ${pillFor(c.state)}">${condLabel(c)}</span>${c.state==='changed_since'&&c.last_proven?`<div class="meta">last proven at <code>${c.last_proven.revision}</code></div>`:''}</td><td>${evLine(ev)}</td></tr>`}).join('');
+  const plats = Object.entries(t.platforms).map(([p,s])=>`<span class="plat"><b>${esc(p)}</b>: ${esc(COND[s]||s)}</span>`).join('');
+  const conds = t.conditions.map(c=>{const ev=c.current||c.last_proven; return `<tr><td>${esc(c.proves)}<div class="meta">${esc(c.kind)} · check <code>${esc(c.check)}</code>${c.platform&&c.platform!=='n/a'?' · '+esc(c.platform):''}</div></td><td><span class="pill ${pillFor(c.state)}">${esc(condLabel(c))}</span>${c.state==='changed_since'&&c.last_proven?`<div class="meta">last proven at <code>${esc(c.last_proven.revision)}</code></div>`:''}</td><td>${evLine(ev)}</td></tr>`}).join('');
   const deps = (t.depends_on||[]).map(d=>`<li><code>${esc(d.repo)}</code>: ${d.paths.map(p=>'<code>'+esc(p)+'</code>').join(', ')}</li>`).join('');
   return `<div class="card" id="task-${esc(t.id)}"><h3>${esc(t.title)}</h3>
-   <div style="margin:8px 0"><span class="pill ${matPill(t.maturity)}">${esc(t.maturity)}</span><span class="pill ${pillFor(t.freshness)}">${FRESH[t.freshness]}</span></div>
+   <div style="margin:8px 0"><span class="pill ${matPill(t.maturity)}">${esc(t.maturity)}</span><span class="pill ${pillFor(t.freshness)}">${esc(FRESH[t.freshness])}</span></div>
    <div>${plats}</div>
    <div class="field"><b>Promise</b>${esc(t.promise)}</div>
    ${t.human_involvement?`<div class="field"><b>What still needs you</b>${esc(t.human_involvement)}</div>`:''}

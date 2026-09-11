@@ -16,6 +16,7 @@ the only way installed_demo evidence enters the store, and it requires --observe
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,9 @@ from lcstatus.evidence import Record, Store  # noqa: E402
 from lcstatus.sources import Mirrors  # noqa: E402
 
 
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
 def normalize_observed_at(value: str) -> str:
     """Validate an operator timestamp and normalize it for chronological string ordering."""
     try:
@@ -37,6 +41,27 @@ def normalize_observed_at(value: str) -> str:
     if observed.tzinfo is None or observed.utcoffset() is None:
         raise ValueError("--observed-at must include a timezone offset")
     return observed.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_participants(values: list[str], expected_repos: list[str]) -> dict[str, str]:
+    """Accept exactly one full Git SHA for every catalogue-declared participant."""
+    expected = set(expected_repos)
+    parts: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--participant must use repo=sha")
+        repo, sha = value.split("=", 1)
+        if repo not in expected:
+            raise ValueError(f"unexpected --participant repository: {repo}")
+        if repo in parts:
+            raise ValueError(f"duplicate --participant repository: {repo}")
+        if FULL_SHA.fullmatch(sha) is None:
+            raise ValueError(f"--participant {repo} must use a full lowercase 40-character Git SHA")
+        parts[repo] = sha
+    missing = [repo for repo in expected_repos if repo not in parts]
+    if missing:
+        raise ValueError(f"missing --participant {missing[0]}=<sha>")
+    return parts
 
 
 def main() -> int:
@@ -61,20 +86,25 @@ def main() -> int:
     if not chk or chk["runner"] != "manual_observation":
         print(f"{a.check} is not a manual_observation check", file=sys.stderr)
         return 2
-    parts = dict(p.split("=", 1) for p in a.participant)
-    for repo in chk.get("participants", [chk["repo"]]):
-        if repo not in parts:
-            print(f"missing --participant {repo}=<sha>", file=sys.stderr)
-            return 2
+    expected_repos = chk.get("participants", [chk["repo"]])
+    try:
+        parts = parse_participants(a.participant, expected_repos)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     mirrors = Mirrors(ROOT / ".cache" / "mirrors", cat["repos"])
     primary = chk["repo"]
     sha = parts[primary]
-    if len(sha) < 40:
-        print("use full 40-character shas so the record cannot be ambiguous", file=sys.stderr)
-        return 2
+    revision_times: dict[str, str] = {}
+    for repo, participant_sha in parts.items():
+        committed_at = mirrors.commit_time(repo, participant_sha)
+        if committed_at is None:
+            print(f"--participant {repo} revision is not present in its owned mirror", file=sys.stderr)
+            return 2
+        revision_times[repo] = committed_at
     conds = [c["id"] for t in cat["tasks"] for c in t["conditions"] if c["check"] == a.check]
     tasks = [t["id"] for t in cat["tasks"] if any(c["check"] == a.check for c in t["conditions"])]
-    rec = Record(kind="installed_demo", repo=primary, revision=sha, revision_time=mirrors.commit_time(primary, sha),
+    rec = Record(kind="installed_demo", repo=primary, revision=sha, revision_time=revision_times[primary],
                  verdict=a.verdict, platform=a.platform, condition_ids=conds, task_ids=tasks,
                  participants=parts, summary=a.summary, recorded_at=observed_at,
                  source={"type": "manual_observation", "check": a.check, "artifact": a.artifact,
