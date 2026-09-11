@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 TINY_CATALOGUE = {
@@ -136,7 +138,7 @@ def test_release_dispatch_is_scoped_to_the_configured_repository():
     assert {repo for repo, _ in release_targets({"repo": "*"}, revisions)} == {"ew", "ip"}
 
 
-def test_unavailable_actions_and_release_results_are_run_failures(tmp_path: Path):
+def test_unavailable_results_from_any_runner_are_run_failures(tmp_path: Path):
     from lcstatus.collect import store_result
     from lcstatus.evidence import Record, Store
 
@@ -150,9 +152,114 @@ def test_unavailable_actions_and_release_results_are_run_failures(tmp_path: Path
         kind="release_artifact", repo="ghost", revision="a" * 40, verdict="unavailable",
         source={"type": "github_releases"}, summary="release lookup failed",
     ))
+    store_result(store, failures, Record(
+        kind="source_inspection", repo="ghost", revision="a" * 40, verdict="unavailable",
+        source={"type": "source_inspection"}, summary="tree unavailable",
+    ))
+    store_result(store, failures, Record(
+        kind="automated_test", repo="ghost", revision="a" * 40, verdict="unavailable",
+        source={"type": "local_runner"}, summary="test environment unavailable",
+    ))
     assert failures == [
         {"repo": "ghost", "what": "github_actions", "why": "Actions API timed out"},
         {"repo": "ghost", "what": "github_releases", "why": "release lookup failed"},
+        {"repo": "ghost", "what": "source_inspection", "why": "tree unavailable"},
+        {"repo": "ghost", "what": "local_runner", "why": "test environment unavailable"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("runner_kind", "condition_kind", "source_type"),
+    [
+        ("source_inspection", "source_inspection", "source_inspection"),
+        ("pytest", "automated_test", "local_runner"),
+        ("cargo_lib", "automated_test", "local_runner"),
+        ("accept_ew_ip", "automated_test", "local_runner"),
+    ],
+)
+def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
+    tmp_path: Path, monkeypatch, runner_kind: str, condition_kind: str, source_type: str,
+):
+    import lcstatus.collect as collect
+    from lcstatus.evidence import Record
+    from lcstatus.sources import Revision
+
+    check = {"runner": runner_kind, "repo": "ghost", "platform": "linux"}
+    if runner_kind == "source_inspection":
+        check.update({"paths": ["src/**"], "markers": ["marker"]})
+    if runner_kind == "accept_ew_ip":
+        check["participants"] = ["ghost"]
+    catalogue = {
+        "catalogue_version": 1,
+        "release": {
+            "target": "t", "required_platforms": ["linux", "windows"],
+            "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None},
+        },
+        "repos": {"ghost": {"github": "example/ghost", "ci_workflows": []}},
+        "apps": {"ghost-app": {"name": "Ghost", "repo": "ghost"}},
+        "checks": {"local.check": check},
+        "tasks": [{
+            "id": "g.task", "app": "ghost-app", "layer": "standalone", "title": "Ghost works", "promise": "p",
+            "conditions": [{"id": "g.condition", "kind": condition_kind, "check": "local.check", "proves": "proof"}],
+            "depends_on": [{"repo": "ghost", "paths": ["src/**"]}],
+        }],
+    }
+    catalogue_path = tmp_path / "catalogue.json"
+    catalogue_path.write_text(json.dumps(catalogue))
+    revision = Revision("ghost", "a" * 40, "2026-09-11T00:00:00+00:00", "head")
+
+    class FakeMirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch(self, repo):
+            return None
+
+        def head(self, repo):
+            return revision
+
+    class FakeGitHub:
+        def default_branch_head(self, repo):
+            return {"sha": revision.sha}
+
+    class FakeRunner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def result(self, rev, condition_ids, task_ids):
+            return Record(
+                kind=condition_kind, repo="ghost", revision=rev.sha, revision_time=rev.committed_at,
+                verdict="unavailable", platform="linux", condition_ids=condition_ids, task_ids=task_ids,
+                source={"type": source_type}, summary=f"{runner_kind} unavailable",
+            )
+
+        def source_inspection(self, check_id, check_config, rev, condition_ids, task_ids):
+            return self.result(rev, condition_ids, task_ids)
+
+        def pytest(self, check_id, check_config, rev, condition_ids, task_ids):
+            return self.result(rev, condition_ids, task_ids)
+
+        def cargo_lib(self, check_id, check_config, rev, condition_ids, task_ids):
+            return self.result(rev, condition_ids, task_ids)
+
+        def accept_ew_ip(self, check_id, check_config, revisions, condition_ids, task_ids):
+            return self.result(revisions["ghost"], condition_ids, task_ids)
+
+    monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
+    monkeypatch.setattr(collect, "GitHub", FakeGitHub)
+    monkeypatch.setattr(collect, "Runner", FakeRunner)
+    data = tmp_path / "data"
+    site = tmp_path / "site"
+
+    rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data), "--site", str(site),
+    ])
+
+    status = json.loads((site / "status.json").read_text())
+    assert rc == 2
+    assert status["source_failures"] == [
+        {"repo": "ghost", "what": source_type, "why": f"{runner_kind} unavailable"}
     ]
 
 

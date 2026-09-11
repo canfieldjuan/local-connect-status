@@ -39,7 +39,6 @@ def load_state(path: Path) -> dict[str, Any]:
     return {"heads": {}, "runs": 0}
 
 
-SOURCE_FAILURE_TYPES = {"github_actions", "github_releases"}
 HEAD_FAILURES = {"head", "git_head", "github_head_mismatch"}
 
 
@@ -64,8 +63,8 @@ def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tu
 
 def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
     store.add(rec)
-    source_type = rec.source.get("type")
-    if rec.verdict == "unavailable" and source_type in SOURCE_FAILURE_TYPES:
+    if rec.verdict == "unavailable":
+        source_type = rec.source.get("type") or rec.kind
         failure = {"repo": rec.repo, "what": source_type, "why": rec.summary or "unavailable"}
         if failure not in failures:
             failures.append(failure)
@@ -218,25 +217,28 @@ def main(argv: list[str] | None = None) -> int:
                 rev = revs.get(chk["repo"])
                 if rev is None:
                     continue
-                store.add(runner.source_inspection(cid, chk, rev, conds, tasks))
+                store_result(store, failures, runner.source_inspection(cid, chk, rev, conds, tasks))
             elif runner_kind == "pytest":
                 rev = revs.get(chk["repo"])
                 if rev is None:
                     continue
                 print(f"running {cid} @ {rev.sha[:12]} ...", flush=True)
-                r = runner.pytest(cid, chk, rev, conds, tasks); store.add(r)
+                r = runner.pytest(cid, chk, rev, conds, tasks)
+                store_result(store, failures, r)
                 print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "cargo_lib":
                 rev = revs.get(chk["repo"])
                 if rev is None:
                     continue
                 print(f"running {cid} @ {rev.sha[:12]} (heavy) ...", flush=True)
-                r = runner.cargo_lib(cid, chk, rev, conds, tasks); store.add(r)
+                r = runner.cargo_lib(cid, chk, rev, conds, tasks)
+                store_result(store, failures, r)
                 print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "accept_ew_ip":
                 if all(p in revs for p in chk["participants"]):
                     print(f"running {cid} ...", flush=True)
-                    r = runner.accept_ew_ip(cid, chk, revs, conds, tasks); store.add(r)
+                    r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
+                    store_result(store, failures, r)
                     print(f"  {r.verdict}: {r.summary}", flush=True)
         for repo, checks in ci_by_repo.items():
             rev = revs.get(repo)

@@ -78,9 +78,12 @@ def _matches_current(rec: Record, heads: dict[str, str], repo: str) -> bool:
     return heads.get(repo or rec.repo) == rec.revision
 
 
-def condition_status(cond: dict[str, Any], records: list[Record], heads: dict[str, str], check_repo: str) -> ConditionStatus:
+def condition_status(
+    cond: dict[str, Any], records: list[Record], heads: dict[str, str], check_repo: str,
+    check_platform: str | None = None,
+) -> ConditionStatus:
     kind = cond["kind"]
-    want_platform = cond.get("platform")
+    want_platform = cond.get("platform") or check_platform
     evid = [r for r in records if cond["id"] in r.condition_ids and r.kind == kind]
     if check_repo:
         # Older collectors wrote app-specific release ids onto every repository. Keep those
@@ -133,7 +136,7 @@ def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, st
     for c in task["conditions"]:
         chk = checks.get(c["check"], {})
         repo = chk.get("repo") if chk.get("repo") not in (None, "*") else task.get("app_repo", "")
-        conds.append(condition_status(c, records, heads, repo))
+        conds.append(condition_status(c, records, heads, repo, chk.get("platform")))
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
     demos = [c for c in conds if c.condition["kind"] == "installed_demo"]

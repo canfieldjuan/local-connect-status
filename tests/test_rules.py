@@ -97,6 +97,19 @@ def test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readi
     assert s.maturity == "partly built"
 
 
+def test_check_platform_filters_mixed_evidence_when_condition_omits_platform():
+    t = task([{"id": "c2", "kind": "ci_run", "check": "t.ci.win"}])
+    linux_pass = rec("ci_run", "pass", cond="c2", platform="linux")
+    windows_unavailable = rec("ci_run", "unavailable", cond="c2", platform="windows")
+
+    status = task_status(t, [linux_pass, windows_unavailable], {"ip": NEW}, CAT, CAT["release"])
+
+    condition = status.conditions[0]
+    assert condition.platform == "windows"
+    assert condition.state == "not_checked"
+    assert condition.current is windows_unavailable
+
+
 # --- unavailable / pending are visible, not green ---------------------------------------------
 
 @pytest.mark.parametrize("verdict", ["unavailable", "pending", "unknown", "partial"])
@@ -114,7 +127,7 @@ def test_release_requires_release_artifact_not_just_demos():
         {"id": "d1", "kind": "installed_demo", "check": "t.demo"},
         {"id": "r1", "kind": "release_artifact", "check": "t.rel"},
     ])
-    recs = [rec("automated_test", "pass", executed=1, failed=0),
+    recs = [rec("automated_test", "pass", executed=1, failed=0, platform="linux"),
             rec("installed_demo", "pass", cond="d1", participants={"ip": NEW, "ew": NEW}),
             rec("release_artifact", "fail", cond="r1", summary="no published release")]
     s = task_status(t, recs, {"ip": NEW, "ew": NEW}, CAT, CAT["release"])
@@ -183,7 +196,7 @@ def test_task_with_only_inspection_conditions_is_not_checked_not_current():
 def test_missing_release_is_not_a_failing_check_for_freshness():
     t = task([{"id": "c1", "kind": "automated_test", "check": "t.pytest"},
               {"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
-    recs = [rec("automated_test", "pass", executed=1, failed=0),
+    recs = [rec("automated_test", "pass", executed=1, failed=0, platform="linux"),
             Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
                    revision_time="2026-09-09T10:00:00+00:00", summary="no published release")]
     s = task_status(t, recs, {"ip": NEW}, CAT, CAT["release"])
