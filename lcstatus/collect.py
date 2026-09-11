@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         # ---- observe ------------------------------------------------------------------
         for repo in cat["repos"]:
             stale_note = None
+            fetch_confirmed = False
             if not args.no_fetch:
                 f = mirrors.fetch(repo)
                 if isinstance(f, Failure):
@@ -129,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                     stale_note = f"fetch failed: {f.why}"
                     store.add(Record(kind="collection_failure", repo=repo, revision=state["heads"].get(repo, ""),
                                      verdict="unavailable", summary=stale_note, source={"type": "git_fetch"}))
+                else:
+                    fetch_confirmed = True
             head = mirrors.head(repo)
             if isinstance(head, Failure):
                 failures.append({"repo": repo, "what": head.what, "why": head.why})
@@ -146,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
                 failures.append({"repo": repo, "what": "github_head", "why": api.why})
                 store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="unavailable",
                                  summary=f"GitHub head lookup failed: {api.why}", source={"type": "github_api"}))
-                if stale_note:
+                if not fetch_confirmed:
                     continue
             elif api.get("sha") and api["sha"] != head.sha:
                 why = f"mirror {head.sha[:12]} != GitHub {api['sha'][:12]}; mirror may lag"

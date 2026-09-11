@@ -173,8 +173,15 @@ class Runner:
             return Failure("env", r.stderr[-400:], {"repo": repo, "sha": sha})
         py = venv / "bin" / "python"
         for extra in extra_trees:
-            r = subprocess.run(["uv", "pip", "install", "--quiet", "--python", str(py), "-e", str(extra)],
-                               capture_output=True, text=True, timeout=900)
+            try:
+                r = subprocess.run(["uv", "pip", "install", "--quiet", "--python", str(py), "-e", str(extra)],
+                                   capture_output=True, text=True, timeout=900)
+            except subprocess.TimeoutExpired:
+                return Failure("env", "editable install timed out after 900 seconds",
+                               {"repo": repo, "sha": sha, "extra": str(extra)})
+            except OSError as exc:
+                return Failure("env", f"editable install could not start: {type(exc).__name__}",
+                               {"repo": repo, "sha": sha, "extra": str(extra)})
             if r.returncode != 0:
                 return Failure("env", r.stderr[-400:], {"repo": repo, "sha": sha, "extra": str(extra)})
         return venv

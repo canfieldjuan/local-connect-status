@@ -45,6 +45,19 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def instant_key(value: str | None) -> tuple[int, float, str]:
+    """Chronological key for aware ISO-8601 timestamps, with a stable invalid fallback."""
+    if not value:
+        return (0, 0.0, "")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return (0, 0.0, value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return (0, 0.0, value)
+    return (1, parsed.timestamp(), "")
+
+
 @dataclass
 class Record:
     kind: str
@@ -184,7 +197,7 @@ class Store:
         cands = [r for r in self._records if r.kind == "revision" and r.repo == repo]
         if not cands:
             return None
-        return max(cands, key=lambda r: (r.revision_time or "", r.recorded_at))
+        return max(cands, key=lambda r: (instant_key(r.revision_time), instant_key(r.recorded_at)))
 
     def evidence_for(self, condition_id: str) -> list[Record]:
         return [

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .evidence import Record, atomic_write
+from .evidence import Record, atomic_write, instant_key
 from .rules import TaskStatus
 
 MATURITY_ORDER = ["planned", "partly built", "built", "demonstrated", "ready for release", "released"]
@@ -58,6 +58,17 @@ def markdown_cell(value: object) -> str:
     return str(value).replace("|", r"\|").replace("\n", "<br>")
 
 
+def condition_payload(status: Any) -> dict[str, Any]:
+    condition = status.as_dict()
+    label = COND_LABEL[condition["state"]]
+    if condition["kind"] == "release_artifact" and condition["state"] == "check_failed":
+        evidence = condition["current"] or condition["last_proven"] or {}
+        missing = evidence.get("detail", {}).get("missing", [])
+        label = "release incomplete" if missing else "no release published"
+    condition["label"] = label
+    return condition
+
+
 def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[str, str],
                    failures: list[dict[str, Any]], state: dict[str, Any], changed: dict[str, tuple[str, str]],
                    records: list[Record]) -> dict[str, Any]:
@@ -66,7 +77,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
         if r.kind == "revision" and heads.get(r.repo) == r.revision:
             revs[r.repo] = {"sha": r.revision, "committed_at": r.revision_time, "subject": r.summary}
     changes = [r for r in records if r.kind == "change"]
-    latest_changes = sorted(changes, key=lambda r: (r.revision_time or "", r.recorded_at), reverse=True)[:10]
+    latest_changes = sorted(changes, key=lambda r: (instant_key(r.revision_time), instant_key(r.recorded_at)), reverse=True)[:10]
     return {
         "generated_at": state.get("last_run_at"),
         "collection_run": state.get("runs"),
@@ -86,7 +97,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
                 "promise": s.task["promise"], "human_involvement": s.task.get("human_involvement"),
                 "next_action": next_action(s),
                 "maturity": s.maturity, "freshness": s.freshness, "platforms": s.platforms, "notes": s.notes,
-                "conditions": [c.as_dict() for c in s.conditions],
+                "conditions": [condition_payload(c) for c in s.conditions],
                 "depends_on": s.task.get("depends_on", []),
             }
             for s in statuses
@@ -162,8 +173,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
                         evs += f" ({ev['executed']} run, {ev.get('failed') or 0} failed, {ev.get('skipped') or 0} skipped)"
                     if ev.get("summary"):
                         evs += f" — {ev['summary']}"
-                label = "no release published" if (c["kind"] == "release_artifact" and c["state"] == "check_failed") else COND_LABEL[c["state"]]
-                w(f"| {markdown_cell(c['proves'])} | {label} | {markdown_cell(evs)} |")
+                w(f"| {markdown_cell(c['proves'])} | {c['label']} | {markdown_cell(evs)} |")
             w("")
     if p["recent_changes"]:
         w("## Recent changes observed")
@@ -210,7 +220,7 @@ const pillFor = (s)=>({satisfied:'p-ok',verified:'p-ok',current:'p-ok',changed_s
 const matPill = (m)=>({'released':'p-ok','ready for release':'p-ok','demonstrated':'p-ok','built':'p-info','partly built':'p-warn','planned':'p-mute'}[m]||'p-mute');
 const FRESH = {current:'verified at current code',changed_since_verification:'changed since verification',check_failed:'check failed',not_checked:'a check ran but gave no result',no_evidence:'no evidence'};
 const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',no_evidence:'no evidence',inconclusive:'needs verification'};
-const condLabel = (c)=> (c.kind==='release_artifact' && c.state==='check_failed') ? 'no release published' : COND[c.state];
+const condLabel = (c)=>c.label || COND[c.state];
 const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function evLine(e){ if(!e) return '—'; let s=`${e.kind} <code>${e.revision}</code> ${e.verdict} ${e.recorded_at.slice(0,10)}`;
   if(e.executed!=null) s+=` · ${e.executed} run, ${e.failed||0} failed, ${e.skipped||0} skipped`;

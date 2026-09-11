@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .evidence import Record
+from .evidence import Record, instant_key
 
 AUTOMATED = ("automated_test", "ci_run")
 PROVING_VERDICT = ("pass",)
@@ -50,7 +50,8 @@ class ConditionStatus:
             return {"record_id": r.record_id, "kind": r.kind, "verdict": r.verdict, "revision": r.revision[:12],
                     "platform": r.platform, "recorded_at": r.recorded_at, "summary": r.summary, "executed": r.executed,
                     "failed": r.failed, "skipped": r.skipped, "exit_code": r.exit_code, "source": r.source,
-                    "log_path": r.log_path, "participants": {k: v[:12] for k, v in r.participants.items()}}
+                    "log_path": r.log_path, "participants": {k: v[:12] for k, v in r.participants.items()},
+                    "detail": r.detail}
         return {"id": self.condition["id"], "kind": self.condition["kind"], "proves": self.condition.get("proves"),
                 "check": self.condition.get("check"), "state": self.state, "platform": self.platform,
                 "current": rec(self.current), "last_proven": rec(self.last_proven)}
@@ -95,8 +96,8 @@ def condition_status(cond: dict[str, Any], records: list[Record], heads: dict[st
         def order(item: tuple[int, Record]) -> tuple:
             index, record = item
             if same_revision:
-                return (record.recorded_at, index)
-            return (record.revision_time or "", record.recorded_at, index)
+                return (instant_key(record.recorded_at), index)
+            return (instant_key(record.revision_time), instant_key(record.recorded_at), index)
 
         return max(enumerate(items), key=order)[1]
 

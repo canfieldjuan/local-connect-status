@@ -154,3 +154,50 @@ def test_unavailable_actions_and_release_results_are_run_failures(tmp_path: Path
         {"repo": "ghost", "what": "github_actions", "why": "Actions API timed out"},
         {"repo": "ghost", "what": "github_releases", "why": "release lookup failed"},
     ]
+
+
+def test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown(tmp_path: Path, monkeypatch):
+    import lcstatus.collect as collect
+    from lcstatus.sources import Failure, Revision
+
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text(json.dumps(TINY_CATALOGUE))
+    cached = Revision("ghost", "d" * 40, "2026-09-11T10:00:00+00:00", "cached")
+
+    class FakeMirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch(self, repo):
+            raise AssertionError("--no-fetch must not fetch")
+
+        def head(self, repo):
+            assert repo == "ghost"
+            return cached
+
+    class FakeGitHub:
+        def default_branch_head(self, repo):
+            return Failure("github", "offline")
+
+    class FakeRunner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
+    monkeypatch.setattr(collect, "GitHub", FakeGitHub)
+    monkeypatch.setattr(collect, "Runner", FakeRunner)
+    data = tmp_path / "data"
+    site = tmp_path / "site"
+
+    rc = collect.main([
+        "--catalogue", str(catalogue), "--data", str(data), "--site", str(site),
+        "--no-fetch", "--no-local",
+    ])
+
+    assert rc == 2
+    status = json.loads((site / "status.json").read_text())
+    state = json.loads((data / "state.json").read_text())
+    assert status["heads"] == {}
+    assert status["tasks"][0]["conditions"][0]["state"] != "satisfied"
+    assert state["unknown_heads"] == ["ghost"]

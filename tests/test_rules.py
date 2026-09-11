@@ -343,3 +343,40 @@ def test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure():
     )
     assert status.state == "check_failed"
     assert status.current is newer_failure
+
+
+def test_last_proven_uses_absolute_instant_across_offsets():
+    lexically_later_but_older = rec(
+        "automated_test", "pass", revision=OLD, executed=1, failed=0,
+        revision_time="2026-09-11T10:00:00+02:00",
+        recorded_at="2026-09-11T10:01:00+02:00",
+    )
+    lexically_earlier_but_newer = rec(
+        "automated_test", "pass", revision=NEW, executed=1, failed=0,
+        revision_time="2026-09-11T09:30:00+00:00",
+        recorded_at="2026-09-11T09:31:00+00:00",
+    )
+    status = condition_status(
+        {"id": "c1", "kind": "automated_test", "check": "t.pytest"},
+        [lexically_later_but_older, lexically_earlier_but_newer],
+        {},
+        "ip",
+    )
+    assert status.state == "changed_since"
+    assert status.last_proven is lexically_earlier_but_newer
+
+
+def test_store_latest_revision_uses_absolute_instant_across_offsets(tmp_path: Path):
+    store = Store(tmp_path / "r.jsonl")
+    older = Record(
+        kind="revision", repo="ip", revision="a" * 40, verdict="pass",
+        revision_time="2026-09-11T10:00:00+02:00",
+        recorded_at="2026-09-11T10:01:00+02:00",
+    )
+    newer = Record(
+        kind="revision", repo="ip", revision="b" * 40, verdict="pass",
+        revision_time="2026-09-11T09:30:00+00:00",
+        recorded_at="2026-09-11T09:31:00+00:00",
+    )
+    assert store.add(older) and store.add(newer)
+    assert Store(tmp_path / "r.jsonl").latest_revision("ip") == newer

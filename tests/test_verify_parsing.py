@@ -269,3 +269,35 @@ def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: P
     assert record.verdict == "pass"
     assert record.revision == target
     assert record.revision_time == commit_time
+
+
+def test_editable_install_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Failure
+    from lcstatus.verify import Runner
+
+    class Mirrors:
+        pass
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ip": {}}})
+    tree = tmp_path / "tree"
+    extra = tmp_path / "extra"
+    tree.mkdir()
+    extra.mkdir()
+    monkeypatch.setattr("lcstatus.verify.shutil.which", lambda name: "/usr/bin/uv")
+    calls = 0
+
+    def sync_then_timeout(cmd, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise subprocess.TimeoutExpired(cmd, 900)
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", sync_then_timeout)
+    result = runner._venv("ip", tree, "a" * 40, extra_trees=[extra])
+    assert isinstance(result, Failure)
+    assert result.what == "env" and result.why == "editable install timed out after 900 seconds"
+    assert result.detail["extra"] == str(extra)

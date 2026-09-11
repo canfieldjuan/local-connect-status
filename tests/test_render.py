@@ -79,3 +79,64 @@ def test_source_failure_banner_matches_current_or_historical_row_evidence():
     assert accurate in dashboard
     assert "show the last proven result, not a fresh one" not in report
     assert "show the last proven result, not a fresh one" not in dashboard
+
+
+def release_failure_payload(detail: dict) -> dict:
+    record = Record(
+        kind="release_artifact", repo="ip", revision="b" * 40,
+        verdict="fail", condition_ids=["release"], detail=detail,
+        recorded_at="2026-09-11T00:00:00+00:00",
+    )
+    condition = ConditionStatus(
+        {"id": "release", "kind": "release_artifact", "check": "release.check",
+         "proves": "published installers"},
+        "check_failed",
+        current=record,
+    )
+    task = TaskStatus(
+        {
+            "id": "release-task", "app": "invoice-processor", "app_repo": "ip",
+            "layer": "release", "title": "Release", "promise": "Downloadable installers.",
+            "depends_on": [],
+        },
+        "planned", "not_checked", [condition], {}, [],
+    )
+    catalogue = {
+        "release": {
+            "target": "local installers",
+            "automate_scope": {"decision": "undecided", "note": "operator choice"},
+        }
+    }
+    return status_payload(
+        catalogue, [task], {}, [], {"runs": 1, "last_run_at": "2026-09-11T00:00:00+00:00"}, {}, [record]
+    )
+
+
+def test_release_failure_label_distinguishes_incomplete_from_absent_release():
+    incomplete = release_failure_payload({"missing": ["windows installer"]})
+    absent = release_failure_payload({"count": 0})
+
+    assert incomplete["tasks"][0]["conditions"][0]["label"] == "release incomplete"
+    assert absent["tasks"][0]["conditions"][0]["label"] == "no release published"
+    report = report_md(incomplete, {"release": incomplete["release"]})
+    dashboard = dashboard_html(incomplete, {"release": incomplete["release"]})
+    assert "release incomplete" in report and "no release published" not in report
+    assert '"label": "release incomplete"' in dashboard
+
+
+def test_recent_changes_are_ordered_by_absolute_instant_across_offsets():
+    lexically_later_but_older = Record(
+        kind="change", repo="ip", revision="a" * 40, verdict="pass",
+        revision_time="2026-09-11T10:00:00+02:00", recorded_at="2026-09-11T10:01:00+02:00",
+        summary="old -> aaaaaaaaaaaa: 1 files", detail={"old": "old"},
+    )
+    lexically_earlier_but_newer = Record(
+        kind="change", repo="ew", revision="b" * 40, verdict="pass",
+        revision_time="2026-09-11T09:30:00+00:00", recorded_at="2026-09-11T09:31:00+00:00",
+        summary="old -> bbbbbbbbbbbb: 1 files", detail={"old": "old"},
+    )
+    payload = status_payload(
+        {"release": {}}, [], {}, [], {"runs": 1, "last_run_at": "2026-09-11T10:00:00+00:00"}, {},
+        [lexically_later_but_older, lexically_earlier_but_newer],
+    )
+    assert [item["repo"] for item in payload["recent_changes"]] == ["ew", "ip"]
