@@ -58,12 +58,35 @@ def test_release_verdict_requires_a_published_release_with_every_required_asset(
     assert release_verdict([], req)[0] == "fail"
     assert release_verdict([{"tag_name": "v1", "draft": True, "assets": []}], req)[0] == "fail"
     assert release_verdict([{"tag_name": "v1", "prerelease": True, "assets": []}], req)[0] == "fail"
-    v, summary, detail, tag = release_verdict([{"tag_name": "v1", "assets": [{"name": "app-1.0.deb"}]}], req)
+    v, summary, detail, tag = release_verdict([{"tag_name": "v1", "assets": [
+        {"name": "app-1.0.deb", "state": "uploaded", "size": 10},
+    ]}], req)
     assert v == "fail" and "windows installer" in summary and "checksums" in summary and tag == "v1"
     full = [{"tag_name": "v1", "published_at": "2026-09-11T00:00:00Z",
-             "assets": [{"name": "app-setup.exe"}, {"name": "app_1.0_amd64.deb"}, {"name": "SHA256SUMS"}]}]
-    v, summary, detail, tag = release_verdict(full, req)
+             "assets": [
+                 {"id": 1, "name": "app-setup.exe", "state": "uploaded", "size": 100},
+                 {"id": 2, "name": "app_1.0_amd64.deb", "state": "uploaded", "size": 200},
+                 {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 300},
+             ]}]
+    sums = "a" * 64 + "  app-setup.exe\n" + "b" * 64 + "  app_1.0_amd64.deb\n"
+    v, summary, detail, tag = release_verdict(full, req, {"3": sums})
     assert v == "pass" and detail["missing"] == [] and tag == "v1"
+
+    for broken_assets, checksum_contents in (
+        ([
+            {"id": 1, "name": "app-setup.exe", "state": "uploaded", "size": 0},
+            {"id": 2, "name": "app_1.0_amd64.deb", "state": "uploaded", "size": 200},
+            {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 300},
+        ], {"3": sums}),
+        ([
+            {"id": 1, "name": "app-setup.exe", "state": "new", "size": 100},
+            {"id": 2, "name": "app_1.0_amd64.deb", "state": "uploaded", "size": 200},
+            {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 300},
+        ], {"3": sums}),
+        (full[0]["assets"], {"3": "c" * 64 + "  unrelated.txt\n"}),
+    ):
+        broken = [{"tag_name": "v1", "assets": broken_assets}]
+        assert release_verdict(broken, req, checksum_contents)[0] == "fail"
 
 
 
@@ -273,6 +296,55 @@ def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: P
     assert record.revision_time == commit_time
 
 
+def test_release_checksum_download_failure_is_unavailable(tmp_path: Path):
+    from lcstatus.sources import Failure, Revision
+    from lcstatus.verify import Runner
+
+    target = "f" * 40
+    assets = [
+        {"id": 1, "name": "app.exe", "state": "uploaded", "size": 100},
+        {"id": 2, "name": "app.deb", "state": "uploaded", "size": 100},
+        {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 100},
+    ]
+
+    class Mirrors:
+        pass
+
+    class GitHub:
+        def releases(self, repo):
+            return [{"tag_name": "v1", "draft": False, "prerelease": False, "assets": assets}]
+
+        def release_asset_text(self, repo, asset_id):
+            return Failure("gh_release_asset", "download timed out")
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+                    {"repos": {"app": {"github": "example/app"}}})
+    record = runner.releases(
+        "app", Revision("app", target, "2026-09-11T00:00:00Z", "head"), ["condition"], ["task"],
+        {"windows": r"\.exe$", "linux": r"\.deb$", "checksums": r"SHA256SUMS$"},
+    )
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "release v1 checksum could not be read: download timed out"
+
+
+def test_release_asset_download_rejects_binary_checksum_content(monkeypatch):
+    from lcstatus.sources import Failure, GitHub
+
+    github = GitHub()
+    github.available = True
+    monkeypatch.setattr(
+        "lcstatus.sources.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout=b"\xff", stderr=b""),
+    )
+
+    result = github.release_asset_text("example/app", 3)
+
+    assert isinstance(result, Failure)
+    assert result.what == "gh_release_asset"
+    assert result.why == "asset is not UTF-8 checksum text"
+
+
 def test_editable_install_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch):
     from lcstatus.sources import Failure
     from lcstatus.verify import Runner
@@ -326,6 +398,7 @@ def test_desktop_dependency_setup_errors_become_explicit_failures(tmp_path: Path
     desktop = tree / "desktop"
     desktop.mkdir(parents=True)
     (desktop / "package.json").write_text("{}")
+    (desktop / "pnpm-lock.yaml").write_text("lockfileVersion: 9\n")
     monkeypatch.setattr("lcstatus.verify.find_tool", lambda name: "/usr/bin/pnpm")
 
     def fail_to_run(*args, **kwargs):
@@ -336,6 +409,46 @@ def test_desktop_dependency_setup_errors_become_explicit_failures(tmp_path: Path
     assert isinstance(result, Failure)
     assert result.what == "env" and result.why == expected
     assert result.detail == {"directory": str(desktop)}
+    assert not (desktop / ".lcstatus-pnpm-ready").exists()
+
+
+def test_desktop_dependency_cache_requires_success_marker_for_current_lockfile(tmp_path: Path, monkeypatch):
+    from lcstatus.verify import Runner
+
+    class Mirrors:
+        pass
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {}})
+    tree = tmp_path / "tree"
+    desktop = tree / "desktop"
+    (desktop / "node_modules").mkdir(parents=True)
+    (desktop / "package.json").write_text('{"name":"desktop"}')
+    lockfile = desktop / "pnpm-lock.yaml"
+    lockfile.write_text("lockfileVersion: 9\n")
+    monkeypatch.setattr("lcstatus.verify.find_tool", lambda name: "/usr/bin/pnpm")
+    calls = []
+
+    def successful_install(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", successful_install)
+    assert runner._desktop_deps(tree) is None
+    assert len(calls) == 1
+    assert (desktop / ".lcstatus-pnpm-ready").is_file()
+    assert runner._desktop_deps(tree) is None
+    assert len(calls) == 1
+
+    (desktop / ".lcstatus-pnpm-ready").write_bytes(b"\xff")
+    assert runner._desktop_deps(tree) is None
+    assert len(calls) == 2
+
+    lockfile.write_text("lockfileVersion: 9\nchanged: true\n")
+    assert runner._desktop_deps(tree) is None
+    assert len(calls) == 3
 
 
 def test_pytest_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):

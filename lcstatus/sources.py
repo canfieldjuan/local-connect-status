@@ -199,6 +199,23 @@ class GitHub:
     def releases(self, gh_repo: str) -> Failure | list[dict[str, Any]]:
         return self.api(f"repos/{gh_repo}/releases?per_page=100", paginate=True)
 
+    def release_asset_text(self, gh_repo: str, asset_id: int) -> Failure | str:
+        path = f"repos/{gh_repo}/releases/assets/{asset_id}"
+        if not self.available:
+            return Failure("gh_release_asset", "gh CLI not installed", {"path": path})
+        cmd = ["gh", "api", "-H", "Accept: application/octet-stream", path]
+        try:
+            r = subprocess.run(cmd, capture_output=True, check=False, timeout=self.timeout)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return Failure("gh_release_asset", type(exc).__name__, {"path": path})
+        if r.returncode != 0:
+            error = r.stderr.decode(errors="replace").strip()[-300:]
+            return Failure("gh_release_asset", error or f"exit {r.returncode}", {"path": path})
+        try:
+            return r.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            return Failure("gh_release_asset", "asset is not UTF-8 checksum text", {"path": path})
+
     def tag_commit(self, gh_repo: str, tag: str) -> Failure | str:
         """The commit SHA a release tag points at (dereferencing annotated tags)."""
         ref = self.api(f"repos/{gh_repo}/git/ref/tags/{tag}")

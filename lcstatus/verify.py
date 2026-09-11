@@ -14,6 +14,7 @@ Principles that keep these honest:
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from .evidence import Record, now_iso
+from .evidence import Record, atomic_write, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
 
 
@@ -77,25 +78,89 @@ def interpreter_version(venv: Path) -> str:
         return "python (version unknown)"
 
 
-def release_verdict(releases: list[dict], required_assets: dict[str, str]) -> tuple[str, str, dict, str | None]:
+def _release_assets(
+    releases: list[dict], required_assets: dict[str, str]
+) -> tuple[dict | None, dict[str, list[dict]], dict[str, Any]]:
+    published = [r for r in releases if not r.get("draft") and not r.get("prerelease")]
+    if not published:
+        return None, {}, {"count": len(releases)}
+    latest = published[0]
+    assets = latest.get("assets", [])
+    matches: dict[str, list[dict]] = {}
+    missing: list[str] = []
+    for label, pattern in required_assets.items():
+        usable = []
+        for asset in assets:
+            name = asset.get("name") or ""
+            try:
+                size = int(asset.get("size", 0))
+            except (TypeError, ValueError):
+                size = 0
+            if re.search(pattern, name) and asset.get("state") == "uploaded" and size > 0:
+                usable.append(asset)
+        matches[label] = usable
+        if not usable:
+            missing.append(label)
+    detail = {
+        "tag": latest.get("tag_name"),
+        "published_at": latest.get("published_at"),
+        "assets": [a.get("name") or "" for a in assets],
+        "asset_checks": [
+            {"id": a.get("id"), "name": a.get("name") or "", "state": a.get("state"),
+             "size": a.get("size"), "digest": a.get("digest")}
+            for a in assets
+        ],
+        "missing": missing,
+    }
+    return latest, matches, detail
+
+
+def _asset_key(asset: dict) -> str:
+    return str(asset.get("id") or asset.get("name") or "")
+
+
+def _checksum_filenames(content: str) -> set[str]:
+    names = set()
+    for line in content.splitlines():
+        match = re.fullmatch(r"[0-9a-fA-F]{64}\s+\*?(.+?)\s*", line)
+        if match:
+            names.add(match.group(1).replace("\\", "/").rsplit("/", 1)[-1])
+    return names
+
+
+def release_verdict(
+    releases: list[dict], required_assets: dict[str, str],
+    checksum_contents: dict[str, str] | None = None,
+) -> tuple[str, str, dict, str | None]:
     """Judge a repository's GitHub releases against the catalogue's required assets.
 
     Returns (verdict, summary, detail, tag). A release counts only if it is published
-    (not draft, not prerelease) and every required asset pattern matches at least one
-    asset name. "Some release exists" is never proof of the promise.
+    (not draft, not prerelease), every required pattern matches an uploaded nonempty
+    asset, and the checksum assets cover the required installer filenames.
     """
-    published = [r for r in releases if not r.get("draft") and not r.get("prerelease")]
-    if not published:
-        return "fail", "no published release", {"count": len(releases)}, None
-    latest = published[0]
-    names = [a.get("name") or "" for a in latest.get("assets", [])]
-    missing = [label for label, pattern in required_assets.items()
-               if not any(re.search(pattern, n) for n in names)]
-    detail = {"tag": latest.get("tag_name"), "published_at": latest.get("published_at"), "assets": names,
-              "missing": missing}
-    if missing:
-        return ("fail", f"{latest.get('tag_name')} published but missing: {', '.join(missing)}", detail,
+    latest, matches, detail = _release_assets(releases, required_assets)
+    if latest is None:
+        return "fail", "no published release", detail, None
+    if detail["missing"]:
+        return ("fail", f"{latest.get('tag_name')} published but missing or unusable: {', '.join(detail['missing'])}", detail,
                 latest.get("tag_name"))
+    checksum_labels = [label for label in required_assets if "checksum" in label.lower()]
+    if checksum_labels:
+        covered = set()
+        for label in checksum_labels:
+            for asset in matches[label]:
+                covered.update(_checksum_filenames((checksum_contents or {}).get(_asset_key(asset), "")))
+        installers = {
+            asset.get("name") or ""
+            for label, assets in matches.items() if label not in checksum_labels
+            for asset in assets
+        }
+        uncovered = sorted(name for name in installers if name not in covered)
+        if uncovered:
+            detail["missing"] = [f"checksum for {name}" for name in uncovered]
+            detail["uncovered_assets"] = uncovered
+            return ("fail", f"{latest.get('tag_name')} published but checksums do not cover: {', '.join(uncovered)}",
+                    detail, latest.get("tag_name"))
     return "pass", f"{latest.get('tag_name')} {latest.get('published_at')}", detail, latest.get("tag_name")
 
 
@@ -190,8 +255,30 @@ class Runner:
         d = tree / "desktop"
         if not (d / "package.json").exists():
             return None
-        if (d / "node_modules").exists():
-            return None
+        lockfile = d / "pnpm-lock.yaml"
+        if not lockfile.exists():
+            return Failure("env", "desktop/pnpm-lock.yaml missing")
+        fingerprint = hashlib.sha256()
+        try:
+            for dependency_file in (d / "package.json", lockfile, d / "pnpm-workspace.yaml"):
+                if dependency_file.exists():
+                    fingerprint.update(dependency_file.name.encode())
+                    fingerprint.update(dependency_file.read_bytes())
+        except OSError as exc:
+            return Failure("env", f"desktop dependency inputs could not be read: {type(exc).__name__}",
+                           {"directory": str(d)})
+        expected = fingerprint.hexdigest()
+        marker = d / ".lcstatus-pnpm-ready"
+        try:
+            if (d / "node_modules").is_dir() and marker.read_text().strip() == expected:
+                return None
+        except (OSError, UnicodeError):
+            pass
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError as exc:
+            return Failure("env", f"desktop dependency marker could not be cleared: {type(exc).__name__}",
+                           {"directory": str(d)})
         pnpm = find_tool("pnpm")
         if pnpm is None:
             return Failure("env", "pnpm not installed (searched PATH, ~/.nvm/versions/node/*/bin, ~/.local/share/pnpm)")
@@ -205,6 +292,11 @@ class Runner:
                            {"directory": str(d)})
         if r.returncode != 0:
             return Failure("env", r.stderr[-300:])
+        try:
+            atomic_write(marker, expected + "\n")
+        except OSError as exc:
+            return Failure("env", f"desktop dependency marker could not be written: {type(exc).__name__}",
+                           {"directory": str(d)})
         return None
 
     # ---- source inspection ----------------------------------------------------------
@@ -521,7 +613,25 @@ class Runner:
         if isinstance(rel, Failure):
             return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
                           summary=f"{rel.what}: {rel.why}", **base)
-        verdict, summary, detail, tag = release_verdict(rel, required_assets or {})
+        requirements = required_assets or {}
+        latest, matches, preliminary = _release_assets(rel, requirements)
+        checksum_contents: dict[str, str] = {}
+        if latest is not None and not preliminary.get("missing"):
+            checksum_labels = [label for label in requirements if "checksum" in label.lower()]
+            for label in checksum_labels:
+                for asset in matches[label]:
+                    asset_id = asset.get("id")
+                    if asset_id is None:
+                        return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
+                                      summary=f"release {latest.get('tag_name')} checksum asset has no API id",
+                                      detail=preliminary, **base)
+                    content = self.gh.release_asset_text(gh_repo, asset_id)
+                    if isinstance(content, Failure):
+                        return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
+                                      summary=f"release {latest.get('tag_name')} checksum could not be read: {content.why}",
+                                      detail=preliminary, **base)
+                    checksum_contents[_asset_key(asset)] = content
+        verdict, summary, detail, tag = release_verdict(rel, requirements, checksum_contents)
         if verdict != "pass":
             return Record(verdict=verdict, revision=rev.sha, revision_time=rev.committed_at, summary=summary,
                           detail=detail, **base)
