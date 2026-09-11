@@ -195,7 +195,14 @@ class Runner:
         pnpm = find_tool("pnpm")
         if pnpm is None:
             return Failure("env", "pnpm not installed (searched PATH, ~/.nvm/versions/node/*/bin, ~/.local/share/pnpm)")
-        r = subprocess.run([pnpm, "install", "--frozen-lockfile", "--silent"], cwd=d, capture_output=True, text=True, timeout=900)
+        try:
+            r = subprocess.run([pnpm, "install", "--frozen-lockfile", "--silent"], cwd=d,
+                               capture_output=True, text=True, timeout=900)
+        except subprocess.TimeoutExpired:
+            return Failure("env", "pnpm install timed out after 900 seconds", {"directory": str(d)})
+        except OSError as exc:
+            return Failure("env", f"pnpm install could not start: {type(exc).__name__}",
+                           {"directory": str(d)})
         if r.returncode != 0:
             return Failure("env", r.stderr[-300:])
         return None

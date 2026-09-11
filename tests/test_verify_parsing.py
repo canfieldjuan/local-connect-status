@@ -7,6 +7,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from lcstatus.evidence import Record
 
 
@@ -301,3 +303,36 @@ def test_editable_install_timeout_becomes_an_explicit_failure(tmp_path: Path, mo
     assert isinstance(result, Failure)
     assert result.what == "env" and result.why == "editable install timed out after 900 seconds"
     assert result.detail["extra"] == str(extra)
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (subprocess.TimeoutExpired(["pnpm", "install"], 900), "pnpm install timed out after 900 seconds"),
+        (FileNotFoundError(), "pnpm install could not start: FileNotFoundError"),
+    ],
+)
+def test_desktop_dependency_setup_errors_become_explicit_failures(tmp_path: Path, monkeypatch, error, expected):
+    from lcstatus.sources import Failure
+    from lcstatus.verify import Runner
+
+    class Mirrors:
+        pass
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {}})
+    tree = tmp_path / "tree"
+    desktop = tree / "desktop"
+    desktop.mkdir(parents=True)
+    (desktop / "package.json").write_text("{}")
+    monkeypatch.setattr("lcstatus.verify.find_tool", lambda name: "/usr/bin/pnpm")
+
+    def fail_to_run(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", fail_to_run)
+    result = runner._desktop_deps(tree)
+    assert isinstance(result, Failure)
+    assert result.what == "env" and result.why == expected
+    assert result.detail == {"directory": str(desktop)}
