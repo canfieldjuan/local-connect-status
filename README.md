@@ -56,11 +56,11 @@ compared as absolute instants across timezone offsets. Manual
 observations validate and normalize their observation time, so a backfilled older result cannot
 displace a newer observation.
 
-Evidence also carries a fingerprint of the complete catalogue check configuration that produced
-it. The original pre-fingerprint JSONL prefix is supported without rewriting evidence: the store
-first authenticates that exact byte prefix, then attaches its historical check fingerprints only
-in memory. A changed check configuration remains stale, and later fingerprint-free rows are not
-admitted through the compatibility path.
+Evidence carries fingerprints of both the complete catalogue check configuration and the condition
+claim it was meant to prove. The original pre-fingerprint JSONL prefix is supported without
+rewriting evidence: the store first authenticates that exact byte prefix, then attaches its
+historical check and condition fingerprints only in memory. A changed configuration or claim
+remains stale, and later fingerprint-free rows are not admitted through the compatibility path.
 
 The exact pytest verdict rule: a nonzero exit is `fail` whatever the output said; zero
 executed tests is `skip`; counts come from JUnit XML, not from the summary line.
@@ -138,7 +138,7 @@ test that would fail if the dashboard could be fooled that way:
 | let a late result about an old revision displace a newer one | `test_late_result_for_old_revision_does_not_displace_newer` |
 | accept a cross-app demonstration when one participant has moved | `test_cross_app_demo_with_one_stale_participant_is_changed_since` |
 | let a passing helper test satisfy an installed-demonstration condition | `test_passing_test_cannot_satisfy_demo_condition` |
-| let evidence from a replaced or reconfigured catalogue check satisfy a condition, or treat a new fingerprint-free row as migrated legacy evidence | `test_condition_evidence_must_come_from_its_current_configured_check`, `test_condition_evidence_must_match_the_current_check_configuration`, `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence` |
+| let evidence from a replaced/reconfigured check or a changed condition claim satisfy a condition, or treat a new fingerprint-free row as migrated legacy evidence | `test_condition_evidence_must_come_from_its_current_configured_check`, `test_condition_evidence_must_match_the_current_check_configuration`, `test_condition_evidence_must_match_the_current_claim_semantics`, `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence` |
 | promote anything on a source-string match, or treat a missing string as proof of absence | `test_source_inspection_is_inconclusive_and_never_raises_maturity`, `test_code_change_maps_to_task_and_marker_rename_alone_cannot_prove_removal` |
 | let Linux evidence stand in for Windows, ignore a check's configured platform, or call the bundle ready without Invoice Processor and Document Summarizer Windows observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_check_platform_filters_mixed_evidence_when_condition_omits_platform`, `test_bundle_readiness_requires_each_unproven_installer_observation` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
@@ -152,7 +152,8 @@ test that would fail if the dashboard could be fooled that way:
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |
 | prefer an older workflow rerun over a newer workflow run | `test_latest_distinct_workflow_run_beats_older_rerun_attempt` |
 | delete an unowned compatibility path or read cross-app fixtures from developer checkouts | `test_prepare_owned_symlink_refuses_real_directory_without_deleting_it`, `test_prepare_owned_symlink_refuses_foreign_symlink`, `test_cross_app_runner_uses_all_exact_trees_and_isolated_home` |
-| hide unavailable Actions, Releases, source-inspection, or local-runner sources, trust a partial desktop dependency directory, crash during dependency setup/runtime startup, or fail the web service before generated `site/` exists | `test_unavailable_results_from_any_runner_are_run_failures`, `test_unavailable_local_runner_path_sets_failed_exit_and_banner`, `test_uv_sync_timeout_becomes_an_explicit_failure`, `test_editable_install_timeout_becomes_an_explicit_failure`, `test_desktop_dependency_setup_errors_become_explicit_failures`, `test_desktop_dependency_cache_requires_success_marker_for_current_lockfile`, `test_pytest_startup_error_becomes_unavailable_evidence`, `test_cargo_startup_error_becomes_unavailable_evidence`, `test_cross_app_startup_error_becomes_unavailable_evidence`, `test_web_service_creates_generated_site_before_serving_it` |
+| let inherited `PYTHONPATH` or `PYTHONHOME` redirect an exact-tree pytest run into a developer checkout | `test_pytest_clears_inherited_python_paths_and_records_startup_error` |
+| hide unavailable Actions, Releases, source-inspection, or local-runner sources, trust a partial desktop dependency directory, crash during dependency setup/runtime startup, or fail the web service before generated `site/` exists | `test_unavailable_results_from_any_runner_are_run_failures`, `test_unavailable_local_runner_path_sets_failed_exit_and_banner`, `test_uv_sync_timeout_becomes_an_explicit_failure`, `test_editable_install_timeout_becomes_an_explicit_failure`, `test_desktop_dependency_setup_errors_become_explicit_failures`, `test_desktop_dependency_cache_requires_success_marker_for_current_lockfile`, `test_pytest_clears_inherited_python_paths_and_records_startup_error`, `test_cargo_startup_error_becomes_unavailable_evidence`, `test_cross_app_startup_error_becomes_unavailable_evidence`, `test_web_service_creates_generated_site_before_serving_it` |
 | publish stale status copy, call an incomplete release absent, or embed a record that terminates the dashboard script | `test_next_action_is_derived_from_condition_state_not_catalogue_copy`, `test_release_failure_label_distinguishes_incomplete_from_absent_release`, `test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_driven` |
 | accept forged manual participant metadata or interpolate evidence fields as executable dashboard markup | `test_participant_parser_rejects_ambiguous_or_constructed_metadata`, `test_participant_parser_accepts_exact_catalogue_set_at_sha_boundary`, `test_manual_record_rejects_participant_revision_absent_from_owned_mirror`, `test_dashboard_escapes_every_manual_revision_field_before_inner_html` |
 | keep a release green after its assets disappear because publication time outranks the later check | `test_release_record_uses_target_commit_time_not_publication_time`, `test_current_release_failure_beats_old_pass_with_inflated_publication_time` |

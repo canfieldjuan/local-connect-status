@@ -25,7 +25,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from lcstatus import catalogue as catmod  # noqa: E402
-from lcstatus.evidence import Record, Store, check_fingerprint  # noqa: E402
+from lcstatus.evidence import (  # noqa: E402
+    Record, Store, check_fingerprint, condition_fingerprint_map,
+)
 from lcstatus.sources import Mirrors  # noqa: E402
 
 
@@ -113,7 +115,9 @@ def main() -> int:
                  verdict=a.verdict, platform=a.platform, condition_ids=conds, task_ids=tasks,
                  participants=parts, summary=a.summary, recorded_at=observed_at,
                  source={"type": "manual_observation", "check": a.check,
-                         "check_fingerprint": check_fingerprint(chk), "artifact": a.artifact,
+                         "check_fingerprint": check_fingerprint(chk),
+                         "condition_fingerprints": condition_fingerprint_map(cat, conds),
+                         "artifact": a.artifact,
                          "observed_by": a.observed_by, "observed_at": observed_at})
     store = Store(ROOT / "data" / "records.jsonl")
     print("stored" if store.add(rec) else "already recorded (identical)")

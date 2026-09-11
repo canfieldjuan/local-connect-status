@@ -64,6 +64,29 @@ def check_fingerprint(check: dict[str, Any]) -> str:
     return hashlib.sha256(blob).hexdigest()[:24]
 
 
+def condition_fingerprint(condition: dict[str, Any]) -> str:
+    """Identity for claim fields not already enforced by condition selection."""
+    semantics = {
+        key: value for key, value in condition.items()
+        if key not in ("id", "kind", "check", "platform")
+    }
+    blob = json.dumps(semantics, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:24]
+
+
+def condition_fingerprint_map(
+    catalogue: dict[str, Any], condition_ids: Iterable[str],
+) -> dict[str, str]:
+    """Fingerprints for the named conditions in a loaded catalogue."""
+    wanted = set(condition_ids)
+    return {
+        condition["id"]: condition_fingerprint(condition)
+        for task in catalogue.get("tasks", [])
+        for condition in task.get("conditions", [])
+        if condition["id"] in wanted
+    }
+
+
 # The first collector release wrote these rows before check fingerprints existed.  Preserve
 # that append-only evidence without rewriting it: only this exact byte-for-byte prefix receives
 # its check configuration from the catalogue at c482727.  Later fingerprint-free rows and any
@@ -94,6 +117,36 @@ LEGACY_CHECK_FINGERPRINTS = {
     "manual.ip_removal_test": "0d1d9d4a0948ea9d35e7ca36",
     "xapp.accept_ew_to_ip": "c9984d8175c41be30015fa1d",
 }
+LEGACY_CONDITION_FINGERPRINTS = {
+    "bill.busy_job_queued_and_resubmitted": "25e96a7d7b9288515c8fcd54",
+    "bill.consumer_generic_invoke": "2ece43f6ac0c27e8f52d147b",
+    "bill.cross_app_acceptance": "193b1019dd93bdfe06aa6edd",
+    "bill.installed_removal_demo": "a8c282c2bc2052f4c274171f",
+    "bill.provider_writes_ledger": "275af89eef021c865adea24a",
+    "connect.consumer_ci": "aa45222264ee563dea83a307",
+    "connect.v1_handoff_durable": "d655704cf8455ff141e0a786",
+    "ds.ci_linux": "48bffcf199a3025740ac9868",
+    "ew.adapters_read_only": "1fa3fdeb28aa1d5d9176bdd6",
+    "ew.automation_gated_and_proposes": "27e77bdac3188ff776de3f43",
+    "ew.calendar_write_transactional": "32e138381be613522a7a3f69",
+    "ew.ci_linux": "57527eea63636836fa84e030",
+    "ew.ci_windows_subset": "2399aa7f47ea7fc856567c4f",
+    "ew.notifications_deliver": "a3a4451b7fec6edf65aa51f7",
+    "ew.scheduling_extraction_evidence_bound": "e1324d4ca5c156ed26b4fd29",
+    "ip.extraction_withholds": "11eec3e69621ae1766c29878",
+    "ip.ledger_states_and_dupes": "ae1b9c97e8e86818b27e516f",
+    "ip.records_survive_uninstall": "dabfdc1be0c1d842cc648351",
+    "ip.suite_green": "5297fe9cd06e64747cde1068",
+    "rel.ds_windows": "7a2ac4f145b4091c606e9ab2",
+    "rel.ew_linux_desktop_builds": "3fa4c7a0cca55748d3c393b4",
+    "rel.ew_windows_installer_builds": "623e32f0bbde454e6a978ef7",
+    "rel.ip_packaging_checks": "ad1f65aefde6b8bc45fdb099",
+    "rel.ip_removal_demo": "e77c00ed3e37dfc459b6eb63",
+    "rel.published": "6652df2bac68a6566231441f",
+    "rel.published_ds": "2837ea5a3f5eff1f268ccec7",
+    "rel.published_ew": "2591a9cb8fdd5088344e5700",
+    "rel.published_ip": "84b64b92c2f103104d9f153b",
+}
 
 
 def record_check_fingerprint(record: Any) -> str | None:
@@ -102,6 +155,18 @@ def record_check_fingerprint(record: Any) -> str | None:
     if explicit is not None:
         return explicit
     return getattr(record, "_legacy_check_fingerprint", None)
+
+
+def record_condition_fingerprints(record: Any) -> dict[str, str]:
+    """Return persisted condition identities or authenticated in-memory legacy identities."""
+    explicit = record.source.get("condition_fingerprints")
+    if isinstance(explicit, dict):
+        return explicit
+    return getattr(record, "_legacy_condition_fingerprints", {})
+
+
+def record_condition_fingerprint(record: Any, condition_id: str) -> str | None:
+    return record_condition_fingerprints(record).get(condition_id)
 
 
 @dataclass
@@ -178,6 +243,9 @@ class Record:
         fingerprint = record_check_fingerprint(self)
         if fingerprint is not None:
             stable_source["check_fingerprint"] = fingerprint
+        condition_fingerprints = record_condition_fingerprints(self)
+        if condition_fingerprints:
+            stable_source["condition_fingerprints"] = condition_fingerprints
         key = {
             "kind": self.kind,
             "repo": self.repo,
@@ -225,6 +293,11 @@ class Store:
                     historical = LEGACY_CHECK_FINGERPRINTS.get(rec.source.get("check"))
                     if historical is not None:
                         rec._legacy_check_fingerprint = historical
+                    rec._legacy_condition_fingerprints = {
+                        condition_id: LEGACY_CONDITION_FINGERPRINTS[condition_id]
+                        for condition_id in rec.condition_ids
+                        if condition_id in LEGACY_CONDITION_FINGERPRINTS
+                    }
                 if rec.record_id not in self._ids:
                     self._ids.add(rec.record_id)
                     self._records.append(rec)

@@ -165,6 +165,7 @@ def test_uv_sync_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch
 
 
 def test_source_inspection_reads_only_the_extracted_revision(tmp_path: Path):
+    from lcstatus.evidence import condition_fingerprint
     from lcstatus.sources import Revision
     from lcstatus.verify import Runner
 
@@ -180,7 +181,14 @@ def test_source_inspection_reads_only_the_extracted_revision(tmp_path: Path):
     class GitHub:
         pass
 
-    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ew": {}}})
+    condition = {
+        "id": "condition", "kind": "source_inspection", "check": "inspect.scheduler",
+        "proves": "the queue is pumped",
+    }
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {
+        "repos": {"ew": {}},
+        "tasks": [{"id": "task", "conditions": [condition]}],
+    })
     record = runner.source_inspection(
         "inspect.scheduler",
         {"repo": "ew", "paths": ["scheduler.rs", "missing.rs"],
@@ -193,6 +201,9 @@ def test_source_inspection_reads_only_the_extracted_revision(tmp_path: Path):
     assert record.detail["marker_hits"] == {"queue pump": ["scheduler.rs"]}
     assert record.detail["missing_paths"] == ["missing.rs"]
     assert "1/1 configured markers found" in record.summary
+    assert record.source["condition_fingerprints"] == {
+        "condition": condition_fingerprint(condition),
+    }
 
 
 
@@ -492,7 +503,7 @@ def test_desktop_dependency_cache_requires_success_marker_for_current_lockfile(t
     assert len(calls) == 3
 
 
-def test_pytest_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
+def test_pytest_clears_inherited_python_paths_and_records_startup_error(tmp_path: Path, monkeypatch):
     from lcstatus.sources import Revision
     from lcstatus.verify import Runner
 
@@ -510,13 +521,23 @@ def test_pytest_startup_error_becomes_unavailable_evidence(tmp_path: Path, monke
 
     runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ip": {}}})
     monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
-    monkeypatch.setattr("lcstatus.verify.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setenv("PYTHONPATH", "/developer/checkout/src")
+    monkeypatch.setenv("PYTHONHOME", "/developer/python")
+    captured = {}
+
+    def fail_to_start(*args, **kwargs):
+        captured.update(kwargs["env"])
+        raise FileNotFoundError()
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", fail_to_start)
     record = runner.pytest(
         "ip.test", {"repo": "ip", "args": []},
         Revision("ip", "a" * 40, "2026-09-11T00:00:00+00:00", "head"), ["condition"], ["task"],
     )
     assert record.verdict == "unavailable"
     assert record.summary == "could not start: FileNotFoundError"
+    assert "PYTHONPATH" not in captured and "PYTHONHOME" not in captured
+    assert captured["PYTHONNOUSERSITE"] == "1"
 
 
 def test_cargo_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):

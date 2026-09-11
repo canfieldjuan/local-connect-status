@@ -58,6 +58,7 @@ def test_manual_record_uses_normalized_observation_time(monkeypatch):
     record = captured["record"]
     assert record.recorded_at == "2026-09-08T15:47:51+00:00"
     assert record.source["observed_at"] == record.recorded_at
+    assert set(record.source["condition_fingerprints"]) == {"condition"}
 
 
 @pytest.mark.parametrize("value", ["not-a-time", "2026-09-08T10:47:51"])

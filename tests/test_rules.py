@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 
 from lcstatus.change import assess
-from lcstatus.evidence import Record, Store, check_fingerprint, record_check_fingerprint
+from lcstatus.evidence import (
+    Record, Store, check_fingerprint, condition_fingerprint,
+    record_check_fingerprint, record_condition_fingerprint,
+)
 from lcstatus.rules import condition_status as _condition_status, task_status
 
 CAT = {
@@ -51,6 +54,7 @@ def rec(kind, verdict, revision=NEW, cond="c1", **kw):
     kw.setdefault("source", {
         "check": check_id,
         "check_fingerprint": check_fingerprint(check),
+        "condition_fingerprints": {cond: condition_fingerprint({})},
     })
     return Record(kind=kind, revision=revision, verdict=verdict, condition_ids=[cond], **kw)
 
@@ -136,6 +140,34 @@ def test_condition_evidence_must_match_the_current_check_configuration():
     assert accepted.conditions[0].state == "satisfied"
 
 
+def test_condition_evidence_must_match_the_current_claim_semantics():
+    former = {"id": "c1", "kind": "automated_test", "check": "t.pytest", "proves": "old claim"}
+    current = {"id": "c1", "kind": "automated_test", "check": "t.pytest", "proves": "new claim"}
+    stale = rec(
+        "automated_test", "pass", executed=3, failed=0,
+        source={
+            "check": "t.pytest",
+            "check_fingerprint": check_fingerprint(CAT["checks"]["t.pytest"]),
+            "condition_fingerprints": {"c1": condition_fingerprint(former)},
+        },
+    )
+    fresh = rec(
+        "automated_test", "pass", executed=3, failed=0,
+        source={
+            "check": "t.pytest",
+            "check_fingerprint": check_fingerprint(CAT["checks"]["t.pytest"]),
+            "condition_fingerprints": {"c1": condition_fingerprint(current)},
+        },
+    )
+
+    assert _condition_status(
+        current, [stale], {"ip": NEW}, "ip", CAT["checks"]["t.pytest"],
+    ).state == "no_evidence"
+    assert _condition_status(
+        current, [stale, fresh], {"ip": NEW}, "ip", CAT["checks"]["t.pytest"],
+    ).state == "satisfied"
+
+
 def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp_path: Path):
     root = Path(__file__).resolve().parent.parent
     catalogue = json.loads((root / "catalogue.json").read_text())
@@ -152,6 +184,21 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
         assert historical is not None
         assert (historical == current) is (record.source["check"] != "xapp.accept_ew_to_ip")
 
+    conditions = {
+        condition["id"]: condition
+        for task_definition in catalogue["tasks"]
+        for condition in task_definition["conditions"]
+    }
+    for record in legacy_check_records:
+        for condition_id in record.condition_ids:
+            historical = record_condition_fingerprint(record, condition_id)
+            assert historical is not None
+            if condition_id in conditions:
+                current = condition_fingerprint(conditions[condition_id])
+                assert (historical == current) is (
+                    condition_id not in {"bill.cross_app_acceptance", "rel.ds_windows"}
+                )
+
     installed = next(r for r in migrated if r.source.get("check") == "manual.ip_removal_test")
     cross_app = next(r for r in migrated if r.source.get("check") == "xapp.accept_ew_to_ip")
     assert record_check_fingerprint(installed) == check_fingerprint(
@@ -161,14 +208,8 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
         catalogue["checks"]["xapp.accept_ew_to_ip"]
     )
 
-    installed_condition = {
-        "id": installed.condition_ids[0], "kind": installed.kind,
-        "check": "manual.ip_removal_test",
-    }
-    cross_app_condition = {
-        "id": cross_app.condition_ids[0], "kind": cross_app.kind,
-        "check": "xapp.accept_ew_to_ip",
-    }
+    installed_condition = conditions[installed.condition_ids[0]]
+    cross_app_condition = conditions[cross_app.condition_ids[0]]
     assert _condition_status(
         installed_condition, [installed], dict(installed.participants), installed.repo,
         catalogue["checks"]["manual.ip_removal_test"],
@@ -188,7 +229,9 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
     copied.write_bytes(original + appended.to_json().encode() + b"\n")
     loaded = Store(copied).all()
     assert record_check_fingerprint(loaded[0]) is not None
+    assert record_condition_fingerprint(loaded[0], installed.condition_ids[0]) is not None
     assert record_check_fingerprint(loaded[-1]) is None
+    assert record_condition_fingerprint(loaded[-1], installed.condition_ids[0]) is None
 
     altered = tmp_path / "altered-records.jsonl"
     altered.write_bytes(b" " + original)
@@ -198,6 +241,8 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
     ]
     assert altered_legacy
     assert all(record_check_fingerprint(r) is None for r in altered_legacy)
+    assert all(not any(record_condition_fingerprint(r, cid) for cid in r.condition_ids)
+               for r in altered_legacy)
 
 
 def test_source_inspection_is_inconclusive_and_never_raises_maturity():
@@ -282,7 +327,13 @@ def test_release_promise_requires_licence_and_first_run_model_evidence(missing_i
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
-            source={"check": condition["check"], "check_fingerprint": check_fingerprint(check)},
+            source={
+                "check": condition["check"],
+                "check_fingerprint": check_fingerprint(check),
+                "condition_fingerprints": {
+                    condition["id"]: condition_fingerprint(condition),
+                },
+            },
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         )
@@ -346,7 +397,8 @@ def test_release_absence_is_an_explicit_not_met_at_current_head():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     r = Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
                revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
-               source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})
+               source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"]),
+                       "condition_fingerprints": {"r1": condition_fingerprint({})}})
     s = task_status(t, [r], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "check_failed" and s.maturity == "planned"
 
@@ -362,8 +414,9 @@ def test_missing_release_is_not_a_failing_check_for_freshness():
               {"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     recs = [rec("automated_test", "pass", executed=1, failed=0, platform="linux"),
             Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
-                   revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
-                   source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})]
+                       revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
+                       source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"]),
+                               "condition_fingerprints": {"r1": condition_fingerprint({})}})]
     s = task_status(t, recs, {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[1].state == "check_failed" and s.freshness == "not_checked" and s.maturity == "built"
 
@@ -389,7 +442,8 @@ def test_release_of_older_code_is_changed_since_once_main_moves_on():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     old_release = Record(kind="release_artifact", repo="ip", revision=OLD, verdict="pass", condition_ids=["r1"],
                          revision_time="2026-09-01T00:00:00+00:00", summary="v1",
-                         source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})
+                         source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"]),
+                                 "condition_fingerprints": {"r1": condition_fingerprint({})}})
     s = task_status(t, [old_release], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "changed_since" and s.maturity != "released"
 
@@ -621,7 +675,13 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
-            source={"check": condition["check"], "check_fingerprint": check_fingerprint(check)},
+                source={
+                    "check": condition["check"],
+                    "check_fingerprint": check_fingerprint(check),
+                    "condition_fingerprints": {
+                        condition["id"]: condition_fingerprint(condition),
+                    },
+                },
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         ))
@@ -633,9 +693,14 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
 
     records.append(Record(
         kind="installed_demo", repo="invoice-processor", revision=heads["invoice-processor"],
-        verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
-        source={"check": "manual.ip_windows_install",
-                "check_fingerprint": check_fingerprint(checks["manual.ip_windows_install"])},
+            verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
+            source={"check": "manual.ip_windows_install",
+                    "check_fingerprint": check_fingerprint(checks["manual.ip_windows_install"]),
+                    "condition_fingerprints": {
+                        "rel.ip_windows_installer_demo": condition_fingerprint(
+                            conditions["rel.ip_windows_installer_demo"]
+                        ),
+                    }},
     ))
     ready = task_status(release_task, records, heads, catalogue, catalogue["release"])
     assert ready.maturity == "ready for release"
@@ -646,6 +711,7 @@ def test_actions_recovery_survives_volatile_source_metadata(tmp_path: Path):
     success_source = {
         "type": "github_actions", "check": "t.ci.win",
         "check_fingerprint": check_fingerprint(CAT["checks"]["t.ci.win"]),
+        "condition_fingerprints": {"c2": condition_fingerprint({})},
         "workflow": "CI", "job": "test",
         "run_id": 101, "job_id": 202, "url": "https://example.invalid/job/202", "run_attempt": 1,
     }
@@ -656,7 +722,8 @@ def test_actions_recovery_survives_volatile_source_metadata(tmp_path: Path):
     outage = rec(
         "ci_run", "unavailable", cond="c2", platform="windows",
         source={"type": "github_actions", "check": "t.ci.win",
-                "check_fingerprint": check_fingerprint(CAT["checks"]["t.ci.win"])},
+                "check_fingerprint": check_fingerprint(CAT["checks"]["t.ci.win"]),
+                "condition_fingerprints": {"c2": condition_fingerprint({})}},
         recorded_at="2026-09-11T10:01:00+00:00",
     )
     recovery = rec(

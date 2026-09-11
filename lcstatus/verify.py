@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from .evidence import Record, atomic_write, check_fingerprint, now_iso
+from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
 
 
@@ -70,9 +70,20 @@ def uv_sync_command(python: str | None) -> list[str]:
     return cmd
 
 
+def sanitized_python_env(**updates: str) -> dict[str, str]:
+    """Environment for exact-tree Python processes, free of caller import-path overrides."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONHOME", "PYTHONPATH")}
+    env["PYTHONNOUSERSITE"] = "1"
+    env.update(updates)
+    return env
+
+
 def interpreter_version(venv: Path) -> str:
     try:
-        r = subprocess.run([str(venv / "bin" / "python"), "--version"], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            [str(venv / "bin" / "python"), "--version"],
+            capture_output=True, text=True, timeout=30, env=sanitized_python_env(),
+        )
         return (r.stdout or r.stderr).strip()
     except (OSError, subprocess.SubprocessError):
         return "python (version unknown)"
@@ -239,6 +250,18 @@ class Runner:
         self.cat = catalogue
         self.logs.mkdir(parents=True, exist_ok=True)
 
+    def _source(
+        self, source_type: str, check_id: str, check: dict[str, Any],
+        condition_ids: list[str], **extra: Any,
+    ) -> dict[str, Any]:
+        return {
+            "type": source_type,
+            "check": check_id,
+            "check_fingerprint": check_fingerprint(check),
+            "condition_fingerprints": condition_fingerprint_map(self.cat, condition_ids),
+            **extra,
+        }
+
     # ---- trees & environments --------------------------------------------------------
 
     def tree(self, repo: str, sha: str) -> Failure | Path:
@@ -253,7 +276,7 @@ class Runner:
         if not shutil.which("uv"):
             return Failure("env", "uv not installed")
         venv = tree / ".venv"
-        env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv))
+        env = sanitized_python_env(UV_PROJECT_ENVIRONMENT=str(venv))
         try:
             r = subprocess.run(uv_sync_command(self.cat["repos"].get(repo, {}).get("python")), cwd=tree,
                                capture_output=True, text=True, timeout=1200, env=env)
@@ -267,7 +290,8 @@ class Runner:
         for extra in extra_trees:
             try:
                 r = subprocess.run(["uv", "pip", "install", "--quiet", "--python", str(py), "-e", str(extra)],
-                                   capture_output=True, text=True, timeout=900)
+                                   capture_output=True, text=True, timeout=900,
+                                   env=sanitized_python_env())
             except subprocess.TimeoutExpired:
                 return Failure("env", "editable install timed out after 900 seconds",
                                {"repo": repo, "sha": sha, "extra": str(extra)})
@@ -334,8 +358,7 @@ class Runner:
         base = dict(kind="source_inspection", repo=repo, revision=rev.sha,
                     revision_time=rev.committed_at, platform=check.get("platform", "n/a"),
                     condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "source_inspection", "check": check_id,
-                            "check_fingerprint": check_fingerprint(check)})
+                    source=self._source("source_inspection", check_id, check, condition_ids))
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -366,8 +389,9 @@ class Runner:
         repo = check["repo"]
         base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
                     platform=check.get("platform", "linux"), condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "local_runner", "check": check_id,
-                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
+                    source=self._source(
+                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
+                    ))
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -386,7 +410,10 @@ class Runner:
                f"--junitxml={junit}", *check.get("args", [])]
         t0 = time.time()
         try:
-            r = subprocess.run(cmd, cwd=tree, capture_output=True, text=True, timeout=3600)
+            r = subprocess.run(
+                cmd, cwd=tree, capture_output=True, text=True, timeout=3600,
+                env=sanitized_python_env(),
+            )
         except subprocess.TimeoutExpired:
             return Record(verdict="unavailable", summary="timeout", command=" ".join(cmd), **base)
         except OSError as exc:
@@ -426,8 +453,9 @@ class Runner:
         repo = check["repo"]
         base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
                     platform="linux", condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "local_runner", "check": check_id,
-                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
+                    source=self._source(
+                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
+                    ))
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -477,8 +505,9 @@ class Runner:
         base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha,
                     revision_time=ip.committed_at, platform="linux", condition_ids=condition_ids,
                     task_ids=task_ids, participants=participants,
-                    source={"type": "local_runner", "check": check_id,
-                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
+                    source=self._source(
+                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
+                    ))
         trees: dict[str, Path] = {}
         for repo in check["participants"]:
             tree = self.tree(repo, revs[repo].sha)
@@ -524,10 +553,12 @@ class Runner:
                 return Record(verdict="unavailable", summary=failure.why, **base)
             linked = True
             log = self.logs / f"{check_id}.{ip.sha[:8]}-{ew.sha[:8]}.log"
-            env = {k: v for k, v in os.environ.items() if k != "ACCEPTANCE_MODEL"}
-            env["HOME"] = str(compat_home)
-            env["PYTHONPATH"] = str(ew_tree / "src")
-            env["ACCEPTANCE_DIR"] = str(self.cache / "xapp-runs" / key)
+            env = sanitized_python_env(
+                HOME=str(compat_home),
+                PYTHONPATH=str(ew_tree / "src"),
+                ACCEPTANCE_DIR=str(self.cache / "xapp-runs" / key),
+            )
+            env.pop("ACCEPTANCE_MODEL", None)
             wrapper = (
                 "import sys, runpy\n"
                 f"sys.path.insert(0, {str(ip_tree)!r})\n"
@@ -581,17 +612,17 @@ class Runner:
                 conds, tasks = cond_map.get(cid, ([], []))
                 out.append(Record(kind="ci_run", repo=repo, revision=rev.sha, revision_time=rev.committed_at, verdict="unavailable",
                                   platform=chk.get("platform", "n/a"), condition_ids=conds, task_ids=tasks,
-                                  source={"type": "github_actions", "check": cid,
-                                          "check_fingerprint": check_fingerprint(chk)},
+                                  source=self._source("github_actions", cid, chk, conds),
                                   summary=f"{runs.what}: {runs.why}"))
             return out
         by_workflow = latest_workflow_runs(runs)
         for cid, chk in checks.items():
             conds, tasks = cond_map.get(cid, ([], []))
             run = by_workflow.get(chk["workflow"])
-            src = {"type": "github_actions", "check": cid,
-                   "check_fingerprint": check_fingerprint(chk),
-                   "workflow": chk["workflow"], "job": chk["job"]}
+            src = self._source(
+                "github_actions", cid, chk, conds,
+                workflow=chk["workflow"], job=chk["job"],
+            )
             if run is None:
                 out.append(Record(kind="ci_run", repo=repo, revision=rev.sha, revision_time=rev.committed_at, verdict="unknown",
                                   platform=chk.get("platform", "n/a"), condition_ids=conds, task_ids=tasks, source=src,
@@ -645,8 +676,7 @@ class Runner:
         rel = self.gh.releases(gh_repo)
         base = dict(kind="release_artifact", repo=repo, platform="n/a",
                     condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "github_releases", "check": check_id,
-                            "check_fingerprint": check_fingerprint(check)})
+                    source=self._source("github_releases", check_id, check, condition_ids))
         if isinstance(rel, Failure):
             return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
                           summary=f"{rel.what}: {rel.why}", **base)
