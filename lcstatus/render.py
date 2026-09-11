@@ -88,7 +88,8 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
             {"repo": r.repo, "from": r.detail.get("old") or r.summary.split(" -> ")[0], "to": r.revision[:12],
              "summary": r.summary, "affected_tasks": r.task_ids, "unmapped_files": r.detail.get("unmapped_files", []),
              "docs_only": r.detail.get("docs_only"), "touches_contract_text": r.detail.get("touches_contract_text"),
-             "commits": r.detail.get("commits", [])[:8], "recorded_at": r.recorded_at}
+             "commits": r.detail.get("commits", [])[:8],
+             "commits_complete": r.detail.get("commits_complete", True), "recorded_at": r.recorded_at}
             for r in latest_changes
         ],
         "tasks": [
@@ -180,6 +181,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
         w("")
         for c in p["recent_changes"]:
             w(f"- **{c['repo']}** {c['summary']} — affected: {', '.join(c['affected_tasks']) or 'none mapped'}"
+              + ("; commit list unavailable, retry pending" if not c.get("commits_complete", True) else "")
               + (f"; unmapped files needing assessment: {len(c['unmapped_files'])}" if c["unmapped_files"] else "")
               + (" (docs only)" if c.get("docs_only") else ""))
     return "\n".join(L) + "\n"
@@ -258,7 +260,7 @@ function render(view){
   const show = view==='overview'? p.tasks : view==='release' ? p.tasks.filter(t=>t.layer==='release') : p.tasks.filter(t=>t.app===view);
   if(view==='overview'){
     h+=`<h2>Where the code is</h2><table><thead><tr><th>Repository</th><th>Head</th><th>Commit</th></tr></thead><tbody>${Object.entries(p.heads).map(([r,x])=>`<tr><td>${esc(r)}</td><td><code>${esc((x.sha||'').slice(0,12))}</code></td><td>${esc(x.subject||'—')}</td></tr>`).join('')}</tbody></table>`;
-    if(p.recent_changes.length){h+=`<h2>Recent changes observed</h2><ul>${p.recent_changes.map(c=>`<li><b>${esc(c.repo)}</b> ${esc(c.summary)} — affected: ${c.affected_tasks.length?c.affected_tasks.map(esc).join(', '):'none mapped'}${c.unmapped_files.length?` · <span class="pill p-warn">${c.unmapped_files.length} unmapped file(s) need assessment</span>`:''}${c.docs_only?' · <span class="pill p-info">docs only</span>':''}${c.touches_contract_text?' · <span class="pill p-info">contract text</span>':''}</li>`).join('')}</ul>`;}
+    if(p.recent_changes.length){h+=`<h2>Recent changes observed</h2><ul>${p.recent_changes.map(c=>`<li><b>${esc(c.repo)}</b> ${esc(c.summary)} — affected: ${c.affected_tasks.length?c.affected_tasks.map(esc).join(', '):'none mapped'}${!c.commits_complete?' · <span class="pill p-bad">commit list unavailable; retry pending</span>':''}${c.unmapped_files.length?` · <span class="pill p-warn">${c.unmapped_files.length} unmapped file(s) need assessment</span>`:''}${c.docs_only?' · <span class="pill p-info">docs only</span>':''}${c.touches_contract_text?' · <span class="pill p-info">contract text</span>':''}</li>`).join('')}</ul>`;}
   }
   for(const layer of ['standalone','connect','automate','release']){
     const ts=show.filter(t=>t.layer===layer); if(!ts.length) continue;

@@ -36,7 +36,7 @@ SITE = ROOT / "site"
 def load_state(path: Path) -> dict[str, Any]:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
-    return {"heads": {}, "runs": 0}
+    return {"heads": {}, "change_baselines": {}, "runs": 0}
 
 
 HEAD_FAILURES = {"head", "git_head", "github_head_mismatch"}
@@ -99,12 +99,17 @@ def main(argv: list[str] | None = None) -> int:
     store = Store(data / "records.jsonl")
     state_path = data / "state.json"
     state = load_state(state_path)
+    # `heads` is the latest confirmed display state. Change baselines advance only after
+    # the whole diff and commit range has been read, so a transient read failure is retried.
+    change_baselines = dict(state.get("change_baselines", state.get("heads", {})))
     failures: list[dict[str, Any]] = []
 
     if args.set_baseline:
         for item in args.set_baseline:
             repo, sha = item.split("=", 1)
             state["heads"][repo] = sha
+            change_baselines[repo] = sha
+        state["change_baselines"] = change_baselines
         atomic_write(state_path, json.dumps(state, indent=2))
         print(f"baseline set: {args.set_baseline}")
         return 0
@@ -163,8 +168,10 @@ def main(argv: list[str] | None = None) -> int:
                          summary=head.subject, source={"type": "mirror", "stale": stale_note},
                          detail={"branch": "main"})
             store.add(rec)
-            prev = state["heads"].get(repo)
-            if prev and prev != head.sha:
+            prev = change_baselines.get(repo)
+            if not prev:
+                change_baselines[repo] = head.sha
+            elif prev != head.sha:
                 changed[repo] = (prev, head.sha)
                 files = mirrors.changed_files(repo, prev, head.sha)
                 if isinstance(files, Failure):
@@ -185,12 +192,16 @@ def main(argv: list[str] | None = None) -> int:
                             source={"type": "mirror_commits"}, detail={"old": prev},
                         ))
                         commit_summaries: list[str] = []
+                        commits_complete = False
                     else:
                         commit_summaries = commits[:50]
+                        commits_complete = True
+                        change_baselines[repo] = head.sha
                     store.add(Record(kind="change", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
                                      task_ids=sorted(a.affected_tasks), summary=f"{prev[:12]} -> {head.sha[:12]}: {len(files)} files",
                                      source={"type": "mirror_diff"},
-                                     detail=dict(a.as_detail(), old=prev, commits=commit_summaries)))
+                                     detail=dict(a.as_detail(), old=prev, commits=commit_summaries,
+                                                 commits_complete=commits_complete)))
 
         # ---- decide what to verify --------------------------------------------------
         cond_map: dict[str, tuple[list[str], list[str]]] = {}
@@ -260,6 +271,7 @@ def main(argv: list[str] | None = None) -> int:
                 store_result(store, failures, r)
 
         state["heads"].update(heads)
+        state["change_baselines"] = change_baselines
         state["unknown_heads"] = sorted(set(cat["repos"]) - set(heads))
         state["runs"] = state.get("runs", 0) + 1
         state["last_run_at"] = now_iso()

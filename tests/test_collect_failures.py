@@ -349,7 +349,8 @@ def test_empty_commit_range_and_failed_commit_read_stay_distinct(tmp_path: Path,
     assert failed.what == "commits" and failed.why == "timed out"
 
 
-def test_commit_log_failure_sets_failed_exit_without_losing_change_mapping(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["diff", "commits"])
+def test_failed_change_read_retries_before_advancing_baseline(tmp_path: Path, monkeypatch, failure_stage):
     import lcstatus.collect as collect
     from lcstatus.sources import Failure, Revision
 
@@ -366,6 +367,8 @@ def test_commit_log_failure_sets_failed_exit_without_losing_change_mapping(tmp_p
     catalogue_path.write_text(json.dumps(catalogue))
     old, new = "a" * 40, "b" * 40
     revision = Revision("ghost", new, "2026-09-11T00:00:00+00:00", "head")
+    diff_calls = []
+    commit_calls = []
 
     class FakeMirrors:
         def __init__(self, *args, **kwargs):
@@ -378,10 +381,16 @@ def test_commit_log_failure_sets_failed_exit_without_losing_change_mapping(tmp_p
             return revision
 
         def changed_files(self, repo, before, after):
+            diff_calls.append((before, after))
+            if failure_stage == "diff" and len(diff_calls) == 1:
+                return Failure("diff", "git diff timed out")
             return ["unmapped.py"]
 
         def commits_between(self, repo, before, after):
-            return Failure("commits", "git log timed out")
+            commit_calls.append((before, after))
+            if failure_stage == "commits" and len(commit_calls) == 1:
+                return Failure("commits", "git log timed out")
+            return ["abc change"]
 
     class FakeGitHub:
         def default_branch_head(self, repo):
@@ -405,12 +414,72 @@ def test_commit_log_failure_sets_failed_exit_without_losing_change_mapping(tmp_p
     ])
 
     status = json.loads((site / "status.json").read_text())
-    records = [json.loads(line) for line in (data / "records.jsonl").read_text().splitlines()]
+    state = json.loads((data / "state.json").read_text())
     assert rc == 2
-    assert status["source_failures"] == [
-        {"repo": "ghost", "what": "commits", "why": "git log timed out"}
-    ]
-    change = next(record for record in records if record["kind"] == "change")
-    assert change["detail"]["unmapped_files"] == ["unmapped.py"]
-    assert change["detail"]["commits"] == []
-    assert any(record["source"].get("type") == "mirror_commits" for record in records)
+    assert status["heads"]["ghost"]["sha"] == new
+    assert state["heads"]["ghost"] == new
+    assert state["change_baselines"]["ghost"] == old
+    assert status["source_failures"] == [{
+        "repo": "ghost",
+        "what": failure_stage,
+        "why": f"git {failure_stage if failure_stage == 'diff' else 'log'} timed out",
+    }]
+    if failure_stage == "commits":
+        assert status["recent_changes"][0]["commits_complete"] is False
+        assert "commit list unavailable; retry pending" in (site / "dashboard.html").read_text()
+        assert "commit list unavailable, retry pending" in (site / "report.md").read_text()
+
+    render_rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data), "--site", str(site), "--render-only",
+    ])
+    rendered = json.loads((site / "status.json").read_text())
+    assert render_rc == 2
+    assert rendered["heads"]["ghost"]["sha"] == new
+    assert json.loads((data / "state.json").read_text())["change_baselines"]["ghost"] == old
+
+    retry_rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data), "--site", str(site), "--no-local",
+    ])
+    retried_status = json.loads((site / "status.json").read_text())
+    retried_state = json.loads((data / "state.json").read_text())
+    records = [json.loads(line) for line in (data / "records.jsonl").read_text().splitlines()]
+    changes = [record for record in records if record["kind"] == "change"]
+    assert retry_rc == 0
+    assert retried_status["source_failures"] == []
+    assert retried_state["heads"]["ghost"] == new
+    assert retried_state["change_baselines"]["ghost"] == new
+    assert diff_calls == [(old, new), (old, new)]
+    assert commit_calls == [(old, new)] * (1 if failure_stage == "diff" else 2)
+    assert any(change["detail"]["unmapped_files"] == ["unmapped.py"] for change in changes)
+    assert any(change["detail"]["commits"] == ["abc change"] for change in changes)
+    if failure_stage == "commits":
+        assert any(change["detail"]["commits_complete"] is False for change in changes)
+        assert len(changes) == 2
+
+
+def test_set_baseline_seeds_display_head_and_change_baseline(tmp_path: Path):
+    import lcstatus.collect as collect
+
+    catalogue = {
+        "catalogue_version": 1,
+        "release": {
+            "target": "t", "required_platforms": ["linux", "windows"],
+            "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None},
+        },
+        "repos": {"ghost": {"github": "example/ghost", "ci_workflows": []}},
+        "apps": {}, "checks": {}, "tasks": [],
+    }
+    catalogue_path = tmp_path / "catalogue.json"
+    catalogue_path.write_text(json.dumps(catalogue))
+    data = tmp_path / "data"
+    sha = "a" * 40
+
+    rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data),
+        "--site", str(tmp_path / "site"), "--set-baseline", f"ghost={sha}",
+    ])
+
+    state = json.loads((data / "state.json").read_text())
+    assert rc == 0
+    assert state["heads"] == {"ghost": sha}
+    assert state["change_baselines"] == {"ghost": sha}

@@ -114,6 +114,8 @@ class Record:
         if self.kind in ("change", "collection_failure", "revision"):
             key["summary"] = self.summary
             key["old"] = self.detail.get("old")
+            if self.kind == "change":
+                key["commits_complete"] = self.detail.get("commits_complete", True)
         elif self.kind == "release_artifact":
             key["summary"] = self.summary
             key["detail"] = self.detail
