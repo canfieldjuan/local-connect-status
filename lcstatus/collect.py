@@ -39,7 +39,7 @@ def load_state(path: Path) -> dict[str, Any]:
     return {"heads": {}, "change_baselines": {}, "runs": 0}
 
 
-HEAD_FAILURES = {"head", "git_head", "github_head_mismatch"}
+HEAD_FAILURES = {"head", "git_head", "github_head", "github_head_mismatch"}
 
 
 def render_heads(state: dict[str, Any]) -> dict[str, str]:

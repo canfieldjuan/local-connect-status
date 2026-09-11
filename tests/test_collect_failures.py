@@ -116,14 +116,25 @@ def test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pas
     assert condition["current"] is None
 
 
-def test_legacy_failed_head_is_excluded_from_render_heads():
+@pytest.mark.parametrize("what", ["head", "git_head", "github_head", "github_head_mismatch"])
+def test_legacy_failed_head_is_excluded_from_render_heads(what):
     from lcstatus.collect import render_heads
 
     state = {
         "heads": {"ghost": "d" * 40},
-        "last_failures": [{"repo": "ghost", "what": "git_head", "why": "unreadable"}],
+        "last_failures": [{"repo": "ghost", "what": what, "why": "unreadable"}],
     }
     assert render_heads(state) == {}
+
+
+def test_legacy_non_head_failure_keeps_confirmed_render_head():
+    from lcstatus.collect import render_heads
+
+    state = {
+        "heads": {"ghost": "d" * 40},
+        "last_failures": [{"repo": "ghost", "what": "github_releases", "why": "unavailable"}],
+    }
+    assert render_heads(state) == {"ghost": "d" * 40}
 
 
 def test_release_dispatch_is_scoped_to_the_configured_repository():

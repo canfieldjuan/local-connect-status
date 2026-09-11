@@ -7,5 +7,6 @@ Type=oneshot
 WorkingDirectory=%h/Desktop/local-connect-status
 Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/env python3 -m lcstatus.collect
-TimeoutStartSec=90min
+# Runner subprocesses own their bounded timeouts so collection can record and render failures.
+TimeoutStartSec=infinity
 Nice=10

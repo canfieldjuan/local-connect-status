@@ -138,7 +138,7 @@ test that would fail if the dashboard could be fooled that way:
 | duplicate progress on a repeated delivery, lose a recovery across volatile source metadata, changed incomplete release, or distinct change record | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_actions_recovery_survives_volatile_source_metadata`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept` |
 | let a docs-only or contract-only change look like running functionality | `test_docs_only_change_is_flagged_and_unmapped_files_surface` |
 | show a failed fetch, mirror command exception, unreadable commit range, missing repository, or unavailable GitHub as a clean empty result, including when fetch was intentionally skipped; or advance past a failed change range before retrying it | `test_missing_repository_and_unavailable_github_are_explicit`, `test_mirror_subprocess_errors_become_failures`, `test_empty_commit_range_and_failed_commit_read_stay_distinct`, `test_failed_change_read_retries_before_advancing_baseline`, `test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown` |
-| invent data when only rendering, or re-promote evidence after a head became unknown | `test_render_only_never_invents_data`, `test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pass` |
+| invent data when only rendering, re-promote evidence after a head became unknown, or hide a confirmed head for an unrelated legacy failure | `test_render_only_never_invents_data`, `test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pass`, `test_legacy_failed_head_is_excluded_from_render_heads`, `test_legacy_non_head_failure_keeps_confirmed_render_head` |
 | label a task with nothing checkable as "verified at current code" | `test_task_with_only_inspection_conditions_is_not_checked_not_current` |
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |
 | prefer an older workflow rerun over a newer workflow run | `test_latest_distinct_workflow_run_beats_older_rerun_attempt` |
@@ -153,6 +153,8 @@ test that would fail if the dashboard could be fooled that way:
 
 Two runs cannot interleave: the collector takes an exclusive lock on `data/.lock`, and a
 baseline write waits for a running collection to finish rather than racing it.
+The systemd unit does not impose a shorter outer start deadline: runner subprocesses keep their
+own bounded timeouts so the collector can store unavailable evidence and render before exiting.
 
 ## Live demonstration (2026-09-09)
 
