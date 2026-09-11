@@ -164,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if runner_kind == "github_release":
                 for repo, rev in revs.items():
-                    store.add(runner.releases(repo, rev, conds, tasks))
+                    store.add(runner.releases(repo, rev, conds, tasks, required_assets=chk.get("required_assets")))
                 continue
             if runner_kind == "manual_observation":
                 continue   # only a person records these, via scripts/record_observation.py

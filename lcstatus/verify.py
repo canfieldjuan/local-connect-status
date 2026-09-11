@@ -14,6 +14,7 @@ Principles that keep these honest:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -69,6 +70,28 @@ def interpreter_version(venv: Path) -> str:
         return (r.stdout or r.stderr).strip()
     except (OSError, subprocess.SubprocessError):
         return "python (version unknown)"
+
+
+def release_verdict(releases: list[dict], required_assets: dict[str, str]) -> tuple[str, str, dict, str | None]:
+    """Judge a repository's GitHub releases against the catalogue's required assets.
+
+    Returns (verdict, summary, detail, tag). A release counts only if it is published
+    (not draft, not prerelease) and every required asset pattern matches at least one
+    asset name. "Some release exists" is never proof of the promise.
+    """
+    published = [r for r in releases if not r.get("draft") and not r.get("prerelease")]
+    if not published:
+        return "fail", "no published release", {"count": len(releases)}, None
+    latest = published[0]
+    names = [a.get("name") or "" for a in latest.get("assets", [])]
+    missing = [label for label, pattern in required_assets.items()
+               if not any(re.search(pattern, n) for n in names)]
+    detail = {"tag": latest.get("tag_name"), "published_at": latest.get("published_at"), "assets": names,
+              "missing": missing}
+    if missing:
+        return ("fail", f"{latest.get('tag_name')} published but missing: {', '.join(missing)}", detail,
+                latest.get("tag_name"))
+    return "pass", f"{latest.get('tag_name')} {latest.get('published_at')}", detail, latest.get("tag_name")
 
 
 class Runner:

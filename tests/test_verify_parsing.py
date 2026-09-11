@@ -48,3 +48,17 @@ def test_uv_sync_is_pinned_to_the_catalogue_interpreter_when_declared():
     from lcstatus.verify import uv_sync_command
     assert uv_sync_command("3.13")[-2:] == ["--python", "3.13"]
     assert "--python" not in uv_sync_command(None)
+
+
+def test_release_verdict_requires_a_published_release_with_every_required_asset():
+    from lcstatus.verify import release_verdict
+    req = {"windows installer": r"\.(exe|msi)$", "linux package": r"\.(deb|AppImage)$", "checksums": r"(SHA256SUMS|\.sha256)$"}
+    assert release_verdict([], req)[0] == "fail"
+    assert release_verdict([{"tag_name": "v1", "draft": True, "assets": []}], req)[0] == "fail"
+    assert release_verdict([{"tag_name": "v1", "prerelease": True, "assets": []}], req)[0] == "fail"
+    v, summary, detail, tag = release_verdict([{"tag_name": "v1", "assets": [{"name": "app-1.0.deb"}]}], req)
+    assert v == "fail" and "windows installer" in summary and "checksums" in summary and tag == "v1"
+    full = [{"tag_name": "v1", "published_at": "2026-09-11T00:00:00Z",
+             "assets": [{"name": "app-setup.exe"}, {"name": "app_1.0_amd64.deb"}, {"name": "SHA256SUMS"}]}]
+    v, summary, detail, tag = release_verdict(full, req)
+    assert v == "pass" and detail["missing"] == [] and tag == "v1"

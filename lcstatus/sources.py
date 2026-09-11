@@ -187,6 +187,23 @@ class GitHub:
     def releases(self, gh_repo: str) -> Failure | list[dict[str, Any]]:
         return self.api(f"repos/{gh_repo}/releases?per_page=100", paginate=True)
 
+    def tag_commit(self, gh_repo: str, tag: str) -> Failure | str:
+        """The commit SHA a release tag points at (dereferencing annotated tags)."""
+        ref = self.api(f"repos/{gh_repo}/git/ref/tags/{tag}")
+        if isinstance(ref, Failure):
+            return ref
+        obj = ref.get("object") or {}
+        if obj.get("type") == "commit" and obj.get("sha"):
+            return obj["sha"]
+        if obj.get("type") == "tag" and obj.get("sha"):
+            t = self.api(f"repos/{gh_repo}/git/tags/{obj['sha']}")
+            if isinstance(t, Failure):
+                return t
+            inner = (t.get("object") or {})
+            if inner.get("type") == "commit" and inner.get("sha"):
+                return inner["sha"]
+        return Failure("github_tag", f"tag {tag} does not resolve to a commit")
+
     def open_items(self, gh_repo: str, kind: str) -> Failure | list[dict[str, Any]]:
         """kind: 'issues' returns issues without PRs; 'pulls' returns PRs. Paginated to completion."""
         if kind == "pulls":

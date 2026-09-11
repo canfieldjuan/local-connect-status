@@ -250,11 +250,38 @@
       "platform": "linux",
       "note": "Live Microsoft consent, proposal and confirmed write against a real tenant. Recorded in docs/CONTRACTS.md acceptance appendix."
     },
-    "release.github": {
+    "release.github.ew": {
       "runner": "github_release",
-      "repo": "*",
+      "repo": "eom-email-watcher",
       "platform": "n/a",
-      "note": "A published GitHub Release with installers and checksums. None exist yet."
+      "required_assets": {
+        "windows installer": "\\.(exe|msi)$",
+        "linux package": "\\.(deb|AppImage)$",
+        "checksums": "(SHA256SUMS|\\.sha256)$"
+      },
+      "note": "A published GitHub Release of THIS app whose assets include a Windows installer, a Linux package and checksums. The record's revision is the commit the release contains."
+    },
+    "release.github.ds": {
+      "runner": "github_release",
+      "repo": "document-summarizer",
+      "platform": "n/a",
+      "required_assets": {
+        "windows installer": "\\.(exe|msi)$",
+        "linux package": "\\.(deb|AppImage)$",
+        "checksums": "(SHA256SUMS|\\.sha256)$"
+      },
+      "note": "A published GitHub Release of THIS app whose assets include a Windows installer, a Linux package and checksums. The record's revision is the commit the release contains."
+    },
+    "release.github.ip": {
+      "runner": "github_release",
+      "repo": "invoice-processor",
+      "platform": "n/a",
+      "required_assets": {
+        "windows installer": "\\.(exe|msi)$",
+        "linux package": "\\.(deb|AppImage)$",
+        "checksums": "(SHA256SUMS|\\.sha256)$"
+      },
+      "note": "A published GitHub Release of THIS app whose assets include a Windows installer, a Linux package and checksums. The record's revision is the commit the release contains."
     }
   },
   "tasks": [
@@ -662,10 +689,22 @@
           "proves": "Document Summarizer verified on Windows. (No Windows job exists; this stays not checked until one does.)"
         },
         {
-          "id": "rel.published",
+          "id": "rel.published_ew",
           "kind": "release_artifact",
-          "check": "release.github",
-          "proves": "A public release with downloadable installers and checksums."
+          "check": "release.github.ew",
+          "proves": "Email Watcher: a public release with a Windows installer, a Linux package and checksums, containing the current code."
+        },
+        {
+          "id": "rel.published_ds",
+          "kind": "release_artifact",
+          "check": "release.github.ds",
+          "proves": "Document Summarizer: a public release with a Windows installer, a Linux package and checksums, containing the current code."
+        },
+        {
+          "id": "rel.published_ip",
+          "kind": "release_artifact",
+          "check": "release.github.ip",
+          "proves": "Invoice Processor: a public release with a Windows installer, a Linux package and checksums, containing the current code."
         }
       ],
       "depends_on": [

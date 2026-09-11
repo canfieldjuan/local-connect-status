@@ -197,3 +197,19 @@ def test_no_record_at_all_is_no_evidence_not_not_checked():
     skipped = rec("ci_run", "unavailable", cond="c9", platform="windows")
     s2 = condition_status({"id": "c9", "kind": "ci_run", "check": "t.ci.win", "platform": "windows"}, [skipped], {"ip": NEW}, "ip")
     assert s2.state == "not_checked" and s2.current is skipped
+
+
+def test_without_a_current_head_stored_evidence_is_history_not_current():
+    """A head lookup failure leaves the head unknown; passing evidence at the last known SHA
+    must read "changed since", never "verified at current code"."""
+    r = rec("automated_test", "pass", executed=5, failed=0)
+    s = condition_status({"id": "c1", "kind": "automated_test", "check": "t.pytest"}, [r], {}, "ip")
+    assert s.state == "changed_since" and s.current is None and s.last_proven is r
+
+
+def test_release_of_older_code_is_changed_since_once_main_moves_on():
+    t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
+    old_release = Record(kind="release_artifact", repo="ip", revision=OLD, verdict="pass", condition_ids=["r1"],
+                         revision_time="2026-09-01T00:00:00+00:00", summary="v1")
+    s = task_status(t, [old_release], {"ip": NEW}, CAT, CAT["release"])
+    assert s.conditions[0].state == "changed_since" and s.maturity != "released"
