@@ -1,0 +1,11 @@
+[Unit]
+Description=Local Connect status dashboard (static, loopback only)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/Desktop/local-connect-status/site
+ExecStart=/usr/bin/env python3 -m http.server 8790 --bind 127.0.0.1
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

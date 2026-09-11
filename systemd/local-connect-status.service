@@ -1,0 +1,11 @@
+[Unit]
+Description=Local Connect status collection (poll default branches, verify, render)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/local-connect-status
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env python3 -m lcstatus.collect
+TimeoutStartSec=90min
+Nice=10

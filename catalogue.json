@@ -1,0 +1,700 @@
+{
+  "catalogue_version": 1,
+  "title": "Local Connect capability catalogue",
+  "release": {
+    "target": "Linux and Windows together",
+    "required_platforms": [
+      "linux",
+      "windows"
+    ],
+    "automate_scope": {
+      "decision": "undecided",
+      "note": "Which Automate tasks are required for the first release has not been decided. Automate tasks are tracked but are neither assumed mandatory nor assumed deferred until a person records that decision here.",
+      "required_for_first_release": null
+    }
+  },
+  "repos": {
+    "eom-email-watcher": {
+      "github": "canfieldjuan/eom-email-watcher",
+      "ci_workflows": [
+        "CI",
+        "Private release candidate"
+      ],
+      "python": "3.13"
+    },
+    "document-summarizer": {
+      "github": "canfieldjuan/document-summarizer",
+      "ci_workflows": [
+        "Rust CI"
+      ]
+    },
+    "invoice-processor": {
+      "github": "canfieldjuan/invoice-processor",
+      "ci_workflows": [],
+      "python": "3.13",
+      "note_python": "Verification interpreter. uv otherwise picks the newest installed CPython, and a verdict must be comparable across revisions; the app declares >=3.13 and 3.13 is what its development and the earlier verified runs used."
+    },
+    "connect-contracts": {
+      "github": "canfieldjuan/connect-contracts",
+      "ci_workflows": []
+    }
+  },
+  "apps": {
+    "email-watcher": {
+      "name": "Email Watcher",
+      "repo": "eom-email-watcher"
+    },
+    "document-summarizer": {
+      "name": "Document Summarizer",
+      "repo": "document-summarizer"
+    },
+    "invoice-processor": {
+      "name": "Invoice Processor",
+      "repo": "invoice-processor"
+    }
+  },
+  "checks": {
+    "ew.pytest.unit": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "-m",
+        "not integration"
+      ],
+      "platform": "linux",
+      "note": "Whole non-integration suite. Exercises adapters, notifications, scheduling, Connect consumer, queue."
+    },
+    "ew.pytest.connect_v2": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_connect_v2_engine_api.py"
+      ],
+      "platform": "linux"
+    },
+    "ew.pytest.connect_v1": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_connect_engine_api.py"
+      ],
+      "platform": "linux"
+    },
+    "ew.pytest.queue_retry": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "args": [
+        "tests/test_connect_v2_engine_api.py::test_queue_pump_retries_provider_busy_with_same_job_after_durable_due_time",
+        "tests/test_connect_v2_engine_api.py::test_lost_acknowledgement_reconciles_and_resubmits_the_same_durable_request"
+      ]
+    },
+    "ew.pytest.adapters": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_gmail.py",
+        "tests/test_microsoft365.py",
+        "tests/test_imap.py"
+      ],
+      "platform": "linux"
+    },
+    "ew.pytest.notify": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_notifications.py"
+      ],
+      "platform": "linux"
+    },
+    "ew.pytest.scheduling": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_scheduling.py",
+        "tests/test_microsoft_calendar.py"
+      ],
+      "platform": "linux"
+    },
+    "ew.pytest.automation": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "args": [
+        "tests/test_service.py",
+        "-k",
+        "automation or scheduling or proposal"
+      ],
+      "platform": "linux"
+    },
+    "ew.ci.test": {
+      "runner": "ci_job",
+      "repo": "eom-email-watcher",
+      "workflow": "CI",
+      "job": "test",
+      "platform": "linux"
+    },
+    "ew.ci.desktop": {
+      "runner": "ci_job",
+      "repo": "eom-email-watcher",
+      "workflow": "CI",
+      "job": "desktop",
+      "platform": "linux"
+    },
+    "ew.ci.windows_lock": {
+      "runner": "ci_job",
+      "repo": "eom-email-watcher",
+      "workflow": "CI",
+      "job": "windows-operation-lock",
+      "platform": "windows"
+    },
+    "ew.ci.windows_package": {
+      "runner": "ci_job",
+      "repo": "eom-email-watcher",
+      "workflow": "CI",
+      "job": "windows-package",
+      "platform": "windows",
+      "note": "Builds the NSIS installer, verifies engine process-tree lifecycle, re-runs the packaged engine smoke. A build artifact, not a release."
+    },
+    "ds.ci.rust": {
+      "runner": "ci_job",
+      "repo": "document-summarizer",
+      "workflow": "Rust CI",
+      "job": "Rust checks",
+      "platform": "linux",
+      "note": "fmt, test all targets/features, clippy on ubuntu-24.04."
+    },
+    "ds.cargo.lib": {
+      "runner": "cargo_lib",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "heavy": true,
+      "note": "Needs frontend build first; ~10 min cold. Opt in with --heavy."
+    },
+    "ip.pytest.all": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [],
+      "platform": "linux",
+      "desktop_deps": true,
+      "note": "Whole suite. tests/test_shell.py shells out to a node static check and needs desktop/node_modules."
+    },
+    "ip.pytest.ledger_via_connect": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "args": [
+        "tests/test_connect.py::test_a_job_produces_a_ledger_entry_through_ingest",
+        "tests/test_connect.py::test_a_completed_job_returns_the_summary_and_the_record",
+        "tests/test_connect.py::test_the_provider_writes_no_ledger_table_itself"
+      ]
+    },
+    "ip.pytest.extraction": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [
+        "tests/test_pipeline.py",
+        "tests/test_verify.py",
+        "tests/test_extract.py"
+      ],
+      "platform": "linux"
+    },
+    "ip.pytest.ledger": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [
+        "tests/test_ledger.py",
+        "tests/test_ledger_cli.py"
+      ],
+      "platform": "linux"
+    },
+    "ip.pytest.packaging": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [
+        "tests/test_packaging.py"
+      ],
+      "platform": "linux",
+      "desktop_deps": true
+    },
+    "ip.pytest.entitlement": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [
+        "tests/test_entitlement.py"
+      ],
+      "platform": "linux"
+    },
+    "xapp.accept_ew_to_ip": {
+      "runner": "accept_ew_ip",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "invoice-processor"
+      ],
+      "note": "Invoice Processor's acceptance script drives the real Email Watcher consumer code against the real provider over loopback, with a stand-in model. Cross-app, both revisions recorded. No GPU."
+    },
+    "manual.ip_removal_test": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "invoice-processor"
+      ],
+      "note": "scripts/removal_test.py: install the .deb, drive the packaged Email Watcher through not-installed / installed / removed. Needs sudo dpkg; a person runs it and records the transcript."
+    },
+    "manual.ew_live_calendar": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "note": "Live Microsoft consent, proposal and confirmed write against a real tenant. Recorded in docs/CONTRACTS.md acceptance appendix."
+    },
+    "release.github": {
+      "runner": "github_release",
+      "repo": "*",
+      "platform": "n/a",
+      "note": "A published GitHub Release with installers and checksums. None exist yet."
+    }
+  },
+  "tasks": [
+    {
+      "id": "ew.important_mail_alerts",
+      "app": "email-watcher",
+      "layer": "standalone",
+      "title": "I hear about the mail that matters, without checking",
+      "promise": "Watch chosen senders on Gmail, Microsoft 365, or any IMAP mailbox; read each new message with a local model; tell me what it is, how urgent, and what it asks; notify me on the desktop and optionally my phone.",
+      "human_involvement": "You pick the senders and connect the mailbox once. Phone alerts are off until you set a topic.",
+      "conditions": [
+        {
+          "id": "ew.adapters_read_only",
+          "kind": "automated_test",
+          "check": "ew.pytest.adapters",
+          "proves": "All three mail adapters connect and behave read-only in tests."
+        },
+        {
+          "id": "ew.notifications_deliver",
+          "kind": "automated_test",
+          "check": "ew.pytest.notify",
+          "proves": "Desktop and ntfy channels deliver independently; ntfy only with a topic."
+        },
+        {
+          "id": "ew.ci_linux",
+          "kind": "ci_run",
+          "check": "ew.ci.test",
+          "proves": "Whole suite green on a GitHub Linux runner."
+        },
+        {
+          "id": "ew.ci_windows_subset",
+          "kind": "ci_run",
+          "check": "ew.ci.windows_lock",
+          "proves": "Locking, config and Windows Connect placement tests pass on a Windows runner."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/gmail.py",
+            "src/eom_email_watcher/microsoft365.py",
+            "src/eom_email_watcher/imap.py",
+            "src/eom_email_watcher/mailbox.py",
+            "src/eom_email_watcher/model.py",
+            "src/eom_email_watcher/notifications.py",
+            "src/eom_email_watcher/config.py",
+            "src/eom_email_watcher/service.py"
+          ]
+        }
+      ],
+      "next_action": "Nothing product-side; this is release packaging away from usable."
+    },
+    {
+      "id": "ew.meeting_suggestions_and_confirmed_write",
+      "app": "email-watcher",
+      "layer": "automate",
+      "title": "A meeting request in my mail becomes a calendar event I approve",
+      "promise": "Without a click, spot a meeting request in watched mail, extract only times traceable to exact quotes, check my calendar, propose a slot, and \u2014 only after I confirm one specific proposal \u2014 create the event, telling me first who will receive invitations.",
+      "human_involvement": "Confirmation is required before anything is written. The automation stops on ambiguous mail and waits for review. Microsoft 365 only.",
+      "conditions": [
+        {
+          "id": "ew.scheduling_extraction_evidence_bound",
+          "kind": "automated_test",
+          "check": "ew.pytest.scheduling",
+          "proves": "Extracted times must trace to source quotes; unsupported dates/zones are dropped."
+        },
+        {
+          "id": "ew.automation_gated_and_proposes",
+          "kind": "automated_test",
+          "check": "ew.pytest.automation",
+          "proves": "Runs only with both licence features; reaches a durable confirmation preview; reviewable when no common time."
+        },
+        {
+          "id": "ew.calendar_write_transactional",
+          "kind": "automated_test",
+          "check": "ew.pytest.scheduling",
+          "proves": "Event creation is idempotent per transaction and classifies ambiguous outcomes."
+        },
+        {
+          "id": "ew.live_calendar_demo",
+          "kind": "installed_demo",
+          "check": "manual.ew_live_calendar",
+          "proves": "A person observed consent, proposal and a confirmed write against a real tenant."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/scheduling.py",
+            "src/eom_email_watcher/microsoft_calendar.py",
+            "src/eom_email_watcher/service.py",
+            "src/eom_email_watcher/entitlement.py",
+            "src/eom_email_watcher/db.py",
+            "src/eom_email_watcher/engine_api.py",
+            "desktop/src/**"
+          ]
+        }
+      ],
+      "next_action": "Whether this automation is required for the first release is an open scope decision."
+    },
+    {
+      "id": "ds.cited_summary",
+      "app": "document-summarizer",
+      "layer": "standalone",
+      "title": "A PDF becomes a summary I can check against the page",
+      "promise": "Summarize a text PDF in General, Story or Contract mode; every claim cites an exact source quote and is marked supported, unsupported or ambiguous; warn me when coverage falls short; never modify the file.",
+      "human_involvement": "Choose the PDF. Read the warnings. The app suggests a mode; you can override it.",
+      "conditions": [
+        {
+          "id": "ds.ci_linux",
+          "kind": "ci_run",
+          "check": "ds.ci.rust",
+          "proves": "All targets and features tested, fmt and clippy clean, on a GitHub Linux runner."
+        },
+        {
+          "id": "ds.local_lib",
+          "kind": "automated_test",
+          "check": "ds.cargo.lib",
+          "proves": "Library tests pass on this machine at the exact revision (heavy; opt-in)."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "document-summarizer",
+          "paths": [
+            "src-tauri/src/pipeline/**",
+            "src-tauri/src/desktop.rs",
+            "src/**"
+          ]
+        }
+      ],
+      "next_action": "No Windows evidence exists for this app; Rust CI runs on Linux only."
+    },
+    {
+      "id": "ip.extract_review_ledger",
+      "app": "invoice-processor",
+      "layer": "standalone",
+      "title": "A vendor bill is read into a ledger I can audit",
+      "promise": "Extract vendor, number, dates, line items and totals with every value tied to a span on the page; withhold what cannot be verified; catch duplicates; track received \u2192 reviewed \u2192 paid; keep records across uninstall.",
+      "human_involvement": "You review each entry before it can be paid. Unresolved duplicates block review.",
+      "conditions": [
+        {
+          "id": "ip.suite_green",
+          "kind": "automated_test",
+          "check": "ip.pytest.all",
+          "platform": "linux",
+          "proves": "The whole Invoice Processor test suite passes at the current revision."
+        },
+        {
+          "id": "ip.extraction_withholds",
+          "kind": "automated_test",
+          "check": "ip.pytest.extraction",
+          "proves": "Unknown spans, non-verbatim values and unknown currency are withheld, never guessed."
+        },
+        {
+          "id": "ip.ledger_states_and_dupes",
+          "kind": "automated_test",
+          "check": "ip.pytest.ledger",
+          "proves": "State machine, duplicate derivation and resolution, purge boundaries."
+        },
+        {
+          "id": "ip.records_survive_uninstall",
+          "kind": "automated_test",
+          "check": "ip.pytest.packaging",
+          "proves": "Uninstall touches nothing under the data directory; nothing claims a signature."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "invoice-processor",
+          "paths": [
+            "src/invoice_processor/**",
+            "desktop/**",
+            "tests/**"
+          ]
+        }
+      ],
+      "next_action": "No CI exists for this repository; all evidence is local. Windows and macOS artifacts are deferred by its roadmap."
+    },
+    {
+      "id": "connect.handoff_pdf_to_summarizer",
+      "app": "email-watcher",
+      "layer": "connect",
+      "title": "One click summarizes the PDF in my mail",
+      "promise": "With both apps installed and licensed, a Summarize action appears on a PDF attachment inside Email Watcher; the file alone is handed over loopback; the cited summary comes back and stays with the message.",
+      "human_involvement": "You click. Requires the licence in both apps.",
+      "conditions": [
+        {
+          "id": "connect.v1_handoff_durable",
+          "kind": "automated_test",
+          "check": "ew.pytest.connect_v1",
+          "proves": "Summarize handoff persists results, survives provider failure, never masquerades failure as success."
+        },
+        {
+          "id": "connect.consumer_ci",
+          "kind": "ci_run",
+          "check": "ew.ci.test",
+          "proves": "Consumer suite green on GitHub."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/connect.py",
+            "src/eom_email_watcher/engine_api.py",
+            "src/eom_email_watcher/entitlement.py"
+          ]
+        },
+        {
+          "repo": "document-summarizer",
+          "paths": [
+            "src-tauri/src/connect/**"
+          ]
+        },
+        {
+          "repo": "connect-contracts",
+          "paths": [
+            "schemas/**",
+            "fixtures/**",
+            "entitlements/**"
+          ]
+        }
+      ],
+      "next_action": "No recorded installed-app demonstration of this specific handoff; only tests."
+    },
+    {
+      "id": "connect.handoff_bill_to_ledger",
+      "app": "invoice-processor",
+      "layer": "connect",
+      "title": "An emailed bill appears in my ledger",
+      "promise": "With both apps installed and licensed, a Read invoice action appears on a bill inside Email Watcher; the bill is handed to Invoice Processor over loopback; it lands in the ledger through the same path as a hand-opened file, entry marked received, waiting for review.",
+      "human_involvement": "You click. You review the entry before it can be paid. A second bill while one is running is queued durably but is only resubmitted when the queue is pumped \u2014 nothing pumps it on its own yet.",
+      "conditions": [
+        {
+          "id": "bill.provider_writes_ledger",
+          "kind": "automated_test",
+          "check": "ip.pytest.ledger_via_connect",
+          "proves": "A Connect job produces a real ledger entry through Ledger.ingest with duplicate detection; the provider writes no ledger table itself."
+        },
+        {
+          "id": "bill.consumer_generic_invoke",
+          "kind": "automated_test",
+          "check": "ew.pytest.connect_v2",
+          "proves": "Generic invoke requires explicit provider and confirmation, persists first, reconciles lost acks."
+        },
+        {
+          "id": "bill.cross_app_acceptance",
+          "kind": "automated_test",
+          "check": "xapp.accept_ew_to_ip",
+          "proves": "Real Email Watcher consumer code drives the real Invoice Processor provider end to end over loopback, stand-in model, both revisions recorded."
+        },
+        {
+          "id": "bill.busy_job_queued_and_resubmitted",
+          "kind": "automated_test",
+          "check": "ew.pytest.queue_retry",
+          "proves": "A PROVIDER_BUSY job is held durably and resubmitted with the same identity when pumped."
+        },
+        {
+          "id": "bill.installed_removal_demo",
+          "kind": "installed_demo",
+          "check": "manual.ip_removal_test",
+          "proves": "Packaged apps discover each other, and removal leaves the ledger and the other app untouched."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "invoice-processor",
+          "paths": [
+            "src/invoice_processor/connect/**",
+            "src/invoice_processor/ledger/**",
+            "src/invoice_processor/entitlement/**",
+            "scripts/accept_against_email_watcher.py"
+          ]
+        },
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/connect.py",
+            "src/eom_email_watcher/engine_api.py",
+            "src/eom_email_watcher/db.py",
+            "src/eom_email_watcher/entitlement.py"
+          ]
+        },
+        {
+          "repo": "connect-contracts",
+          "paths": [
+            "schemas/**",
+            "fixtures/**",
+            "entitlements/**"
+          ]
+        }
+      ],
+      "unfinished": "Automatic queue pumping (Email Watcher issue #117): the queue and the pump exist, nothing schedules the pump.",
+      "next_action": "Decide who pumps the queue (scheduler wake-up or engine loop); until then a busy second bill waits."
+    },
+    {
+      "id": "automate.unattended_pdf_summary",
+      "app": "email-watcher",
+      "layer": "automate",
+      "title": "A PDF from a vendor is summarized before I open it",
+      "promise": "A rule I define \u2014 this sender, any PDF \u2014 hands the file to Document Summarizer without a click and notifies me with the summary in hand.",
+      "human_involvement": "None once the rule exists. Today the only automation trigger is hardcoded to meeting requests; no rule of this shape can be expressed.",
+      "conditions": [
+        {
+          "id": "auto.user_definable_rule",
+          "kind": "source_inspection",
+          "check": "manual.ew_live_calendar",
+          "proves": "A rule you can define exists. (Inspection only: no such code has been found; absence is not proof.)"
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/service.py",
+            "src/eom_email_watcher/db.py"
+          ]
+        }
+      ],
+      "next_action": "Requires a definable trigger. Whether it is required for the first release is an open scope decision."
+    },
+    {
+      "id": "automate.invoice_intake_and_digest",
+      "app": "invoice-processor",
+      "layer": "automate",
+      "title": "Bills file themselves and I get a digest",
+      "promise": "A rule \u2014 this vendor, a PDF that looks like a bill \u2014 routes each arrival into the ledger without a click, batches survive a busy provider, and a scheduled digest tells me what arrived and what is due.",
+      "human_involvement": "Review before payment stays with you. Today no such rule can be expressed and nothing pumps the queue unattended.",
+      "conditions": [
+        {
+          "id": "auto.invoice_rule",
+          "kind": "source_inspection",
+          "check": "manual.ew_live_calendar",
+          "proves": "A definable invoice rule exists. (Not found.)"
+        },
+        {
+          "id": "auto.queue_pumped_unattended",
+          "kind": "source_inspection",
+          "check": "manual.ew_live_calendar",
+          "proves": "Something schedules connect.queue.pump. (Not found.)"
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/service.py",
+            "src/eom_email_watcher/engine_api.py",
+            "desktop/src-tauri/src/scheduler.rs"
+          ]
+        },
+        {
+          "repo": "invoice-processor",
+          "paths": [
+            "src/invoice_processor/connect/**"
+          ]
+        }
+      ],
+      "next_action": "Definable rules and scheduled pumping do not exist. Whether required for the first release is an open scope decision."
+    },
+    {
+      "id": "release.linux_and_windows",
+      "app": "bundle",
+      "layer": "release",
+      "title": "Before we ship: install, licence, model, records, both platforms",
+      "promise": "Installers for Linux and Windows for all three apps; first run says whether a model is visible; the licence activates locally; records survive uninstall; published downloads with checksums.",
+      "human_involvement": "Signing is a deliberate operator decision, deferred until all three apps and the Connect/Automate flow are proven.",
+      "conditions": [
+        {
+          "id": "rel.ew_windows_installer_builds",
+          "kind": "ci_run",
+          "check": "ew.ci.windows_package",
+          "platform": "windows",
+          "proves": "Email Watcher NSIS installer builds and the packaged engine smoke passes on a Windows runner."
+        },
+        {
+          "id": "rel.ew_linux_desktop_builds",
+          "kind": "ci_run",
+          "check": "ew.ci.desktop",
+          "platform": "linux",
+          "proves": "Email Watcher desktop builds on Linux (no bundle)."
+        },
+        {
+          "id": "rel.ip_packaging_checks",
+          "kind": "automated_test",
+          "check": "ip.pytest.packaging",
+          "platform": "linux",
+          "proves": "Invoice Processor bundle carries its sidecar; uninstall leaves data; nothing claims a signature."
+        },
+        {
+          "id": "rel.ip_removal_demo",
+          "kind": "installed_demo",
+          "check": "manual.ip_removal_test",
+          "platform": "linux",
+          "proves": "Installed .deb discovered and cleanly removed against the real Email Watcher."
+        },
+        {
+          "id": "rel.ds_windows",
+          "kind": "ci_run",
+          "check": "ds.ci.rust",
+          "platform": "windows",
+          "proves": "Document Summarizer verified on Windows. (No Windows job exists; this stays not checked until one does.)"
+        },
+        {
+          "id": "rel.published",
+          "kind": "release_artifact",
+          "check": "release.github",
+          "proves": "A public release with downloadable installers and checksums."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            ".github/workflows/**",
+            "scripts/build_desktop_sidecar.py",
+            "desktop/src-tauri/tauri*.conf.json"
+          ]
+        },
+        {
+          "repo": "invoice-processor",
+          "paths": [
+            "desktop/src-tauri/tauri.conf.json",
+            "scripts/build_desktop_sidecar.py",
+            "scripts/removal_test.py",
+            "tests/test_packaging.py"
+          ]
+        },
+        {
+          "repo": "document-summarizer",
+          "paths": [
+            ".github/workflows/**",
+            "src-tauri/tauri*.conf.json"
+          ]
+        }
+      ],
+      "next_action": "Invoice Processor has no Windows artifact; Document Summarizer has no Windows CI; no repository has a release."
+    }
+  ]
+}
