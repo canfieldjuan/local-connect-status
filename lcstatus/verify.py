@@ -24,7 +24,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from .evidence import Record, atomic_write, now_iso
+from .evidence import Record, atomic_write, check_fingerprint, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
 
 
@@ -334,7 +334,8 @@ class Runner:
         base = dict(kind="source_inspection", repo=repo, revision=rev.sha,
                     revision_time=rev.committed_at, platform=check.get("platform", "n/a"),
                     condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "source_inspection", "check": check_id})
+                    source={"type": "source_inspection", "check": check_id,
+                            "check_fingerprint": check_fingerprint(check)})
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -365,7 +366,8 @@ class Runner:
         repo = check["repo"]
         base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
                     platform=check.get("platform", "linux"), condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "local_runner", "check": check_id, "host": os.uname().nodename})
+                    source={"type": "local_runner", "check": check_id,
+                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -424,7 +426,8 @@ class Runner:
         repo = check["repo"]
         base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
                     platform="linux", condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "local_runner", "check": check_id, "host": os.uname().nodename})
+                    source={"type": "local_runner", "check": check_id,
+                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -474,7 +477,8 @@ class Runner:
         base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha,
                     revision_time=ip.committed_at, platform="linux", condition_ids=condition_ids,
                     task_ids=task_ids, participants=participants,
-                    source={"type": "local_runner", "check": check_id, "host": os.uname().nodename})
+                    source={"type": "local_runner", "check": check_id,
+                            "check_fingerprint": check_fingerprint(check), "host": os.uname().nodename})
         trees: dict[str, Path] = {}
         for repo in check["participants"]:
             tree = self.tree(repo, revs[repo].sha)
@@ -577,13 +581,17 @@ class Runner:
                 conds, tasks = cond_map.get(cid, ([], []))
                 out.append(Record(kind="ci_run", repo=repo, revision=rev.sha, revision_time=rev.committed_at, verdict="unavailable",
                                   platform=chk.get("platform", "n/a"), condition_ids=conds, task_ids=tasks,
-                                  source={"type": "github_actions", "check": cid}, summary=f"{runs.what}: {runs.why}"))
+                                  source={"type": "github_actions", "check": cid,
+                                          "check_fingerprint": check_fingerprint(chk)},
+                                  summary=f"{runs.what}: {runs.why}"))
             return out
         by_workflow = latest_workflow_runs(runs)
         for cid, chk in checks.items():
             conds, tasks = cond_map.get(cid, ([], []))
             run = by_workflow.get(chk["workflow"])
-            src = {"type": "github_actions", "check": cid, "workflow": chk["workflow"], "job": chk["job"]}
+            src = {"type": "github_actions", "check": cid,
+                   "check_fingerprint": check_fingerprint(chk),
+                   "workflow": chk["workflow"], "job": chk["job"]}
             if run is None:
                 out.append(Record(kind="ci_run", repo=repo, revision=rev.sha, revision_time=rev.committed_at, verdict="unknown",
                                   platform=chk.get("platform", "n/a"), condition_ids=conds, task_ids=tasks, source=src,
@@ -624,8 +632,8 @@ class Runner:
 
     # ---- releases --------------------------------------------------------------------
 
-    def releases(self, check_id: str, repo: str, rev: Revision, condition_ids: list[str], task_ids: list[str],
-                 required_assets: dict[str, str] | None = None) -> Record:
+    def releases(self, check_id: str, check: dict[str, Any], repo: str, rev: Revision,
+                 condition_ids: list[str], task_ids: list[str]) -> Record:
         """Release evidence for ONE repository.
 
         Passes only when a published (non-draft, non-prerelease) release exists whose assets
@@ -637,11 +645,12 @@ class Runner:
         rel = self.gh.releases(gh_repo)
         base = dict(kind="release_artifact", repo=repo, platform="n/a",
                     condition_ids=condition_ids, task_ids=task_ids,
-                    source={"type": "github_releases", "check": check_id})
+                    source={"type": "github_releases", "check": check_id,
+                            "check_fingerprint": check_fingerprint(check)})
         if isinstance(rel, Failure):
             return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
                           summary=f"{rel.what}: {rel.why}", **base)
-        requirements = required_assets or {}
+        requirements = check.get("required_assets", {})
         latest, matches, preliminary = _release_assets(rel, requirements)
         checksum_contents: dict[str, str] = {}
         if latest is not None and not preliminary.get("missing"):

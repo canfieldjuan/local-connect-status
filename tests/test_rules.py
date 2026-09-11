@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from lcstatus.change import assess
-from lcstatus.evidence import Record, Store
-from lcstatus.rules import condition_status, task_status
+from lcstatus.evidence import Record, Store, check_fingerprint
+from lcstatus.rules import condition_status as _condition_status, task_status
 
 CAT = {
     "release": {"required_platforms": ["linux", "windows"]},
@@ -36,10 +36,22 @@ def task(conds, layer="connect"):
     return {"id": "t", "layer": layer, "app": "x", "app_repo": "ip", "conditions": conds, "depends_on": []}
 
 
+def condition_status(condition, records, heads, check_repo):
+    return _condition_status(
+        condition, records, heads, check_repo, CAT["checks"][condition["check"]]
+    )
+
+
 def rec(kind, verdict, revision=NEW, cond="c1", **kw):
     kw.setdefault("repo", "ip")
     kw.setdefault("revision_time", "2026-09-09T10:00:00+00:00" if revision == NEW else "2026-09-01T10:00:00+00:00")
-    kw.setdefault("source", {"check": CHECK_FOR_CONDITION[cond]})
+    check_id = CHECK_FOR_CONDITION[cond]
+    check = CAT["checks"][check_id]
+    kw.setdefault("platform", check.get("platform", "n/a"))
+    kw.setdefault("source", {
+        "check": check_id,
+        "check_fingerprint": check_fingerprint(check),
+    })
     return Record(kind=kind, revision=revision, verdict=verdict, condition_ids=[cond], **kw)
 
 
@@ -90,10 +102,10 @@ def test_passing_test_cannot_satisfy_demo_condition():
 
 def test_condition_evidence_must_come_from_its_current_configured_check():
     stale = rec(
-        "automated_test", "pass", executed=3, failed=0,
+        "automated_test", "pass", executed=3, failed=0, platform="linux",
         source={"type": "local_runner", "check": "t.replaced"},
     )
-    current = rec("automated_test", "pass", executed=3, failed=0)
+    current = rec("automated_test", "pass", executed=3, failed=0, platform="linux")
     condition = {"id": "c1", "kind": "automated_test", "check": "t.pytest"}
 
     rejected = condition_status(condition, [stale], {"ip": NEW}, "ip")
@@ -101,6 +113,27 @@ def test_condition_evidence_must_come_from_its_current_configured_check():
 
     assert rejected.state == "no_evidence"
     assert accepted.state == "satisfied" and accepted.current is current
+
+
+def test_condition_evidence_must_match_the_current_check_configuration():
+    current_check = CAT["checks"]["t.pytest"]
+    former_check = dict(current_check, args=["tests/former.py"])
+    stale = rec(
+        "automated_test", "pass", executed=3, failed=0, platform="linux",
+        source={
+            "type": "local_runner",
+            "check": "t.pytest",
+            "check_fingerprint": check_fingerprint(former_check),
+        },
+    )
+    current = rec("automated_test", "pass", executed=3, failed=0, platform="linux")
+    current_task = task([{"id": "c1", "kind": "automated_test", "check": "t.pytest"}])
+
+    rejected = task_status(current_task, [stale], {"ip": NEW}, CAT, CAT["release"])
+    accepted = task_status(current_task, [stale, current], {"ip": NEW}, CAT, CAT["release"])
+
+    assert rejected.conditions[0].state == "no_evidence"
+    assert accepted.conditions[0].state == "satisfied"
 
 
 def test_source_inspection_is_inconclusive_and_never_raises_maturity():
@@ -185,7 +218,7 @@ def test_release_promise_requires_licence_and_first_run_model_evidence(missing_i
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
-            source={"check": condition["check"]},
+            source={"check": condition["check"], "check_fingerprint": check_fingerprint(check)},
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         )
@@ -249,7 +282,7 @@ def test_release_absence_is_an_explicit_not_met_at_current_head():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     r = Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
                revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
-               source={"check": "t.rel"})
+               source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})
     s = task_status(t, [r], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "check_failed" and s.maturity == "planned"
 
@@ -266,7 +299,7 @@ def test_missing_release_is_not_a_failing_check_for_freshness():
     recs = [rec("automated_test", "pass", executed=1, failed=0, platform="linux"),
             Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
                    revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
-                   source={"check": "t.rel"})]
+                   source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})]
     s = task_status(t, recs, {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[1].state == "check_failed" and s.freshness == "not_checked" and s.maturity == "built"
 
@@ -292,7 +325,7 @@ def test_release_of_older_code_is_changed_since_once_main_moves_on():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     old_release = Record(kind="release_artifact", repo="ip", revision=OLD, verdict="pass", condition_ids=["r1"],
                          revision_time="2026-09-01T00:00:00+00:00", summary="v1",
-                         source={"check": "t.rel"})
+                         source={"check": "t.rel", "check_fingerprint": check_fingerprint(CAT["checks"]["t.rel"])})
     s = task_status(t, [old_release], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "changed_since" and s.maturity != "released"
 
@@ -524,7 +557,7 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
-            source={"check": condition["check"]},
+            source={"check": condition["check"], "check_fingerprint": check_fingerprint(check)},
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         ))
@@ -537,7 +570,8 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
     records.append(Record(
         kind="installed_demo", repo="invoice-processor", revision=heads["invoice-processor"],
         verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
-        source={"check": "manual.ip_windows_install"},
+        source={"check": "manual.ip_windows_install",
+                "check_fingerprint": check_fingerprint(checks["manual.ip_windows_install"])},
     ))
     ready = task_status(release_task, records, heads, catalogue, catalogue["release"])
     assert ready.maturity == "ready for release"
@@ -546,7 +580,9 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
 def test_actions_recovery_survives_volatile_source_metadata(tmp_path: Path):
     store = Store(tmp_path / "r.jsonl")
     success_source = {
-        "type": "github_actions", "check": "t.ci.win", "workflow": "CI", "job": "test",
+        "type": "github_actions", "check": "t.ci.win",
+        "check_fingerprint": check_fingerprint(CAT["checks"]["t.ci.win"]),
+        "workflow": "CI", "job": "test",
         "run_id": 101, "job_id": 202, "url": "https://example.invalid/job/202", "run_attempt": 1,
     }
     first = rec(
@@ -555,7 +591,8 @@ def test_actions_recovery_survives_volatile_source_metadata(tmp_path: Path):
     )
     outage = rec(
         "ci_run", "unavailable", cond="c2", platform="windows",
-        source={"type": "github_actions", "check": "t.ci.win"},
+        source={"type": "github_actions", "check": "t.ci.win",
+                "check_fingerprint": check_fingerprint(CAT["checks"]["t.ci.win"])},
         recorded_at="2026-09-11T10:01:00+00:00",
     )
     recovery = rec(

@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
             if runner_kind == "github_release":
                 for repo, rev in release_targets(chk, revs):
                     result = runner.releases(
-                        cid, repo, rev, conds, tasks, required_assets=chk.get("required_assets")
+                        cid, chk, repo, rev, conds, tasks
                     )
                     store_result(store, failures, result)
                 continue

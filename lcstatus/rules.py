@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .evidence import Record, instant_key
+from .evidence import Record, check_fingerprint, instant_key
 
 AUTOMATED = ("automated_test", "ci_run")
 PROVING_VERDICT = ("pass",)
@@ -80,15 +80,17 @@ def _matches_current(rec: Record, heads: dict[str, str], repo: str) -> bool:
 
 def condition_status(
     cond: dict[str, Any], records: list[Record], heads: dict[str, str], check_repo: str,
-    check_platform: str | None = None,
+    check: dict[str, Any],
 ) -> ConditionStatus:
     kind = cond["kind"]
-    want_platform = cond.get("platform") or check_platform
+    want_platform = cond.get("platform") or check.get("platform")
+    expected_check_fingerprint = check_fingerprint(check)
     evid = [
         r for r in records
         if cond["id"] in r.condition_ids
         and r.kind == kind
         and r.source.get("check") == cond["check"]
+        and r.source.get("check_fingerprint") == expected_check_fingerprint
     ]
     if check_repo:
         # Older collectors wrote app-specific release ids onto every repository. Keep those
@@ -141,7 +143,7 @@ def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, st
     for c in task["conditions"]:
         chk = checks.get(c["check"], {})
         repo = chk.get("repo") if chk.get("repo") not in (None, "*") else task.get("app_repo", "")
-        conds.append(condition_status(c, records, heads, repo, chk.get("platform")))
+        conds.append(condition_status(c, records, heads, repo, chk))
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
     demos = [c for c in conds if c.condition["kind"] == "installed_demo"]

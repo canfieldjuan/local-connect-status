@@ -89,11 +89,12 @@ def test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pas
     data = tmp_path / "data"
     data.mkdir()
     revision = "d" * 40
-    from lcstatus.evidence import Record, Store
+    from lcstatus.evidence import Record, Store, check_fingerprint
     Store(data / "records.jsonl").add(Record(
         kind="ci_run", repo="ghost", revision=revision, verdict="pass",
         platform="linux", condition_ids=["g.c1"], executed=1, failed=0,
-        source={"type": "github_actions", "check": "g.ci"},
+        source={"type": "github_actions", "check": "g.ci",
+                "check_fingerprint": check_fingerprint(TINY_CATALOGUE["checks"]["g.ci"])},
         revision_time="2026-09-11T10:00:00+00:00",
     ))
     (data / "state.json").write_text(json.dumps({

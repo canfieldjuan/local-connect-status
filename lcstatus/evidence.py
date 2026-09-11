@@ -58,6 +58,12 @@ def instant_key(value: str | None) -> tuple[int, float, str]:
     return (1, parsed.timestamp(), "")
 
 
+def check_fingerprint(check: dict[str, Any]) -> str:
+    """Stable identity for the complete catalogue configuration that produced evidence."""
+    blob = json.dumps(check, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:24]
+
+
 @dataclass
 class Record:
     kind: str
@@ -126,7 +132,7 @@ class Record:
         """Identity of the check stream, excluding the outcome that can change over time."""
         stable_source = {
             name: self.source[name]
-            for name in ("type", "check")
+            for name in ("type", "check", "check_fingerprint")
             if name in self.source
         }
         key = {

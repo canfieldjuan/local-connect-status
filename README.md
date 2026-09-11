@@ -132,7 +132,7 @@ test that would fail if the dashboard could be fooled that way:
 | let a late result about an old revision displace a newer one | `test_late_result_for_old_revision_does_not_displace_newer` |
 | accept a cross-app demonstration when one participant has moved | `test_cross_app_demo_with_one_stale_participant_is_changed_since` |
 | let a passing helper test satisfy an installed-demonstration condition | `test_passing_test_cannot_satisfy_demo_condition` |
-| let evidence from a replaced catalogue check satisfy a condition that kept the same ID | `test_condition_evidence_must_come_from_its_current_configured_check` |
+| let evidence from a replaced or reconfigured catalogue check satisfy a condition | `test_condition_evidence_must_come_from_its_current_configured_check`, `test_condition_evidence_must_match_the_current_check_configuration` |
 | promote anything on a source-string match, or treat a missing string as proof of absence | `test_source_inspection_is_inconclusive_and_never_raises_maturity`, `test_code_change_maps_to_task_and_marker_rename_alone_cannot_prove_removal` |
 | let Linux evidence stand in for Windows, ignore a check's configured platform, or call the bundle ready without Invoice Processor and Document Summarizer Windows observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_check_platform_filters_mixed_evidence_when_condition_omits_platform`, `test_bundle_readiness_requires_each_unproven_installer_observation` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
