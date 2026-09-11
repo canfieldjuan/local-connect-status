@@ -22,6 +22,14 @@ CAT = {
     },
 }
 NEW, OLD = "b" * 40, "a" * 40
+CHECK_FOR_CONDITION = {
+    "c1": "t.pytest",
+    "c2": "t.ci.win",
+    "c9": "t.ci.win",
+    "d1": "t.demo",
+    "i1": "t.inspect",
+    "r1": "t.rel",
+}
 
 
 def task(conds, layer="connect"):
@@ -31,6 +39,7 @@ def task(conds, layer="connect"):
 def rec(kind, verdict, revision=NEW, cond="c1", **kw):
     kw.setdefault("repo", "ip")
     kw.setdefault("revision_time", "2026-09-09T10:00:00+00:00" if revision == NEW else "2026-09-01T10:00:00+00:00")
+    kw.setdefault("source", {"check": CHECK_FOR_CONDITION[cond]})
     return Record(kind=kind, revision=revision, verdict=verdict, condition_ids=[cond], **kw)
 
 
@@ -77,6 +86,21 @@ def test_passing_test_cannot_satisfy_demo_condition():
     r = rec("automated_test", "pass", cond="d1", executed=3, failed=0)
     s = condition_status({"id": "d1", "kind": "installed_demo", "check": "t.demo"}, [r], {"ip": NEW}, "ip")
     assert s.state == "no_evidence"
+
+
+def test_condition_evidence_must_come_from_its_current_configured_check():
+    stale = rec(
+        "automated_test", "pass", executed=3, failed=0,
+        source={"type": "local_runner", "check": "t.replaced"},
+    )
+    current = rec("automated_test", "pass", executed=3, failed=0)
+    condition = {"id": "c1", "kind": "automated_test", "check": "t.pytest"}
+
+    rejected = condition_status(condition, [stale], {"ip": NEW}, "ip")
+    accepted = condition_status(condition, [stale, current], {"ip": NEW}, "ip")
+
+    assert rejected.state == "no_evidence"
+    assert accepted.state == "satisfied" and accepted.current is current
 
 
 def test_source_inspection_is_inconclusive_and_never_raises_maturity():
@@ -161,6 +185,7 @@ def test_release_promise_requires_licence_and_first_run_model_evidence(missing_i
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
+            source={"check": condition["check"]},
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         )
@@ -223,7 +248,8 @@ def test_change_records_from_different_baselines_are_both_kept(tmp_path: Path):
 def test_release_absence_is_an_explicit_not_met_at_current_head():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     r = Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
-               revision_time="2026-09-09T10:00:00+00:00", summary="no published release")
+               revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
+               source={"check": "t.rel"})
     s = task_status(t, [r], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "check_failed" and s.maturity == "planned"
 
@@ -239,7 +265,8 @@ def test_missing_release_is_not_a_failing_check_for_freshness():
               {"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     recs = [rec("automated_test", "pass", executed=1, failed=0, platform="linux"),
             Record(kind="release_artifact", repo="ip", revision=NEW, verdict="fail", condition_ids=["r1"],
-                   revision_time="2026-09-09T10:00:00+00:00", summary="no published release")]
+                   revision_time="2026-09-09T10:00:00+00:00", summary="no published release",
+                   source={"check": "t.rel"})]
     s = task_status(t, recs, {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[1].state == "check_failed" and s.freshness == "not_checked" and s.maturity == "built"
 
@@ -264,7 +291,8 @@ def test_without_a_current_head_stored_evidence_is_history_not_current():
 def test_release_of_older_code_is_changed_since_once_main_moves_on():
     t = task([{"id": "r1", "kind": "release_artifact", "check": "t.rel"}], layer="release")
     old_release = Record(kind="release_artifact", repo="ip", revision=OLD, verdict="pass", condition_ids=["r1"],
-                         revision_time="2026-09-01T00:00:00+00:00", summary="v1")
+                         revision_time="2026-09-01T00:00:00+00:00", summary="v1",
+                         source={"check": "t.rel"})
     s = task_status(t, [old_release], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "changed_since" and s.maturity != "released"
 
@@ -496,6 +524,7 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
             kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
             platform=condition.get("platform", check.get("platform", "n/a")),
             condition_ids=[condition["id"]], participants=participants,
+            source={"check": condition["check"]},
             executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
             failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
         ))
@@ -508,6 +537,7 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
     records.append(Record(
         kind="installed_demo", repo="invoice-processor", revision=heads["invoice-processor"],
         verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
+        source={"check": "manual.ip_windows_install"},
     ))
     ready = task_status(release_task, records, heads, catalogue, catalogue["release"])
     assert ready.maturity == "ready for release"

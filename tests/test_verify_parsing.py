@@ -64,8 +64,10 @@ def test_release_verdict_requires_a_published_release_with_every_required_asset(
     assert v == "fail" and "windows installer" in summary and "checksums" in summary and tag == "v1"
     full = [{"tag_name": "v1", "published_at": "2026-09-11T00:00:00Z",
              "assets": [
-                 {"id": 1, "name": "app-setup.exe", "state": "uploaded", "size": 100},
-                 {"id": 2, "name": "app_1.0_amd64.deb", "state": "uploaded", "size": 200},
+                 {"id": 1, "name": "app-setup.exe", "state": "uploaded", "size": 100,
+                  "digest": "sha256:" + "a" * 64},
+                 {"id": 2, "name": "app_1.0_amd64.deb", "state": "uploaded", "size": 200,
+                  "digest": "sha256:" + "b" * 64},
                  {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 300},
              ]}]
     sums = "a" * 64 + "  app-setup.exe\n" + "b" * 64 + "  app_1.0_amd64.deb\n"
@@ -84,6 +86,9 @@ def test_release_verdict_requires_a_published_release_with_every_required_asset(
             {"id": 3, "name": "SHA256SUMS", "state": "uploaded", "size": 300},
         ], {"3": sums}),
         (full[0]["assets"], {"3": "c" * 64 + "  unrelated.txt\n"}),
+        (full[0]["assets"], {"3": "0" * 64 + "  app-setup.exe\n" +
+                                   "1" * 64 + "  app_1.0_amd64.deb\n"}),
+        ([dict(full[0]["assets"][0], digest=None), *full[0]["assets"][1:]], {"3": sums}),
     ):
         broken = [{"tag_name": "v1", "assets": broken_assets}]
         assert release_verdict(broken, req, checksum_contents)[0] == "fail"
@@ -289,7 +294,7 @@ def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: P
         {"repos": {"app": {"github": "example/app"}}},
     )
     record = runner.releases(
-        "app", Revision("app", target, commit_time, "release"), ["condition"], ["task"]
+        "app.release", "app", Revision("app", target, commit_time, "release"), ["condition"], ["task"]
     )
     assert record.verdict == "pass"
     assert record.revision == target
@@ -320,7 +325,7 @@ def test_release_checksum_download_failure_is_unavailable(tmp_path: Path):
     runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
                     {"repos": {"app": {"github": "example/app"}}})
     record = runner.releases(
-        "app", Revision("app", target, "2026-09-11T00:00:00Z", "head"), ["condition"], ["task"],
+        "app.release", "app", Revision("app", target, "2026-09-11T00:00:00Z", "head"), ["condition"], ["task"],
         {"windows": r"\.exe$", "linux": r"\.deb$", "checksums": r"SHA256SUMS$"},
     )
 
@@ -343,6 +348,14 @@ def test_release_asset_download_rejects_binary_checksum_content(monkeypatch):
     assert isinstance(result, Failure)
     assert result.what == "gh_release_asset"
     assert result.why == "asset is not UTF-8 checksum text"
+
+
+def test_web_service_creates_generated_site_before_serving_it():
+    unit = (Path(__file__).resolve().parent.parent / "systemd/local-connect-status-web.service").read_text()
+
+    assert "WorkingDirectory=%h/Desktop/local-connect-status\n" in unit
+    assert "ExecStartPre=/usr/bin/mkdir -p site\n" in unit
+    assert "python3 -m http.server 8790 --directory site --bind 127.0.0.1\n" in unit
 
 
 def test_editable_install_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch):

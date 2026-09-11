@@ -84,7 +84,12 @@ def condition_status(
 ) -> ConditionStatus:
     kind = cond["kind"]
     want_platform = cond.get("platform") or check_platform
-    evid = [r for r in records if cond["id"] in r.condition_ids and r.kind == kind]
+    evid = [
+        r for r in records
+        if cond["id"] in r.condition_ids
+        and r.kind == kind
+        and r.source.get("check") == cond["check"]
+    ]
     if check_repo:
         # Older collectors wrote app-specific release ids onto every repository. Keep those
         # append-only records from crossing product boundaries during status derivation.

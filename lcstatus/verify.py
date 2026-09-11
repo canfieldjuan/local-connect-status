@@ -119,13 +119,22 @@ def _asset_key(asset: dict) -> str:
     return str(asset.get("id") or asset.get("name") or "")
 
 
-def _checksum_filenames(content: str) -> set[str]:
-    names = set()
+def _checksum_entries(content: str) -> dict[str, set[str]]:
+    entries: dict[str, set[str]] = {}
     for line in content.splitlines():
-        match = re.fullmatch(r"[0-9a-fA-F]{64}\s+\*?(.+?)\s*", line)
+        match = re.fullmatch(r"([0-9a-fA-F]{64})\s+\*?(.+?)\s*", line)
         if match:
-            names.add(match.group(1).replace("\\", "/").rsplit("/", 1)[-1])
-    return names
+            name = match.group(2).replace("\\", "/").rsplit("/", 1)[-1]
+            entries.setdefault(name, set()).add(match.group(1).lower())
+    return entries
+
+
+def _asset_sha256(asset: dict) -> str | None:
+    digest = asset.get("digest")
+    if not isinstance(digest, str):
+        return None
+    match = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", digest)
+    return match.group(1).lower() if match else None
 
 
 def release_verdict(
@@ -146,20 +155,38 @@ def release_verdict(
                 latest.get("tag_name"))
     checksum_labels = [label for label in required_assets if "checksum" in label.lower()]
     if checksum_labels:
-        covered = set()
+        covered: dict[str, set[str]] = {}
         for label in checksum_labels:
             for asset in matches[label]:
-                covered.update(_checksum_filenames((checksum_contents or {}).get(_asset_key(asset), "")))
-        installers = {
-            asset.get("name") or ""
+                for name, digests in _checksum_entries(
+                    (checksum_contents or {}).get(_asset_key(asset), "")
+                ).items():
+                    covered.setdefault(name, set()).update(digests)
+        installers = [
+            asset
             for label, assets in matches.items() if label not in checksum_labels
             for asset in assets
-        }
-        uncovered = sorted(name for name in installers if name not in covered)
-        if uncovered:
-            detail["missing"] = [f"checksum for {name}" for name in uncovered]
-            detail["uncovered_assets"] = uncovered
-            return ("fail", f"{latest.get('tag_name')} published but checksums do not cover: {', '.join(uncovered)}",
+        ]
+        verification = []
+        unverified = []
+        for asset in installers:
+            name = asset.get("name") or ""
+            asset_digest = _asset_sha256(asset)
+            manifest_digests = sorted(covered.get(name, set()))
+            verified = asset_digest is not None and manifest_digests == [asset_digest]
+            verification.append({
+                "name": name,
+                "asset_digest": asset.get("digest"),
+                "manifest_digests": manifest_digests,
+                "verified": verified,
+            })
+            if not verified:
+                unverified.append(name)
+        detail["checksum_verification"] = verification
+        if unverified:
+            detail["missing"] = [f"verified checksum for {name}" for name in sorted(unverified)]
+            detail["unverified_assets"] = sorted(unverified)
+            return ("fail", f"{latest.get('tag_name')} published but checksums do not verify: {', '.join(sorted(unverified))}",
                     detail, latest.get("tag_name"))
     return "pass", f"{latest.get('tag_name')} {latest.get('published_at')}", detail, latest.get("tag_name")
 
@@ -597,7 +624,7 @@ class Runner:
 
     # ---- releases --------------------------------------------------------------------
 
-    def releases(self, repo: str, rev: Revision, condition_ids: list[str], task_ids: list[str],
+    def releases(self, check_id: str, repo: str, rev: Revision, condition_ids: list[str], task_ids: list[str],
                  required_assets: dict[str, str] | None = None) -> Record:
         """Release evidence for ONE repository.
 
@@ -609,7 +636,8 @@ class Runner:
         gh_repo = self.cat["repos"][repo]["github"]
         rel = self.gh.releases(gh_repo)
         base = dict(kind="release_artifact", repo=repo, platform="n/a",
-                    condition_ids=condition_ids, task_ids=task_ids, source={"type": "github_releases"})
+                    condition_ids=condition_ids, task_ids=task_ids,
+                    source={"type": "github_releases", "check": check_id})
         if isinstance(rel, Failure):
             return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
                           summary=f"{rel.what}: {rel.why}", **base)
