@@ -190,6 +190,15 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
     assert record_check_fingerprint(loaded[0]) is not None
     assert record_check_fingerprint(loaded[-1]) is None
 
+    altered = tmp_path / "altered-records.jsonl"
+    altered.write_bytes(b" " + original)
+    altered_legacy = [
+        r for r in Store(altered).all()
+        if r.source.get("check") and "check_fingerprint" not in r.source
+    ]
+    assert altered_legacy
+    assert all(record_check_fingerprint(r) is None for r in altered_legacy)
+
 
 def test_source_inspection_is_inconclusive_and_never_raises_maturity():
     t = task([{"id": "i1", "kind": "source_inspection", "check": "t.inspect"}], layer="automate")
