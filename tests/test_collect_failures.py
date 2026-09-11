@@ -437,7 +437,9 @@ def test_failed_change_read_retries_before_advancing_baseline(tmp_path: Path, mo
     }]
     if failure_stage == "commits":
         assert status["recent_changes"][0]["commits_complete"] is False
-        assert "commit list unavailable; retry pending" in (site / "dashboard.html").read_text()
+        dashboard = (site / "dashboard.html").read_text()
+        embedded = json.loads(dashboard.split("const DATA = ", 1)[1].split(";\nconst pillFor", 1)[0])
+        assert embedded["recent_changes"][0]["commits_complete"] is False
         assert "commit list unavailable, retry pending" in (site / "report.md").read_text()
 
     render_rc = collect.main([
@@ -459,6 +461,13 @@ def test_failed_change_read_retries_before_advancing_baseline(tmp_path: Path, mo
     assert retried_status["source_failures"] == []
     assert retried_state["heads"]["ghost"] == new
     assert retried_state["change_baselines"]["ghost"] == new
+    assert len(retried_status["recent_changes"]) == 1
+    assert retried_status["recent_changes"][0]["commits"] == ["abc change"]
+    assert retried_status["recent_changes"][0]["commits_complete"] is True
+    dashboard = (site / "dashboard.html").read_text()
+    embedded = json.loads(dashboard.split("const DATA = ", 1)[1].split(";\nconst pillFor", 1)[0])
+    assert embedded["recent_changes"] == retried_status["recent_changes"]
+    assert "retry pending" not in (site / "report.md").read_text()
     assert diff_calls == [(old, new), (old, new)]
     assert commit_calls == [(old, new)] * (1 if failure_stage == "diff" else 2)
     assert any(change["detail"]["unmapped_files"] == ["unmapped.py"] for change in changes)

@@ -76,8 +76,27 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
     for r in records:
         if r.kind == "revision" and heads.get(r.repo) == r.revision:
             revs[r.repo] = {"sha": r.revision, "committed_at": r.revision_time, "subject": r.summary}
-    changes = [r for r in records if r.kind == "change"]
-    latest_changes = sorted(changes, key=lambda r: (instant_key(r.revision_time), instant_key(r.recorded_at)), reverse=True)[:10]
+    latest_by_range: dict[tuple[str, str, str], tuple[int, Record]] = {}
+    for position, record in enumerate(records):
+        if record.kind != "change":
+            continue
+        old = record.detail.get("old") or record.summary.split(" -> ")[0]
+        key = (record.repo, old, record.revision)
+        previous = latest_by_range.get(key)
+        if previous is None or (instant_key(record.recorded_at), position) > (
+            instant_key(previous[1].recorded_at), previous[0]
+        ):
+            latest_by_range[key] = (position, record)
+    latest_changes = [
+        record
+        for _, record in sorted(
+            latest_by_range.values(),
+            key=lambda item: (
+                instant_key(item[1].revision_time), instant_key(item[1].recorded_at), item[0]
+            ),
+            reverse=True,
+        )[:10]
+    ]
     return {
         "generated_at": state.get("last_run_at"),
         "collection_run": state.get("runs"),

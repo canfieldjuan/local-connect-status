@@ -156,3 +156,32 @@ def test_recent_changes_are_ordered_by_absolute_instant_across_offsets():
         [lexically_later_but_older, lexically_earlier_but_newer],
     )
     assert [item["repo"] for item in payload["recent_changes"]] == ["ew", "ip"]
+
+
+def test_recent_changes_supersede_retry_without_collapsing_distinct_baselines():
+    common = {
+        "kind": "change", "repo": "ew", "revision": "c" * 40, "verdict": "pass",
+        "revision_time": "2026-09-11T10:00:00+00:00", "recorded_at": "2026-09-11T10:01:00+00:00",
+    }
+    incomplete = Record(
+        **common, summary="aaaaaaaaaaaa -> cccccccccccc: 1 files",
+        detail={"old": "a" * 40, "commits": [], "commits_complete": False},
+    )
+    complete = Record(
+        **common, summary="aaaaaaaaaaaa -> cccccccccccc: 1 files",
+        detail={"old": "a" * 40, "commits": ["retry succeeded"], "commits_complete": True},
+    )
+    distinct = Record(
+        **common, summary="bbbbbbbbbbbb -> cccccccccccc: 2 files",
+        detail={"old": "b" * 40, "commits": ["distinct range"], "commits_complete": True},
+    )
+
+    payload = status_payload(
+        {"release": {}}, [], {}, [], {"runs": 1, "last_run_at": common["recorded_at"]}, {},
+        [incomplete, distinct, complete],
+    )
+
+    by_start = {item["from"]: item for item in payload["recent_changes"]}
+    assert set(by_start) == {"a" * 40, "b" * 40}
+    assert by_start["a" * 40]["commits"] == ["retry succeeded"]
+    assert by_start["a" * 40]["commits_complete"] is True
