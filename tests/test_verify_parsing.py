@@ -336,3 +336,97 @@ def test_desktop_dependency_setup_errors_become_explicit_failures(tmp_path: Path
     assert isinstance(result, Failure)
     assert result.what == "env" and result.why == expected
     assert result.detail == {"directory": str(desktop)}
+
+
+def test_pytest_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    venv = tree / ".venv"
+    (venv / "bin").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ip": {}}})
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    record = runner.pytest(
+        "ip.test", {"repo": "ip", "args": []},
+        Revision("ip", "a" * 40, "2026-09-11T00:00:00+00:00", "head"), ["condition"], ["task"],
+    )
+    assert record.verdict == "unavailable"
+    assert record.summary == "could not start: FileNotFoundError"
+
+
+def test_cargo_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "tree"
+    (tree / "src-tauri").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ds": {}}})
+    monkeypatch.setattr("lcstatus.verify.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    record = runner.cargo_lib(
+        "ds.cargo", {"repo": "ds"},
+        Revision("ds", "b" * 40, "2026-09-11T00:00:00+00:00", "head"), ["condition"], ["task"],
+    )
+    assert record.verdict == "unavailable"
+    assert record.summary == "could not start npm install --silent: FileNotFoundError"
+
+
+def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+    from lcstatus.sources import Revision
+
+    trees = {}
+    for repo in ("invoice-processor", "eom-email-watcher", "connect-contracts"):
+        tree = tmp_path / repo
+        tree.mkdir()
+        trees[repo] = tree
+    scripts = trees["invoice-processor"] / "scripts"
+    scripts.mkdir()
+    (scripts / "accept_against_email_watcher.py").write_text("raise SystemExit(0)\n")
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    class GitHub:
+        pass
+
+    runner = verify.Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+        {"repos": {repo: {} for repo in trees}},
+    )
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "WATCHER_COMPAT_PATH", tmp_path / "watcher-main")
+    monkeypatch.setattr(verify, "WATCHER_COMPAT_LOCK", tmp_path / "watcher-main.lock")
+    monkeypatch.setattr(verify.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    revisions = {
+        repo: Revision(repo, char * 40, "2026-09-11T00:00:00+00:00", repo)
+        for repo, char in zip(trees, "abc")
+    }
+    record = runner.accept_ew_ip(
+        "xapp.accept", {"participants": list(trees)}, revisions, ["condition"], ["task"]
+    )
+    assert record.verdict == "unavailable"
+    assert record.summary == "could not start: FileNotFoundError"
+    assert not verify.WATCHER_COMPAT_PATH.exists()

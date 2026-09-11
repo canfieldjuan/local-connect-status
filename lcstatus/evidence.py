@@ -122,14 +122,18 @@ class Record:
 
     def series_identity(self) -> str:
         """Identity of the check stream, excluding the outcome that can change over time."""
+        stable_source = {
+            name: self.source[name]
+            for name in ("type", "check")
+            if name in self.source
+        }
         key = {
             "kind": self.kind,
             "repo": self.repo,
             "revision": self.revision,
             "platform": self.platform,
             "condition_ids": sorted(self.condition_ids),
-            "source": self.source,
-            "command": self.command,
+            "source": stable_source,
             "participants": dict(sorted(self.participants.items())),
         }
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()

@@ -268,6 +268,9 @@ class Runner:
             r = subprocess.run(cmd, cwd=tree, capture_output=True, text=True, timeout=3600)
         except subprocess.TimeoutExpired:
             return Record(verdict="unavailable", summary="timeout", command=" ".join(cmd), **base)
+        except OSError as exc:
+            return Record(verdict="unavailable", summary=f"could not start: {type(exc).__name__}",
+                          command=" ".join(cmd), **base)
         dur = round(time.time() - t0, 1)
         log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
         executed = failed = skipped = None
@@ -321,6 +324,11 @@ class Runner:
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(out), encoding="utf-8")
                 return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}", log_path=str(log), **base)
+            except OSError as exc:
+                log.write_text("\n".join(out), encoding="utf-8")
+                return Record(verdict="unavailable",
+                              summary=f"could not start {' '.join(cmd)}: {type(exc).__name__}",
+                              log_path=str(log), **base)
             out += [f"$ {' '.join(cmd)}", r.stdout, r.stderr]
             rc = r.returncode
             if rc != 0:
@@ -413,6 +421,9 @@ class Runner:
                                    timeout=1800, env=env)
             except subprocess.TimeoutExpired:
                 return Record(verdict="unavailable", summary="timeout",
+                              command="accept_against_email_watcher.py (isolated)", **base)
+            except OSError as exc:
+                return Record(verdict="unavailable", summary=f"could not start: {type(exc).__name__}",
                               command="accept_against_email_watcher.py (isolated)", **base)
             log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
             last = (r.stdout.strip().splitlines() or [""])[-1]

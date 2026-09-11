@@ -50,8 +50,9 @@ Release recorded for that repository). Linux and Windows are scored separately; 
 never means ready.
 
 Consecutive identical observations are stored once. If a result changes and later returns
-to an earlier value, that recovery remains a separate observation and becomes the latest result.
-All evidence timestamps are compared as absolute instants across timezone offsets. Manual
+to an earlier value, that recovery remains a separate observation and becomes the latest result,
+even when GitHub run IDs, URLs, or other per-attempt metadata differ. All evidence timestamps are
+compared as absolute instants across timezone offsets. Manual
 observations validate and normalize their observation time, so a backfilled older result cannot
 displace a newer observation.
 
@@ -132,7 +133,7 @@ test that would fail if the dashboard could be fooled that way:
 | let Linux evidence stand in for Windows, or call the bundle ready without Invoice Processor and Document Summarizer Windows observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_bundle_readiness_requires_each_unproven_installer_observation` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
 | call something released without a published release | `test_release_requires_release_artifact_not_just_demos`, `test_release_absence_is_an_explicit_not_met_at_current_head` |
-| duplicate progress on a repeated delivery, lose a recovery, changed incomplete release, or distinct change record | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept` |
+| duplicate progress on a repeated delivery, lose a recovery across volatile source metadata, changed incomplete release, or distinct change record | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_actions_recovery_survives_volatile_source_metadata`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept` |
 | let a docs-only or contract-only change look like running functionality | `test_docs_only_change_is_flagged_and_unmapped_files_surface` |
 | show a failed fetch, mirror command exception, missing repository, or unavailable GitHub as a clean empty result, including when fetch was intentionally skipped | `test_missing_repository_and_unavailable_github_are_explicit`, `test_mirror_subprocess_errors_become_failures`, `test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown` |
 | invent data when only rendering, or re-promote evidence after a head became unknown | `test_render_only_never_invents_data`, `test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pass` |
@@ -140,7 +141,7 @@ test that would fail if the dashboard could be fooled that way:
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |
 | prefer an older workflow rerun over a newer workflow run | `test_latest_distinct_workflow_run_beats_older_rerun_attempt` |
 | delete an unowned compatibility path or read cross-app fixtures from developer checkouts | `test_prepare_owned_symlink_refuses_real_directory_without_deleting_it`, `test_prepare_owned_symlink_refuses_foreign_symlink`, `test_cross_app_runner_uses_all_exact_trees_and_isolated_home` |
-| hide unavailable Actions or Releases sources, or crash during Python/desktop dependency setup | `test_unavailable_actions_and_release_results_are_run_failures`, `test_uv_sync_timeout_becomes_an_explicit_failure`, `test_editable_install_timeout_becomes_an_explicit_failure`, `test_desktop_dependency_setup_errors_become_explicit_failures` |
+| hide unavailable Actions or Releases sources, or crash during dependency setup or runtime process startup | `test_unavailable_actions_and_release_results_are_run_failures`, `test_uv_sync_timeout_becomes_an_explicit_failure`, `test_editable_install_timeout_becomes_an_explicit_failure`, `test_desktop_dependency_setup_errors_become_explicit_failures`, `test_pytest_startup_error_becomes_unavailable_evidence`, `test_cargo_startup_error_becomes_unavailable_evidence`, `test_cross_app_startup_error_becomes_unavailable_evidence` |
 | publish stale status copy, call an incomplete release absent, or embed a record that terminates the dashboard script | `test_next_action_is_derived_from_condition_state_not_catalogue_copy`, `test_release_failure_label_distinguishes_incomplete_from_absent_release`, `test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_driven` |
 | keep a release green after its assets disappear because publication time outranks the later check | `test_release_record_uses_target_commit_time_not_publication_time`, `test_current_release_failure_beats_old_pass_with_inflated_publication_time` |
 | let a backfilled older manual pass displace a newer observed failure | `test_manual_record_uses_normalized_observation_time`, `test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure` |

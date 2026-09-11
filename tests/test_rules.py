@@ -457,3 +457,34 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
     ))
     ready = task_status(release_task, records, heads, catalogue, catalogue["release"])
     assert ready.maturity == "ready for release"
+
+
+def test_actions_recovery_survives_volatile_source_metadata(tmp_path: Path):
+    store = Store(tmp_path / "r.jsonl")
+    success_source = {
+        "type": "github_actions", "check": "t.ci.win", "workflow": "CI", "job": "test",
+        "run_id": 101, "job_id": 202, "url": "https://example.invalid/job/202", "run_attempt": 1,
+    }
+    first = rec(
+        "ci_run", "pass", cond="c2", platform="windows", source=success_source,
+        executed=4, recorded_at="2026-09-11T10:00:00+00:00",
+    )
+    outage = rec(
+        "ci_run", "unavailable", cond="c2", platform="windows",
+        source={"type": "github_actions", "check": "t.ci.win"},
+        recorded_at="2026-09-11T10:01:00+00:00",
+    )
+    recovery = rec(
+        "ci_run", "pass", cond="c2", platform="windows", source=success_source,
+        executed=4, recorded_at="2026-09-11T10:02:00+00:00",
+    )
+
+    assert store.add(first) and store.add(outage) and store.add(recovery)
+    loaded = Store(tmp_path / "r.jsonl")
+    assert len(loaded) == 3
+    status = condition_status(
+        {"id": "c2", "kind": "ci_run", "check": "t.ci.win", "platform": "windows"},
+        loaded.all(), {"ip": NEW}, "ip",
+    )
+    assert status.state == "satisfied"
+    assert status.current is not None and status.current.record_id == recovery.record_id
