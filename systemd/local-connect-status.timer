@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect Local Connect status every 20 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=20min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=local-connect-status.service
+
+[Install]
+WantedBy=timers.target
