@@ -144,9 +144,12 @@ def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, st
     sat = lambda cs: all(c.state == "satisfied" for c in cs) and bool(cs)  # noqa: E731
 
     # maturity: never higher than evidence allows
-    if sat(rels):
+    release_ready = (
+        sat(automated) and sat(demos) and task.get("layer") == "release" and _all_platforms(conds, release)
+    )
+    if sat(rels) and release_ready:
         maturity = "released"
-    elif sat(automated) and sat(demos) and task.get("layer") == "release" and _all_platforms(conds, release):
+    elif release_ready:
         maturity = "ready for release"
     elif sat(automated) and demos and sat(demos):
         maturity = "demonstrated"

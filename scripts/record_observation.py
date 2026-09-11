@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,9 +30,10 @@ from lcstatus.sources import Mirrors  # noqa: E402
 
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
+MAX_FUTURE_SKEW = timedelta(minutes=5)
 
 
-def normalize_observed_at(value: str) -> str:
+def normalize_observed_at(value: str, *, now: datetime | None = None) -> str:
     """Validate an operator timestamp and normalize it for chronological string ordering."""
     try:
         observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -40,7 +41,11 @@ def normalize_observed_at(value: str) -> str:
         raise ValueError("--observed-at must be an ISO-8601 timestamp") from exc
     if observed.tzinfo is None or observed.utcoffset() is None:
         raise ValueError("--observed-at must include a timezone offset")
-    return observed.astimezone(timezone.utc).isoformat(timespec="seconds")
+    normalized = observed.astimezone(timezone.utc)
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if normalized > reference + MAX_FUTURE_SKEW:
+        raise ValueError("--observed-at cannot be more than 5 minutes in the future")
+    return normalized.isoformat(timespec="seconds")
 
 
 def parse_participants(values: list[str], expected_repos: list[str]) -> dict[str, str]:

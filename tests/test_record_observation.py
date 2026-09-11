@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -63,6 +64,15 @@ def test_manual_record_uses_normalized_observation_time(monkeypatch):
 def test_manual_observation_time_requires_valid_timezone(value):
     with pytest.raises(ValueError):
         observation.normalize_observed_at(value)
+
+
+def test_manual_observation_time_allows_clock_skew_but_rejects_material_future():
+    now = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+    boundary = now + observation.MAX_FUTURE_SKEW
+    assert observation.normalize_observed_at(boundary.isoformat(), now=now) == boundary.isoformat()
+    with pytest.raises(ValueError, match="more than 5 minutes in the future"):
+        observation.normalize_observed_at((boundary + timedelta(seconds=1)).isoformat(), now=now)
+    assert observation.normalize_observed_at((now - timedelta(days=30)).isoformat(), now=now)
 
 
 @pytest.mark.parametrize(

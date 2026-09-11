@@ -103,9 +103,12 @@ class Mirrors:
             return Failure("diff", r.stderr.strip()[-200:], {"repo": repo, "old": old, "new": new})
         return [l for l in r.stdout.splitlines() if l.strip()]
 
-    def commits_between(self, repo: str, old: str, new: str) -> list[str]:
+    def commits_between(self, repo: str, old: str, new: str) -> Failure | list[str]:
         r = _run(["git", "-C", str(self.path(repo)), "log", "--format=%h %s", f"{old}..{new}"])
-        return r.stdout.splitlines() if r.returncode == 0 else []
+        if r.returncode != 0:
+            return Failure("commits", r.stderr.strip()[-200:] or f"exit {r.returncode}",
+                           {"repo": repo, "old": old, "new": new})
+        return r.stdout.splitlines()
 
     def show(self, repo: str, sha: str, path: str) -> str | None:
         r = _run(["git", "-C", str(self.path(repo)), "show", f"{sha}:{path}"])

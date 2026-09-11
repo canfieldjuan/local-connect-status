@@ -224,6 +224,14 @@
       ],
       "platform": "linux"
     },
+    "ip.pytest.first_run_model": {
+      "runner": "pytest",
+      "repo": "invoice-processor",
+      "args": [
+        "tests/test_shell.py::test_first_run_names_the_recommended_model"
+      ],
+      "platform": "linux"
+    },
     "xapp.accept_ew_to_ip": {
       "runner": "accept_ew_ip",
       "repo": "invoice-processor",
@@ -727,6 +735,20 @@
           "proves": "Invoice Processor bundle carries its sidecar; uninstall leaves data; nothing claims a signature."
         },
         {
+          "id": "rel.ip_licence_activation",
+          "kind": "automated_test",
+          "check": "ip.pytest.entitlement",
+          "platform": "linux",
+          "proves": "The shared local licence is found at the configured user path and a valid signed entitlement activates the capability."
+        },
+        {
+          "id": "rel.ip_first_run_model",
+          "kind": "automated_test",
+          "check": "ip.pytest.first_run_model",
+          "platform": "linux",
+          "proves": "First run reports model reachability and, when unavailable, names the bundle's recommended model and local runtime."
+        },
+        {
           "id": "rel.ip_removal_demo",
           "kind": "installed_demo",
           "check": "manual.ip_removal_test",
@@ -793,9 +815,13 @@
           "repo": "invoice-processor",
           "paths": [
             "desktop/src-tauri/tauri.conf.json",
+            "desktop/src/main.ts",
             "scripts/build_desktop_sidecar.py",
             "scripts/removal_test.py",
-            "tests/test_packaging.py"
+            "src/invoice_processor/entitlement/**",
+            "tests/test_entitlement.py",
+            "tests/test_packaging.py",
+            "tests/test_shell.py"
           ]
         },
         {

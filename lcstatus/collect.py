@@ -175,10 +175,22 @@ def main(argv: list[str] | None = None) -> int:
                                      source={"type": "mirror_diff"}, detail={"old": prev}))
                 else:
                     a = assess(repo, prev, head.sha, files, cat["tasks"])
+                    commits = mirrors.commits_between(repo, prev, head.sha)
+                    if isinstance(commits, Failure):
+                        failures.append({"repo": repo, "what": commits.what, "why": commits.why})
+                        store.add(Record(
+                            kind="collection_failure", repo=repo, revision=head.sha,
+                            revision_time=head.committed_at, verdict="unavailable",
+                            summary=f"commit log {prev[:12]}..{head.sha[:12]} failed: {commits.why}",
+                            source={"type": "mirror_commits"}, detail={"old": prev},
+                        ))
+                        commit_summaries: list[str] = []
+                    else:
+                        commit_summaries = commits[:50]
                     store.add(Record(kind="change", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
                                      task_ids=sorted(a.affected_tasks), summary=f"{prev[:12]} -> {head.sha[:12]}: {len(files)} files",
                                      source={"type": "mirror_diff"},
-                                     detail=dict(a.as_detail(), old=prev, commits=mirrors.commits_between(repo, prev, head.sha)[:50])))
+                                     detail=dict(a.as_detail(), old=prev, commits=commit_summaries)))
 
         # ---- decide what to verify --------------------------------------------------
         cond_map: dict[str, tuple[list[str], list[str]]] = {}

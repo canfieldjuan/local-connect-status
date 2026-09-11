@@ -322,7 +322,95 @@ def test_mirror_subprocess_errors_become_failures(tmp_path: Path, monkeypatch):
         monkeypatch.setattr("lcstatus.sources.subprocess.run", fail_to_run)
         head = mirrors.head("app")
         archive = mirrors.extract("app", "a" * 40, tmp_path / f"tree-{type(error).__name__}")
+        commits = mirrors.commits_between("app", "a" * 40, "b" * 40)
         assert isinstance(head, Failure) and head.what == "head"
         assert type(error).__name__ in head.why
         assert isinstance(archive, Failure) and archive.what == "archive"
         assert archive.why == type(error).__name__
+        assert isinstance(commits, Failure) and commits.what == "commits"
+        assert type(error).__name__ in commits.why
+
+
+def test_empty_commit_range_and_failed_commit_read_stay_distinct(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Failure, Mirrors
+
+    mirrors = Mirrors(tmp_path / "mirrors", {"app": {"github": "example/app"}})
+    monkeypatch.setattr(
+        "lcstatus.sources._run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout="", stderr=""),
+    )
+    assert mirrors.commits_between("app", "a" * 40, "b" * 40) == []
+    monkeypatch.setattr(
+        "lcstatus.sources._run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 124, stdout="", stderr="timed out"),
+    )
+    failed = mirrors.commits_between("app", "a" * 40, "b" * 40)
+    assert isinstance(failed, Failure)
+    assert failed.what == "commits" and failed.why == "timed out"
+
+
+def test_commit_log_failure_sets_failed_exit_without_losing_change_mapping(tmp_path: Path, monkeypatch):
+    import lcstatus.collect as collect
+    from lcstatus.sources import Failure, Revision
+
+    catalogue = {
+        "catalogue_version": 1,
+        "release": {
+            "target": "t", "required_platforms": ["linux", "windows"],
+            "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None},
+        },
+        "repos": {"ghost": {"github": "example/ghost", "ci_workflows": []}},
+        "apps": {}, "checks": {}, "tasks": [],
+    }
+    catalogue_path = tmp_path / "catalogue.json"
+    catalogue_path.write_text(json.dumps(catalogue))
+    old, new = "a" * 40, "b" * 40
+    revision = Revision("ghost", new, "2026-09-11T00:00:00+00:00", "head")
+
+    class FakeMirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch(self, repo):
+            return None
+
+        def head(self, repo):
+            return revision
+
+        def changed_files(self, repo, before, after):
+            return ["unmapped.py"]
+
+        def commits_between(self, repo, before, after):
+            return Failure("commits", "git log timed out")
+
+    class FakeGitHub:
+        def default_branch_head(self, repo):
+            return {"sha": new}
+
+    class FakeRunner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
+    monkeypatch.setattr(collect, "GitHub", FakeGitHub)
+    monkeypatch.setattr(collect, "Runner", FakeRunner)
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "state.json").write_text(json.dumps({"heads": {"ghost": old}, "runs": 1}))
+    site = tmp_path / "site"
+
+    rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data), "--site", str(site), "--no-local",
+    ])
+
+    status = json.loads((site / "status.json").read_text())
+    records = [json.loads(line) for line in (data / "records.jsonl").read_text().splitlines()]
+    assert rc == 2
+    assert status["source_failures"] == [
+        {"repo": "ghost", "what": "commits", "why": "git log timed out"}
+    ]
+    change = next(record for record in records if record["kind"] == "change")
+    assert change["detail"]["unmapped_files"] == ["unmapped.py"]
+    assert change["detail"]["commits"] == []
+    assert any(record["source"].get("type") == "mirror_commits" for record in records)

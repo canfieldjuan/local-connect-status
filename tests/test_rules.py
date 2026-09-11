@@ -134,6 +134,47 @@ def test_release_requires_release_artifact_not_just_demos():
     assert s.maturity == "demonstrated"
 
 
+@pytest.mark.parametrize("missing_id", ["rel.ip_licence_activation", "rel.ip_first_run_model"])
+def test_release_promise_requires_licence_and_first_run_model_evidence(missing_id):
+    from lcstatus.catalogue import load
+
+    catalogue = load(Path(__file__).resolve().parent.parent / "catalogue.json")
+    release_task = next(item for item in catalogue["tasks"] if item["id"] == "release.linux_and_windows")
+    checks = catalogue["checks"]
+    conditions = {condition["id"]: condition for condition in release_task["conditions"]}
+    assert conditions["rel.ip_licence_activation"]["check"] == "ip.pytest.entitlement"
+    assert conditions["rel.ip_first_run_model"]["check"] == "ip.pytest.first_run_model"
+    assert checks["ip.pytest.first_run_model"]["args"] == [
+        "tests/test_shell.py::test_first_run_names_the_recommended_model"
+    ]
+    heads = {
+        "eom-email-watcher": "a" * 40,
+        "document-summarizer": "b" * 40,
+        "invoice-processor": "c" * 40,
+    }
+
+    def evidence_for(condition):
+        check = checks[condition["check"]]
+        repo = check["repo"]
+        participants = {name: heads[name] for name in check.get("participants", [])}
+        return Record(
+            kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
+            platform=condition.get("platform", check.get("platform", "n/a")),
+            condition_ids=[condition["id"]], participants=participants,
+            executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
+            failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
+        )
+
+    records = [evidence_for(condition) for condition in release_task["conditions"] if condition["id"] != missing_id]
+    blocked = task_status(release_task, records, heads, catalogue, catalogue["release"])
+    assert blocked.maturity != "released"
+    assert next(c for c in blocked.conditions if c.condition["id"] == missing_id).state == "no_evidence"
+
+    records.append(evidence_for(conditions[missing_id]))
+    released = task_status(release_task, records, heads, catalogue, catalogue["release"])
+    assert released.maturity == "released"
+
+
 # --- duplicates and store behaviour ---------------------------------------------------------------
 
 def test_duplicate_delivery_stores_once(tmp_path: Path):
