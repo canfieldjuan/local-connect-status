@@ -600,6 +600,124 @@ class Runner:
             fcntl.flock(lock_fh, fcntl.LOCK_UN)
             lock_fh.close()
 
+    # ---- cross-app acceptance (Email Watcher -> Document Summarizer) -----------------
+
+    def accept_ew_ds(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
+        participants = {repo: revs[repo].sha for repo in check["participants"]}
+        ew, ds = revs["eom-email-watcher"], revs["document-summarizer"]
+        base = dict(kind="automated_test", repo="eom-email-watcher", revision=ew.sha,
+                    revision_time=ew.committed_at, platform="linux", condition_ids=condition_ids,
+                    task_ids=task_ids, participants=participants,
+                    source=self._source(
+                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
+                    ))
+        trees: dict[str, Path] = {}
+        for repo in check["participants"]:
+            tree = self.tree(repo, revs[repo].sha)
+            if isinstance(tree, Failure):
+                return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)
+            trees[repo] = tree
+
+        ew_tree = trees["eom-email-watcher"]
+        ds_tree = trees["document-summarizer"]
+        contracts_tree = trees["connect-contracts"]
+        proof = ew_tree / "scripts" / "connect-local-proof.py"
+        pdf = ds_tree / "src-tauri" / "tests" / "fixtures" / "structured_report.pdf"
+        keyring = contracts_tree / "entitlements" / "v1" / "fixtures" / "test-keyring.json"
+        active = contracts_tree / "entitlements" / "v1" / "fixtures" / "valid" / "active.json"
+        expired = contracts_tree / "entitlements" / "v1" / "fixtures" / "valid" / "expired.json"
+        contract_requirements = contracts_tree / "requirements-dev.txt"
+        required = (proof, pdf, keyring, active, expired, contract_requirements)
+        missing = [str(path) for path in required if not path.is_file()]
+        if missing:
+            return Record(verdict="unavailable", summary=f"cross-app proof input absent: {missing[0]}", **base)
+
+        npm = find_tool("npm")
+        cargo = find_tool("cargo")
+        uv = find_tool("uv")
+        xvfb = find_tool("xvfb-run")
+        absent_tool = next((name for name, path in (("npm", npm), ("cargo", cargo), ("uv", uv), ("xvfb-run", xvfb)) if path is None), None)
+        if absent_tool:
+            return Record(verdict="unavailable", summary=f"{absent_tool} not installed", **base)
+        venv = self._venv("eom-email-watcher", ew_tree, ew.sha)
+        if isinstance(venv, Failure):
+            return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
+
+        key = f"{ew.sha[:12]}-{ds.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
+        log = self.logs / f"{check_id}.{key}.log"
+        env = sanitized_python_env(
+            LOCAL_CONNECT_ENTITLEMENT_KEYRING_FILE=str(keyring),
+            LIBGL_ALWAYS_SOFTWARE="1",
+            WEBKIT_DISABLE_COMPOSITING_MODE="1",
+            WEBKIT_DISABLE_DMABUF_RENDERER="1",
+        )
+        tool_dirs = [str(Path(path).parent) for path in (npm, cargo, uv, xvfb)]
+        env["PATH"] = os.pathsep.join([*dict.fromkeys(tool_dirs), env.get("PATH", "")])
+        steps = [
+            ([uv, "run", "--quiet", "--with-requirements", str(contract_requirements),
+              "python", "-m", "unittest", "discover", "-s", "tests"], contracts_tree, 1200),
+            ([npm, "install", "--silent"], ds_tree, 1200),
+            ([npm, "run", "desktop:build:no-bundle"], ds_tree, 3600),
+        ]
+        output: list[str] = []
+        started = time.time()
+        for cmd, cwd, timeout in steps:
+            try:
+                result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                                        timeout=timeout, env=env)
+            except subprocess.TimeoutExpired:
+                log.write_text("\n".join(output), encoding="utf-8")
+                return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}",
+                              command=" && ".join(" ".join(step[0]) for step in steps),
+                              log_path=str(log), **base)
+            except OSError as exc:
+                log.write_text("\n".join(output), encoding="utf-8")
+                return Record(verdict="unavailable", summary=f"could not start {' '.join(cmd)}: {type(exc).__name__}",
+                              command=" && ".join(" ".join(step[0]) for step in steps),
+                              log_path=str(log), **base)
+            output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
+            if result.returncode != 0:
+                log.write_text("\n".join(output), encoding="utf-8")
+                summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "build failed")
+                return Record(verdict="fail", summary=summary[:200], exit_code=result.returncode,
+                              command=" ".join(cmd), log_path=str(log),
+                              duration_s=round(time.time() - started, 1), **base)
+
+        provider = ds_tree / "src-tauri" / "target" / "release" / "document-summarizer"
+        if not provider.is_file():
+            log.write_text("\n".join(output), encoding="utf-8")
+            return Record(verdict="unavailable", summary="Document Summarizer build produced no release binary",
+                          log_path=str(log), **base)
+        cmd = [xvfb, "-a", str(venv / "bin" / "python"), str(proof),
+               "--provider-binary", str(provider), "--pdf", str(pdf),
+               "--entitlement-keyring", str(keyring), "--active-entitlement", str(active),
+               "--expired-entitlement", str(expired)]
+        try:
+            result = subprocess.run(cmd, cwd=ew_tree, capture_output=True, text=True,
+                                    timeout=1800, env=env)
+        except subprocess.TimeoutExpired:
+            log.write_text("\n".join(output), encoding="utf-8")
+            return Record(verdict="unavailable", summary="cross-app proof timed out after 1800 seconds",
+                          command="connect-local-proof.py (exact trees, stand-in model)",
+                          log_path=str(log), **base)
+        except OSError as exc:
+            log.write_text("\n".join(output), encoding="utf-8")
+            return Record(verdict="unavailable", summary=f"could not start cross-app proof: {type(exc).__name__}",
+                          command="connect-local-proof.py (exact trees, stand-in model)",
+                          log_path=str(log), **base)
+        output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
+        log.write_text("\n".join(output), encoding="utf-8")
+        summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "cross-app proof completed")
+        return Record(verdict="pass" if result.returncode == 0 else "fail",
+                      command="connect-local-proof.py (exact trees, stand-in model, software rendering)",
+                      exit_code=result.returncode, executed=1, failed=int(result.returncode != 0),
+                      summary=summary[:200], log_path=str(log),
+                      duration_s=round(time.time() - started, 1),
+                      detail={"email_watcher_tree": str(ew_tree),
+                              "document_summarizer_tree": str(ds_tree),
+                              "contracts_tree": str(contracts_tree),
+                              "provider_binary": str(provider)}, **base)
+
     # ---- GitHub Actions --------------------------------------------------------------
 
     def ci_jobs(self, repo: str, rev: Revision, checks: dict[str, dict[str, Any]], cond_map: dict[str, tuple[list[str], list[str]]]) -> list[Record]:

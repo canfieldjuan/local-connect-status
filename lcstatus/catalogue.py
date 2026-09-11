@@ -12,6 +12,7 @@ RUNNERS = (
     "pytest",
     "cargo_lib",
     "accept_ew_ip",
+    "accept_ew_ds",
     "ci_job",
     "manual_observation",
     "github_release",
@@ -19,7 +20,7 @@ RUNNERS = (
 )
 LAYERS = ("standalone", "connect", "automate", "release")
 KIND_RUNNERS = {
-    "automated_test": {"pytest", "cargo_lib", "accept_ew_ip"},
+    "automated_test": {"pytest", "cargo_lib", "accept_ew_ip", "accept_ew_ds"},
     "ci_run": {"ci_job"},
     "installed_demo": {"manual_observation"},
     "release_artifact": {"github_release"},

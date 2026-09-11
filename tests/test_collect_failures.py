@@ -192,6 +192,7 @@ def test_unavailable_results_from_any_runner_are_run_failures(tmp_path: Path):
         ("pytest", "automated_test", "local_runner"),
         ("cargo_lib", "automated_test", "local_runner"),
         ("accept_ew_ip", "automated_test", "local_runner"),
+        ("accept_ew_ds", "automated_test", "local_runner"),
     ],
 )
 def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
@@ -204,7 +205,7 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
     check = {"runner": runner_kind, "repo": "ghost", "platform": "linux"}
     if runner_kind == "source_inspection":
         check.update({"paths": ["src/**"], "markers": ["marker"]})
-    if runner_kind == "accept_ew_ip":
+    if runner_kind in {"accept_ew_ip", "accept_ew_ds"}:
         check["participants"] = ["ghost"]
     catalogue = {
         "catalogue_version": 1,
@@ -260,6 +261,9 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
             return self.result(rev, condition_ids, task_ids)
 
         def accept_ew_ip(self, check_id, check_config, revisions, condition_ids, task_ids):
+            return self.result(revisions["ghost"], condition_ids, task_ids)
+
+        def accept_ew_ds(self, check_id, check_config, revisions, condition_ids, task_ids):
             return self.result(revisions["ghost"], condition_ids, task_ids)
 
     monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")

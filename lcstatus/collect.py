@@ -1,8 +1,8 @@
 """The collection run: observe heads, detect change, verify, store, render. One command.
 
     python -m lcstatus.collect                 # routine run (timer)
-    python -m lcstatus.collect --heavy         # also run the Rust suite (slow)
-    python -m lcstatus.collect --checks ip.pytest.ledger_via_connect xapp.accept_ew_to_ip
+    python -m lcstatus.collect --heavy         # also run Rust and PDF handoff checks (slow)
+    python -m lcstatus.collect --checks xapp.accept_ew_to_ip xapp.accept_ew_to_ds
     python -m lcstatus.collect --set-baseline eom-email-watcher=<sha>   # then the next run observes the real move
     python -m lcstatus.collect --render-only
 
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", default=str(DATA))
     ap.add_argument("--site", default=str(SITE))
     ap.add_argument("--no-fetch", action="store_true")
-    ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust suite)")
+    ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust and PDF handoff)")
     ap.add_argument("--checks", nargs="*", help="only these check ids (plus CI/release reads)")
     ap.add_argument("--no-local", action="store_true", help="skip local runners; read CI and releases only")
     ap.add_argument("--set-baseline", nargs="*", default=[], metavar="repo=sha",
@@ -288,6 +288,12 @@ def main(argv: list[str] | None = None) -> int:
                 if all(p in revs for p in chk["participants"]):
                     print(f"running {cid} ...", flush=True)
                     r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
+                    store_result(store, failures, r)
+                    print(f"  {r.verdict}: {r.summary}", flush=True)
+            elif runner_kind == "accept_ew_ds":
+                if all(p in revs for p in chk["participants"]):
+                    print(f"running {cid} (heavy) ...", flush=True)
+                    r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
                     store_result(store, failures, r)
                     print(f"  {r.verdict}: {r.summary}", flush=True)
         for repo, checks in ci_by_repo.items():

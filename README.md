@@ -77,8 +77,8 @@ filed as invoice-processor#37). A verdict has to be comparable across revisions.
 
 ```
 python3 -m lcstatus.collect                  # poll, verify, render (routine)
-python3 -m lcstatus.collect --heavy          # also run Document Summarizer's Rust suite (slow)
-python3 -m lcstatus.collect --checks ip.pytest.ledger_via_connect xapp.accept_ew_to_ip
+python3 -m lcstatus.collect --heavy          # also run Rust and PDF cross-app checks (slow)
+python3 -m lcstatus.collect --checks xapp.accept_ew_to_ip xapp.accept_ew_to_ds
 python3 -m lcstatus.collect --render-only    # re-render from stored records
 python3 scripts/record_observation.py --help # record a human demonstration
 uv run pytest                                # this project's own tests
@@ -112,8 +112,12 @@ was off is seen on the next tick, with every intermediate commit listed in the c
 A transient diff or commit-log failure keeps that comparison baseline in place for the next tick
 without hiding the newly confirmed current head.
 
-**Heavy checks** (the Rust suite) are opt-in. Document Summarizer's routine evidence is its
-GitHub Actions run for the exact sha; a local run is for when that isn't enough.
+**Heavy checks** are opt-in. They include Document Summarizer's Rust suite and the exact-tree
+Email Watcher → Document Summarizer PDF handoff. The handoff first validates the current Connect
+Contracts fixtures, builds the exact provider revision with that revision's test keyring, and then
+runs Email Watcher's real cross-process proof under software rendering with its fixture model. Its
+single evidence row records all three revisions, so any participant move makes the proof historical.
+Routine Document Summarizer evidence remains its GitHub Actions run for the exact sha.
 
 ## What it cannot do
 
@@ -151,13 +155,13 @@ test that would fail if the dashboard could be fooled that way:
 | label a task with nothing checkable as "verified at current code" | `test_task_with_only_inspection_conditions_is_not_checked_not_current` |
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |
 | prefer an older workflow rerun over a newer workflow run | `test_latest_distinct_workflow_run_beats_older_rerun_attempt` |
-| delete an unowned compatibility path or read cross-app fixtures from developer checkouts | `test_prepare_owned_symlink_refuses_real_directory_without_deleting_it`, `test_prepare_owned_symlink_refuses_foreign_symlink`, `test_cross_app_runner_uses_all_exact_trees_and_isolated_home` |
+| delete an unowned compatibility path, read cross-app fixtures from developer checkouts, or claim the PDF handoff without the exact consumer/provider/contracts tuple | `test_prepare_owned_symlink_refuses_real_directory_without_deleting_it`, `test_prepare_owned_symlink_refuses_foreign_symlink`, `test_cross_app_runner_uses_all_exact_trees_and_isolated_home`, `test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees`, `test_pdf_handoff_runner_records_nonzero_proof_as_failure` |
 | let inherited `PYTHONPATH` or `PYTHONHOME` redirect an exact-tree pytest run into a developer checkout | `test_pytest_clears_inherited_python_paths_and_records_startup_error` |
 | hide unavailable Actions, Releases, source-inspection, or local-runner sources, trust a partial desktop dependency directory, crash during dependency setup/runtime startup, or fail the web service before generated `site/` exists | `test_unavailable_results_from_any_runner_are_run_failures`, `test_unavailable_local_runner_path_sets_failed_exit_and_banner`, `test_uv_sync_timeout_becomes_an_explicit_failure`, `test_editable_install_timeout_becomes_an_explicit_failure`, `test_desktop_dependency_setup_errors_become_explicit_failures`, `test_desktop_dependency_cache_requires_success_marker_for_current_lockfile`, `test_pytest_clears_inherited_python_paths_and_records_startup_error`, `test_cargo_startup_error_becomes_unavailable_evidence`, `test_cross_app_startup_error_becomes_unavailable_evidence`, `test_web_service_creates_generated_site_before_serving_it` |
 | publish stale status copy, call an incomplete release absent, or embed a record that terminates the dashboard script | `test_next_action_is_derived_from_condition_state_not_catalogue_copy`, `test_release_failure_label_distinguishes_incomplete_from_absent_release`, `test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_driven` |
 | accept forged manual participant metadata or interpolate evidence fields as executable dashboard markup | `test_participant_parser_rejects_ambiguous_or_constructed_metadata`, `test_participant_parser_accepts_exact_catalogue_set_at_sha_boundary`, `test_manual_record_rejects_participant_revision_absent_from_owned_mirror`, `test_dashboard_escapes_every_manual_revision_field_before_inner_html` |
 | keep a release green after its assets disappear because publication time outranks the later check | `test_release_record_uses_target_commit_time_not_publication_time`, `test_current_release_failure_beats_old_pass_with_inflated_publication_time` |
-| let a backfilled or future-dated manual pass displace a newer observed failure | `test_manual_record_uses_normalized_observation_time`, `test_manual_observation_time_allows_clock_skew_but_rejects_material_future`, `test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure` |
+| let a backfilled, future-dated, or pre-commit manual pass displace a newer observed failure or claim revisions that did not exist yet | `test_manual_record_uses_normalized_observation_time`, `test_manual_observation_time_allows_clock_skew_but_rejects_material_future`, `test_manual_observation_must_follow_every_participant_revision_with_clock_skew`, `test_manual_record_rejects_observation_before_any_participant_revision`, `test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure` |
 | promise that failed-source rows always show historical proof when they may show the failed attempt | `test_source_failure_banner_matches_current_or_historical_row_evidence` |
 | order evidence, stored heads, or recent changes lexicographically instead of by absolute instant | `test_last_proven_uses_absolute_instant_across_offsets`, `test_store_latest_revision_uses_absolute_instant_across_offsets`, `test_recent_changes_are_ordered_by_absolute_instant_across_offsets` |
 

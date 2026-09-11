@@ -243,6 +243,18 @@
       ],
       "note": "The acceptance script drives exact extracted Email Watcher and Invoice Processor trees over loopback, with the exact contracts keyring and a stand-in model. All three revisions are recorded. No GPU."
     },
+    "xapp.accept_ew_to_ds": {
+      "runner": "accept_ew_ds",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "heavy": true,
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "connect-contracts"
+      ],
+      "note": "Builds the exact Document Summarizer tree with the exact contracts keyring, then drives it through Email Watcher's real cross-process PDF proof with a stand-in model and software rendering. All three revisions are recorded. No GPU."
+    },
     "manual.ip_removal_test": {
       "runner": "manual_observation",
       "repo": "invoice-processor",
@@ -529,6 +541,12 @@
       "promise": "With both apps installed and licensed, a Summarize action appears on a PDF attachment inside Email Watcher; the file alone is handed over loopback; the cited summary comes back and stays with the message.",
       "human_involvement": "You click. Requires the licence in both apps.",
       "conditions": [
+        {
+          "id": "connect.pdf_handoff_exact_revisions",
+          "kind": "automated_test",
+          "check": "xapp.accept_ew_to_ds",
+          "proves": "The exact consumer, provider, and contract revisions complete the real loopback PDF handoff with a stand-in model."
+        },
         {
           "id": "connect.v1_handoff_durable",
           "kind": "automated_test",

@@ -33,21 +33,37 @@ from lcstatus.sources import Mirrors  # noqa: E402
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 MAX_FUTURE_SKEW = timedelta(minutes=5)
+MAX_COMMIT_CLOCK_SKEW = timedelta(minutes=5)
+
+
+def parse_aware_timestamp(value: str, *, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must include a timezone offset")
+    return parsed.astimezone(timezone.utc)
 
 
 def normalize_observed_at(value: str, *, now: datetime | None = None) -> str:
     """Validate an operator timestamp and normalize it for chronological string ordering."""
-    try:
-        observed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("--observed-at must be an ISO-8601 timestamp") from exc
-    if observed.tzinfo is None or observed.utcoffset() is None:
-        raise ValueError("--observed-at must include a timezone offset")
-    normalized = observed.astimezone(timezone.utc)
+    normalized = parse_aware_timestamp(value, label="--observed-at")
     reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if normalized > reference + MAX_FUTURE_SKEW:
         raise ValueError("--observed-at cannot be more than 5 minutes in the future")
     return normalized.isoformat(timespec="seconds")
+
+
+def validate_observation_after_revisions(observed_at: str, revision_times: dict[str, str]) -> None:
+    """Reject evidence that claims a revision before that revision existed."""
+    observed = parse_aware_timestamp(observed_at, label="--observed-at")
+    for repo, committed_at in revision_times.items():
+        committed = parse_aware_timestamp(committed_at, label=f"{repo} commit time")
+        if observed + MAX_COMMIT_CLOCK_SKEW < committed:
+            raise ValueError(
+                f"--observed-at predates the {repo} participant revision by more than 5 minutes"
+            )
 
 
 def parse_participants(values: list[str], expected_repos: list[str]) -> dict[str, str]:
@@ -109,6 +125,11 @@ def main() -> int:
             print(f"--participant {repo} revision is not present in its owned mirror", file=sys.stderr)
             return 2
         revision_times[repo] = committed_at
+    try:
+        validate_observation_after_revisions(observed_at, revision_times)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     conds = [c["id"] for t in cat["tasks"] for c in t["conditions"] if c["check"] == a.check]
     tasks = [t["id"] for t in cat["tasks"] if any(c["check"] == a.check for c in t["conditions"])]
     rec = Record(kind="installed_demo", repo=primary, revision=sha, revision_time=revision_times[primary],

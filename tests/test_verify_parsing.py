@@ -277,6 +277,133 @@ def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path,
     assert not verify.WATCHER_COMPAT_PATH.exists()
 
 
+def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
+    trees = {
+        repo: tmp_path / repo
+        for repo in ("eom-email-watcher", "document-summarizer", "connect-contracts")
+    }
+    for tree in trees.values():
+        tree.mkdir()
+    proof = trees["eom-email-watcher"] / "scripts/connect-local-proof.py"
+    proof.parent.mkdir()
+    proof.write_text("raise SystemExit(0)\n")
+    pdf = trees["document-summarizer"] / "src-tauri/tests/fixtures/structured_report.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF-1.4\n")
+    provider = trees["document-summarizer"] / "src-tauri/target/release/document-summarizer"
+    provider.parent.mkdir(parents=True)
+    provider.write_text("binary")
+    fixtures = trees["connect-contracts"] / "entitlements/v1/fixtures"
+    (fixtures / "valid").mkdir(parents=True)
+    for path in (fixtures / "test-keyring.json", fixtures / "valid/active.json", fixtures / "valid/expired.json"):
+        path.write_text("{}")
+    (trees["connect-contracts"] / "requirements-dev.txt").write_text("jsonschema==4.25.1\n")
+    return trees
+
+
+def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+    from lcstatus.sources import Revision
+
+    trees = _pdf_handoff_trees(tmp_path)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    class GitHub:
+        pass
+
+    runner = verify.Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+        {"repos": {repo: {} for repo in trees}},
+    )
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "find_tool", lambda name: f"/tools/{name}")
+    monkeypatch.setenv("PYTHONPATH", "/developer/checkout/src")
+    monkeypatch.setenv("PYTHONHOME", "/developer/python")
+    calls = []
+
+    def completed(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        stdout = '{"all_checks":true}\n' if "connect-local-proof.py" in " ".join(cmd) else ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    revisions = {
+        repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
+        for repo, char in zip(trees, "abc")
+    }
+    check = {"participants": list(trees), "repo": "eom-email-watcher", "heavy": True}
+    record = runner.accept_ew_ds(
+        "xapp.accept_ew_to_ds", check, revisions, ["condition"], ["task"],
+    )
+
+    assert record.verdict == "pass" and record.executed == 1 and record.failed == 0
+    assert record.participants == {repo: revisions[repo].sha for repo in trees}
+    assert calls[0][0][:5] == [
+        "/tools/uv", "run", "--quiet", "--with-requirements",
+        str(trees["connect-contracts"] / "requirements-dev.txt"),
+    ]
+    assert calls[0][1]["cwd"] == trees["connect-contracts"]
+    assert calls[1][0] == ["/tools/npm", "install", "--silent"]
+    assert calls[2][0] == ["/tools/npm", "run", "desktop:build:no-bundle"]
+    proof_cmd, proof_kwargs = calls[3]
+    assert proof_cmd[:2] == ["/tools/xvfb-run", "-a"]
+    assert str(trees["eom-email-watcher"] / "scripts/connect-local-proof.py") in proof_cmd
+    assert str(trees["document-summarizer"] / "src-tauri/target/release/document-summarizer") in proof_cmd
+    assert str(trees["connect-contracts"] / "entitlements/v1/fixtures/test-keyring.json") in proof_cmd
+    assert proof_kwargs["cwd"] == trees["eom-email-watcher"]
+    assert proof_kwargs["env"]["LIBGL_ALWAYS_SOFTWARE"] == "1"
+    assert proof_kwargs["env"]["WEBKIT_DISABLE_DMABUF_RENDERER"] == "1"
+    assert "PYTHONPATH" not in proof_kwargs["env"] and "PYTHONHOME" not in proof_kwargs["env"]
+    assert record.detail["document_summarizer_tree"] == str(trees["document-summarizer"])
+
+
+def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+    from lcstatus.sources import Revision
+
+    trees = _pdf_handoff_trees(tmp_path)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    runner = verify.Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", object(),
+        {"repos": {repo: {} for repo in trees}},
+    )
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "find_tool", lambda name: f"/tools/{name}")
+    calls = []
+
+    def completed(cmd, **kwargs):
+        calls.append(cmd)
+        if len(calls) < 4:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 17, stdout="", stderr="proof broke\n")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    revisions = {
+        repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
+        for repo, char in zip(trees, "abc")
+    }
+    record = runner.accept_ew_ds(
+        "xapp.accept_ew_to_ds", {"participants": list(trees)}, revisions,
+        ["condition"], ["task"],
+    )
+
+    assert record.verdict == "fail" and record.exit_code == 17
+    assert record.summary == "proof broke"
+    assert record.executed == 1 and record.failed == 1
+    assert record.participants == {repo: revisions[repo].sha for repo in trees}
+
+
 
 def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: Path):
     from lcstatus.sources import Revision

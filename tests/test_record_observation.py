@@ -29,7 +29,7 @@ def test_manual_record_uses_normalized_observation_time(monkeypatch):
             pass
 
         def commit_time(self, repo, sha):
-            return "2026-09-01T00:00:00+00:00"
+            return "2026-09-08T15:52:51+00:00"
 
     class Store:
         def __init__(self, path):
@@ -74,6 +74,22 @@ def test_manual_observation_time_allows_clock_skew_but_rejects_material_future()
     with pytest.raises(ValueError, match="more than 5 minutes in the future"):
         observation.normalize_observed_at((boundary + timedelta(seconds=1)).isoformat(), now=now)
     assert observation.normalize_observed_at((now - timedelta(days=30)).isoformat(), now=now)
+
+
+def test_manual_observation_must_follow_every_participant_revision_with_clock_skew():
+    committed = datetime(2026, 9, 11, 12, 0, tzinfo=timezone.utc)
+    boundary = committed - observation.MAX_COMMIT_CLOCK_SKEW
+    observation.validate_observation_after_revisions(
+        boundary.isoformat(), {"ew": committed.isoformat(), "ds": boundary.isoformat()},
+    )
+    with pytest.raises(ValueError, match="predates the ew participant revision"):
+        observation.validate_observation_after_revisions(
+            (boundary - timedelta(seconds=1)).isoformat(), {"ew": committed.isoformat()},
+        )
+    with pytest.raises(ValueError, match="commit time must include a timezone offset"):
+        observation.validate_observation_after_revisions(
+            committed.isoformat(), {"ew": "2026-09-11T12:00:00"},
+        )
 
 
 @pytest.mark.parametrize(
@@ -133,3 +149,38 @@ def test_manual_record_rejects_participant_revision_absent_from_owned_mirror(mon
 
     assert observation.main() == 2
     assert "ew revision is not present in its owned mirror" in capsys.readouterr().err
+
+
+def test_manual_record_rejects_observation_before_any_participant_revision(monkeypatch, capsys):
+    catalogue = {
+        "repos": {"ew": {}, "ds": {}},
+        "checks": {"manual.demo": {
+            "runner": "manual_observation", "repo": "ew", "participants": ["ew", "ds"],
+        }},
+        "tasks": [{"id": "task", "conditions": [{"id": "condition", "check": "manual.demo"}]}],
+    }
+
+    class Mirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def commit_time(self, repo, sha):
+            return "2026-09-11T12:00:00+00:00" if repo == "ew" else "2026-09-11T12:06:00+00:00"
+
+    class Store:
+        def __init__(self, path):
+            raise AssertionError("invalid observation must not reach the evidence store")
+
+    monkeypatch.setattr(observation.catmod, "load", lambda path: catalogue)
+    monkeypatch.setattr(observation, "Mirrors", Mirrors)
+    monkeypatch.setattr(observation, "Store", Store)
+    monkeypatch.setattr(sys, "argv", [
+        "record_observation.py", "--check", "manual.demo",
+        "--participant", f"ew={'a' * 40}", "--participant", f"ds={'b' * 40}",
+        "--verdict", "pass", "--platform", "linux", "--artifact", "artifact.txt",
+        "--summary", "observed", "--observed-at", "2026-09-11T12:00:00+00:00",
+        "--observed-by", "operator",
+    ])
+
+    assert observation.main() == 2
+    assert "predates the ds participant revision by more than 5 minutes" in capsys.readouterr().err

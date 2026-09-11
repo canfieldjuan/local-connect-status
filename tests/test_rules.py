@@ -517,6 +517,12 @@ def test_current_catalogue_has_evidence_driven_status_copy_and_source_checks():
     source_checks = [check for check in catalogue["checks"].values() if check["runner"] == "source_inspection"]
     assert source_checks
     assert all(check["paths"] and check["markers"] for check in source_checks)
+    pdf_check = catalogue["checks"]["xapp.accept_ew_to_ds"]
+    assert pdf_check["participants"] == [
+        "eom-email-watcher", "document-summarizer", "connect-contracts",
+    ]
+    pdf_task = next(task for task in catalogue["tasks"] if task["id"] == "connect.handoff_pdf_to_summarizer")
+    assert any(condition["check"] == "xapp.accept_ew_to_ds" for condition in pdf_task["conditions"])
 
 
 def test_catalogue_rejects_source_condition_wired_to_manual_runner(tmp_path: Path):
