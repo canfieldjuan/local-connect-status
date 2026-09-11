@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from lcstatus.change import assess
-from lcstatus.evidence import Record, Store, check_fingerprint
+from lcstatus.evidence import Record, Store, check_fingerprint, record_check_fingerprint
 from lcstatus.rules import condition_status as _condition_status, task_status
 
 CAT = {
@@ -134,6 +134,61 @@ def test_condition_evidence_must_match_the_current_check_configuration():
 
     assert rejected.conditions[0].state == "no_evidence"
     assert accepted.conditions[0].state == "satisfied"
+
+
+def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp_path: Path):
+    root = Path(__file__).resolve().parent.parent
+    catalogue = json.loads((root / "catalogue.json").read_text())
+    original = (root / "data" / "records.jsonl").read_bytes()
+    migrated = Store(root / "data" / "records.jsonl").all()
+    legacy_check_records = [
+        r for r in migrated
+        if r.source.get("check") and "check_fingerprint" not in r.source
+    ]
+    assert legacy_check_records
+    for record in legacy_check_records:
+        historical = record_check_fingerprint(record)
+        current = check_fingerprint(catalogue["checks"][record.source["check"]])
+        assert historical is not None
+        assert (historical == current) is (record.source["check"] != "xapp.accept_ew_to_ip")
+
+    installed = next(r for r in migrated if r.source.get("check") == "manual.ip_removal_test")
+    cross_app = next(r for r in migrated if r.source.get("check") == "xapp.accept_ew_to_ip")
+    assert record_check_fingerprint(installed) == check_fingerprint(
+        catalogue["checks"]["manual.ip_removal_test"]
+    )
+    assert record_check_fingerprint(cross_app) != check_fingerprint(
+        catalogue["checks"]["xapp.accept_ew_to_ip"]
+    )
+
+    installed_condition = {
+        "id": installed.condition_ids[0], "kind": installed.kind,
+        "check": "manual.ip_removal_test",
+    }
+    cross_app_condition = {
+        "id": cross_app.condition_ids[0], "kind": cross_app.kind,
+        "check": "xapp.accept_ew_to_ip",
+    }
+    assert _condition_status(
+        installed_condition, [installed], dict(installed.participants), installed.repo,
+        catalogue["checks"]["manual.ip_removal_test"],
+    ).state == "satisfied"
+    assert _condition_status(
+        cross_app_condition, [cross_app], dict(cross_app.participants), cross_app.repo,
+        catalogue["checks"]["xapp.accept_ew_to_ip"],
+    ).state == "no_evidence"
+
+    appended = Record(
+        kind=installed.kind, repo=installed.repo, revision=installed.revision,
+        verdict="pass", condition_ids=installed.condition_ids,
+        participants=installed.participants,
+        source={"check": "manual.ip_removal_test"},
+    )
+    copied = tmp_path / "records.jsonl"
+    copied.write_bytes(original + appended.to_json().encode() + b"\n")
+    loaded = Store(copied).all()
+    assert record_check_fingerprint(loaded[0]) is not None
+    assert record_check_fingerprint(loaded[-1]) is None
 
 
 def test_source_inspection_is_inconclusive_and_never_raises_maturity():

@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .evidence import Record, check_fingerprint, instant_key
+from .evidence import Record, check_fingerprint, instant_key, record_check_fingerprint
 
 AUTOMATED = ("automated_test", "ci_run")
 PROVING_VERDICT = ("pass",)
@@ -90,7 +90,7 @@ def condition_status(
         if cond["id"] in r.condition_ids
         and r.kind == kind
         and r.source.get("check") == cond["check"]
-        and r.source.get("check_fingerprint") == expected_check_fingerprint
+        and record_check_fingerprint(r) == expected_check_fingerprint
     ]
     if check_repo:
         # Older collectors wrote app-specific release ids onto every repository. Keep those

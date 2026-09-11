@@ -64,6 +64,46 @@ def check_fingerprint(check: dict[str, Any]) -> str:
     return hashlib.sha256(blob).hexdigest()[:24]
 
 
+# The first collector release wrote these rows before check fingerprints existed.  Preserve
+# that append-only evidence without rewriting it: only this exact byte-for-byte prefix receives
+# its check configuration from the catalogue at c482727.  Later fingerprint-free rows and any
+# modified legacy prefix fail closed.  A changed current configuration still invalidates the
+# row because rules.py compares this historical value with the current check fingerprint.
+LEGACY_EVIDENCE_PREFIX_ROWS = 151
+LEGACY_EVIDENCE_PREFIX_SHA256 = "1a7f65fe682b277d092d97cf155bb9e1eab73f1afa9884a6b9604f2afbb2da2b"
+LEGACY_CHECK_FINGERPRINTS = {
+    "ds.ci.rust": "ba862d249e32fcbc64fd24ab",
+    "ew.ci.desktop": "2ec5ac88e37a3c4d14f0757e",
+    "ew.ci.test": "db60e79047fb756a51d9e02d",
+    "ew.ci.windows_lock": "414e04b54e053df156643fd3",
+    "ew.ci.windows_package": "d12118d0e23e36ed324db75a",
+    "ew.pytest.adapters": "b8c2b5e323a3db727335e516",
+    "ew.pytest.automation": "53ad3323e89b847ea05f2d01",
+    "ew.pytest.connect_v1": "d8cf91e8b462adf4f824b6ff",
+    "ew.pytest.connect_v2": "76fdb4d07bdbfdb4f0d92d9f",
+    "ew.pytest.notify": "bf983c0691d198f40bf8bdb5",
+    "ew.pytest.queue_retry": "fdb699ce6590f2962dd03199",
+    "ew.pytest.scheduling": "a51153f9bf8acfd9a2501af4",
+    "ew.pytest.unit": "6b977a25d43c24c44509a87e",
+    "ip.pytest.all": "92cb5b7ec9832d2137bbca3d",
+    "ip.pytest.entitlement": "137581c260a4001a9291204b",
+    "ip.pytest.extraction": "1eca072653a5db9e196760c2",
+    "ip.pytest.ledger": "fb54af050265c5c455cae2c7",
+    "ip.pytest.ledger_via_connect": "f36793d1236a2ee3deec74c4",
+    "ip.pytest.packaging": "33bb78a149dbdd42b9ee2c70",
+    "manual.ip_removal_test": "0d1d9d4a0948ea9d35e7ca36",
+    "xapp.accept_ew_to_ip": "c9984d8175c41be30015fa1d",
+}
+
+
+def record_check_fingerprint(record: Any) -> str | None:
+    """Return an explicit fingerprint or an authenticated in-memory legacy migration."""
+    explicit = record.source.get("check_fingerprint")
+    if explicit is not None:
+        return explicit
+    return getattr(record, "_legacy_check_fingerprint", None)
+
+
 @dataclass
 class Record:
     kind: str
@@ -132,9 +172,12 @@ class Record:
         """Identity of the check stream, excluding the outcome that can change over time."""
         stable_source = {
             name: self.source[name]
-            for name in ("type", "check", "check_fingerprint")
+            for name in ("type", "check")
             if name in self.source
         }
+        fingerprint = record_check_fingerprint(self)
+        if fingerprint is not None:
+            stable_source["check_fingerprint"] = fingerprint
         key = {
             "kind": self.kind,
             "repo": self.repo,
@@ -164,10 +207,24 @@ class Store:
         self._ids: set[str] = set()
         self._records: list[Record] = []
         if self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
+            raw_lines = self.path.read_bytes().splitlines(keepends=True)
+            legacy_prefix = raw_lines[:LEGACY_EVIDENCE_PREFIX_ROWS]
+            migrate_legacy = (
+                len(legacy_prefix) == LEGACY_EVIDENCE_PREFIX_ROWS
+                and hashlib.sha256(b"".join(legacy_prefix)).hexdigest() == LEGACY_EVIDENCE_PREFIX_SHA256
+            )
+            for position, line in enumerate(raw_lines):
                 if not line.strip():
                     continue
                 rec = Record.from_dict(json.loads(line))
+                if (
+                    migrate_legacy
+                    and position < LEGACY_EVIDENCE_PREFIX_ROWS
+                    and "check_fingerprint" not in rec.source
+                ):
+                    historical = LEGACY_CHECK_FINGERPRINTS.get(rec.source.get("check"))
+                    if historical is not None:
+                        rec._legacy_check_fingerprint = historical
                 if rec.record_id not in self._ids:
                     self._ids.add(rec.record_id)
                     self._records.append(rec)
