@@ -15,9 +15,17 @@ import shutil
 import subprocess
 import tarfile
 import io
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def is_full_sha(value: Any) -> bool:
+    return isinstance(value, str) and FULL_SHA.fullmatch(value) is not None
 
 
 @dataclass
@@ -182,7 +190,11 @@ class GitHub:
         if isinstance(b, Failure):
             return b
         c = b.get("commit", {})
-        return {"branch": branch, "sha": c.get("sha"), "committed_at": c.get("commit", {}).get("committer", {}).get("date"),
+        sha = c.get("sha")
+        if not is_full_sha(sha):
+            return Failure("github_head", "default branch response has no full commit SHA",
+                           {"repo": gh_repo, "branch": branch})
+        return {"branch": branch, "sha": sha, "committed_at": c.get("commit", {}).get("committer", {}).get("date"),
                 "subject": (c.get("commit", {}).get("message") or "").splitlines()[0] if c else ""}
 
     def runs_for_sha(self, gh_repo: str, sha: str) -> Failure | list[dict[str, Any]]:

@@ -356,6 +356,28 @@ def test_release_asset_download_rejects_binary_checksum_content(monkeypatch):
     assert result.why == "asset is not UTF-8 checksum text"
 
 
+def test_default_branch_head_requires_a_full_commit_sha(monkeypatch):
+    from lcstatus.sources import Failure, GitHub
+
+    github = GitHub()
+    github.available = True
+
+    def result_for(sha):
+        monkeypatch.setattr(
+            github, "api",
+            lambda path: (
+                {"default_branch": "main"}
+                if path == "repos/example/app"
+                else {"commit": {"sha": sha, "commit": {"message": "head"}}}
+            ),
+        )
+        return github.default_branch_head("example/app")
+
+    for malformed in (None, "a" * 39, "g" * 40):
+        assert isinstance(result_for(malformed), Failure)
+    assert result_for("a" * 40)["sha"] == "a" * 40
+
+
 def test_web_service_creates_generated_site_before_serving_it():
     unit = (Path(__file__).resolve().parent.parent / "systemd/local-connect-status-web.service").read_text()
 

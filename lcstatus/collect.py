@@ -24,7 +24,7 @@ from .change import assess
 from .evidence import Record, Store, atomic_write, now_iso
 from .render import render_all
 from .rules import task_status
-from .sources import Failure, GitHub, Mirrors, Revision
+from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
 from .verify import Runner
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -70,6 +70,27 @@ def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> N
             failures.append(failure)
 
 
+def validate_baselines(
+    items: list[str], repos: dict[str, dict[str, Any]], mirrors: Mirrors,
+) -> dict[str, str] | Failure:
+    """Validate the complete baseline batch before state is changed."""
+    validated: dict[str, str] = {}
+    for item in items:
+        repo, separator, sha = item.partition("=")
+        if not separator or not repo or not sha:
+            return Failure("baseline", f"invalid baseline {item!r}; expected repo=<full-sha>")
+        if repo not in repos:
+            return Failure("baseline", f"unknown baseline repository: {repo}")
+        if repo in validated:
+            return Failure("baseline", f"duplicate baseline repository: {repo}")
+        if not is_full_sha(sha):
+            return Failure("baseline", f"baseline for {repo} must be a full lowercase Git SHA")
+        if mirrors.commit_time(repo, sha) is None:
+            return Failure("baseline", f"baseline commit is absent from the owned {repo} mirror: {sha}")
+        validated[repo] = sha
+    return validated
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lcstatus.collect")
     ap.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
@@ -103,10 +124,14 @@ def main(argv: list[str] | None = None) -> int:
     # the whole diff and commit range has been read, so a transient read failure is retried.
     change_baselines = dict(state.get("change_baselines", state.get("heads", {})))
     failures: list[dict[str, Any]] = []
+    mirrors = Mirrors(CACHE / "mirrors", cat["repos"])
 
     if args.set_baseline:
-        for item in args.set_baseline:
-            repo, sha = item.split("=", 1)
+        validated = validate_baselines(args.set_baseline, cat["repos"], mirrors)
+        if isinstance(validated, Failure):
+            print(f"{validated.what}: {validated.why}", file=sys.stderr)
+            return 2
+        for repo, sha in validated.items():
             state["heads"][repo] = sha
             change_baselines[repo] = sha
         state["change_baselines"] = change_baselines
@@ -114,7 +139,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"baseline set: {args.set_baseline}")
         return 0
 
-    mirrors = Mirrors(CACHE / "mirrors", cat["repos"])
     gh = GitHub()
     runner = Runner(mirrors, CACHE, data / "logs", gh, cat)
 
@@ -149,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
             # Cross-check the mirror against GitHub's default branch before treating it as
             # current. A mismatch proves this extracted tree is stale.
             api = gh.default_branch_head(cat["repos"][repo]["github"])
+            if not isinstance(api, Failure) and not is_full_sha(api.get("sha")):
+                api = Failure("github_head", "default branch response has no full commit SHA",
+                              {"repo": repo})
             if isinstance(api, Failure):
                 failures.append({"repo": repo, "what": "github_head", "why": api.why})
                 store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="unavailable",

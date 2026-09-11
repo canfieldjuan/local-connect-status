@@ -276,7 +276,10 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
     ]
 
 
-def test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("malformed_response", [False, True])
+def test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown(
+    tmp_path: Path, monkeypatch, malformed_response: bool,
+):
     import lcstatus.collect as collect
     from lcstatus.sources import Failure, Revision
 
@@ -297,6 +300,8 @@ def test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown(tmp_path: P
 
     class FakeGitHub:
         def default_branch_head(self, repo):
+            if malformed_response:
+                return {"branch": "main", "sha": None}
             return Failure("github", "offline")
 
     class FakeRunner:
@@ -479,7 +484,7 @@ def test_failed_change_read_retries_before_advancing_baseline(tmp_path: Path, mo
         assert len(changes) == 2
 
 
-def test_set_baseline_seeds_display_head_and_change_baseline(tmp_path: Path):
+def test_set_baseline_seeds_display_head_and_change_baseline(tmp_path: Path, monkeypatch):
     import lcstatus.collect as collect
 
     catalogue = {
@@ -496,6 +501,16 @@ def test_set_baseline_seeds_display_head_and_change_baseline(tmp_path: Path):
     data = tmp_path / "data"
     sha = "a" * 40
 
+    class FakeMirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def commit_time(self, repo, revision):
+            assert repo == "ghost" and revision == sha
+            return "2026-09-11T00:00:00+00:00"
+
+    monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
+
     rc = collect.main([
         "--catalogue", str(catalogue_path), "--data", str(data),
         "--site", str(tmp_path / "site"), "--set-baseline", f"ghost={sha}",
@@ -505,3 +520,52 @@ def test_set_baseline_seeds_display_head_and_change_baseline(tmp_path: Path):
     assert rc == 0
     assert state["heads"] == {"ghost": sha}
     assert state["change_baselines"] == {"ghost": sha}
+
+
+@pytest.mark.parametrize("items", [
+    ["unknown=" + "a" * 40],
+    ["ghost=" + "b" * 40],
+    ["ghost=abc"],
+    ["malformed"],
+    ["ghost=" + "a" * 40, "ghost=" + "a" * 40],
+    ["ghost=" + "a" * 40, "unknown=" + "a" * 40],
+])
+def test_set_baseline_rejects_invalid_batch_without_changing_state(tmp_path: Path, monkeypatch, items):
+    import lcstatus.collect as collect
+
+    catalogue = {
+        "catalogue_version": 1,
+        "release": {
+            "target": "t", "required_platforms": ["linux", "windows"],
+            "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None},
+        },
+        "repos": {"ghost": {"github": "example/ghost", "ci_workflows": []}},
+        "apps": {}, "checks": {}, "tasks": [],
+    }
+    catalogue_path = tmp_path / "catalogue.json"
+    catalogue_path.write_text(json.dumps(catalogue))
+    data = tmp_path / "data"
+    data.mkdir()
+    original = {
+        "heads": {"ghost": "c" * 40},
+        "change_baselines": {"ghost": "c" * 40},
+        "runs": 0,
+    }
+    (data / "state.json").write_text(json.dumps(original))
+
+    class FakeMirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def commit_time(self, repo, revision):
+            return "2026-09-11T00:00:00+00:00" if repo == "ghost" and revision == "a" * 40 else None
+
+    monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
+
+    rc = collect.main([
+        "--catalogue", str(catalogue_path), "--data", str(data),
+        "--site", str(tmp_path / "site"), "--set-baseline", *items,
+    ])
+
+    assert rc == 2
+    assert json.loads((data / "state.json").read_text()) == original
