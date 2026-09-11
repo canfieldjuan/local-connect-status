@@ -78,3 +78,79 @@ def test_render_only_never_invents_data(tmp_path: Path):
     status = json.loads((tmp_path / "s" / "status.json").read_text())
     assert status["generated_at"] is None and status["heads"] == {}
     assert status["tasks"][0]["maturity"] == "planned"
+
+
+
+def test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pass(tmp_path: Path):
+    cat = tmp_path / "catalogue.json"
+    cat.write_text(json.dumps(TINY_CATALOGUE))
+    data = tmp_path / "data"
+    data.mkdir()
+    revision = "d" * 40
+    from lcstatus.evidence import Record, Store
+    Store(data / "records.jsonl").add(Record(
+        kind="ci_run", repo="ghost", revision=revision, verdict="pass",
+        platform="linux", condition_ids=["g.c1"], executed=1, failed=0,
+        revision_time="2026-09-11T10:00:00+00:00",
+    ))
+    (data / "state.json").write_text(json.dumps({
+        "heads": {"ghost": revision},
+        "unknown_heads": ["ghost"],
+        "runs": 9,
+        "last_run_at": "2026-09-11T10:01:00+00:00",
+        "last_failures": [{"repo": "ghost", "what": "github_head_mismatch", "why": "mirror lagged"}],
+    }))
+
+    result = subprocess.run([
+        sys.executable, "-m", "lcstatus.collect", "--catalogue", str(cat),
+        "--data", str(data), "--site", str(tmp_path / "site"), "--render-only",
+    ], cwd=ROOT, capture_output=True, text=True, timeout=120)
+
+    assert result.returncode == 2
+    status = json.loads((tmp_path / "site" / "status.json").read_text())
+    assert status["heads"] == {}
+    condition = status["tasks"][0]["conditions"][0]
+    assert condition["state"] == "changed_since"
+    assert condition["current"] is None
+
+
+def test_legacy_failed_head_is_excluded_from_render_heads():
+    from lcstatus.collect import render_heads
+
+    state = {
+        "heads": {"ghost": "d" * 40},
+        "last_failures": [{"repo": "ghost", "what": "git_head", "why": "unreadable"}],
+    }
+    assert render_heads(state) == {}
+
+
+def test_release_dispatch_is_scoped_to_the_configured_repository():
+    from lcstatus.collect import release_targets
+    from lcstatus.sources import Revision
+
+    revisions = {
+        "ew": Revision("ew", "a" * 40, "2026-09-11T00:00:00Z", "email"),
+        "ip": Revision("ip", "b" * 40, "2026-09-11T00:00:00Z", "invoice"),
+    }
+    assert [repo for repo, _ in release_targets({"repo": "ip"}, revisions)] == ["ip"]
+    assert {repo for repo, _ in release_targets({"repo": "*"}, revisions)} == {"ew", "ip"}
+
+
+def test_unavailable_actions_and_release_results_are_run_failures(tmp_path: Path):
+    from lcstatus.collect import store_result
+    from lcstatus.evidence import Record, Store
+
+    store = Store(tmp_path / "records.jsonl")
+    failures = []
+    store_result(store, failures, Record(
+        kind="ci_run", repo="ghost", revision="a" * 40, verdict="unavailable",
+        source={"type": "github_actions"}, summary="Actions API timed out",
+    ))
+    store_result(store, failures, Record(
+        kind="release_artifact", repo="ghost", revision="a" * 40, verdict="unavailable",
+        source={"type": "github_releases"}, summary="release lookup failed",
+    ))
+    assert failures == [
+        {"repo": "ghost", "what": "github_actions", "why": "Actions API timed out"},
+        {"repo": "ghost", "what": "github_releases", "why": "release lookup failed"},
+    ]

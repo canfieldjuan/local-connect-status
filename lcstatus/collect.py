@@ -39,6 +39,38 @@ def load_state(path: Path) -> dict[str, Any]:
     return {"heads": {}, "runs": 0}
 
 
+SOURCE_FAILURE_TYPES = {"github_actions", "github_releases"}
+HEAD_FAILURES = {"head", "git_head", "github_head_mismatch"}
+
+
+def render_heads(state: dict[str, Any]) -> dict[str, str]:
+    unknown = set(state.get("unknown_heads", []))
+    if "unknown_heads" not in state:
+        unknown.update(
+            f.get("repo")
+            for f in state.get("last_failures", [])
+            if f.get("what") in HEAD_FAILURES
+        )
+    return {repo: sha for repo, sha in state.get("heads", {}).items() if repo not in unknown}
+
+
+def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tuple[str, Revision]]:
+    repo = check["repo"]
+    if repo == "*":
+        return list(revs.items())
+    rev = revs.get(repo)
+    return [(repo, rev)] if rev is not None else []
+
+
+def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
+    store.add(rec)
+    source_type = rec.source.get("type")
+    if rec.verdict == "unavailable" and source_type in SOURCE_FAILURE_TYPES:
+        failure = {"repo": rec.repo, "what": source_type, "why": rec.summary or "unavailable"}
+        if failure not in failures:
+            failures.append(failure)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lcstatus.collect")
     ap.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
@@ -107,18 +139,24 @@ def main(argv: list[str] | None = None) -> int:
                 # revision this run never observed. Without a head, the rules can only show
                 # earlier evidence as historical.
                 continue
-            revs[repo] = head
-            heads[repo] = head.sha
-            # cross-check the mirror against GitHub's own idea of the default branch
+            # Cross-check the mirror against GitHub's default branch before treating it as
+            # current. A mismatch proves this extracted tree is stale.
             api = gh.default_branch_head(cat["repos"][repo]["github"])
             if isinstance(api, Failure):
                 failures.append({"repo": repo, "what": "github_head", "why": api.why})
                 store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="unavailable",
                                  summary=f"GitHub head lookup failed: {api.why}", source={"type": "github_api"}))
+                if stale_note:
+                    continue
             elif api.get("sha") and api["sha"] != head.sha:
+                why = f"mirror {head.sha[:12]} != GitHub {api['sha'][:12]}; mirror may lag"
+                failures.append({"repo": repo, "what": "github_head_mismatch", "why": why})
                 store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="partial",
-                                 summary=f"mirror {head.sha[:12]} != GitHub {api['sha'][:12]}; mirror may lag",
-                                 source={"type": "github_api"}, detail={"github_sha": api["sha"]}))
+                                 summary=why, source={"type": "github_api"},
+                                 detail={"github_sha": api["sha"]}))
+                continue
+            revs[repo] = head
+            heads[repo] = head.sha
             rec = Record(kind="revision", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
                          summary=head.subject, source={"type": "mirror", "stale": stale_note},
                          detail={"branch": "main"})
@@ -163,14 +201,22 @@ def main(argv: list[str] | None = None) -> int:
                 ci_by_repo.setdefault(chk["repo"], {})[cid] = chk
                 continue
             if runner_kind == "github_release":
-                for repo, rev in revs.items():
-                    store.add(runner.releases(repo, rev, conds, tasks, required_assets=chk.get("required_assets")))
+                for repo, rev in release_targets(chk, revs):
+                    result = runner.releases(
+                        repo, rev, conds, tasks, required_assets=chk.get("required_assets")
+                    )
+                    store_result(store, failures, result)
                 continue
             if runner_kind == "manual_observation":
                 continue   # only a person records these, via scripts/record_observation.py
             if args.no_local or not wanted(cid, chk):
                 continue
-            if runner_kind == "pytest":
+            if runner_kind == "source_inspection":
+                rev = revs.get(chk["repo"])
+                if rev is None:
+                    continue
+                store.add(runner.source_inspection(cid, chk, rev, conds, tasks))
+            elif runner_kind == "pytest":
                 rev = revs.get(chk["repo"])
                 if rev is None:
                     continue
@@ -194,15 +240,16 @@ def main(argv: list[str] | None = None) -> int:
             if rev is None:
                 continue
             for r in runner.ci_jobs(repo, rev, checks, cond_map):
-                store.add(r)
+                store_result(store, failures, r)
 
         state["heads"].update(heads)
+        state["unknown_heads"] = sorted(set(cat["repos"]) - set(heads))
         state["runs"] = state.get("runs", 0) + 1
         state["last_run_at"] = now_iso()
         state["last_failures"] = failures
         atomic_write(state_path, json.dumps(state, indent=2))
     else:
-        heads = dict(state.get("heads", {}))
+        heads = render_heads(state)
         failures = state.get("last_failures", [])
 
     # ---- derive & render ----------------------------------------------------------

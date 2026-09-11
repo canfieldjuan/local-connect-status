@@ -81,22 +81,33 @@ def condition_status(cond: dict[str, Any], records: list[Record], heads: dict[st
     kind = cond["kind"]
     want_platform = cond.get("platform")
     evid = [r for r in records if cond["id"] in r.condition_ids and r.kind == kind]
+    if check_repo:
+        # Older collectors wrote app-specific release ids onto every repository. Keep those
+        # append-only records from crossing product boundaries during status derivation.
+        evid = [r for r in evid if r.repo == check_repo]
     if want_platform:
         evid = [r for r in evid if r.platform == want_platform]
     plat = want_platform or (evid[0].platform if evid else "n/a")
 
-    def order(r: Record) -> tuple:
-        return (r.revision_time or "", r.recorded_at)
+    def latest(items: list[Record]) -> Record:
+        # JSONL order is the final tie-breaker because recorded_at has one-second precision.
+        return max(
+            enumerate(items),
+            key=lambda item: (item[1].revision_time or "", item[1].recorded_at, item[0]),
+        )[1]
 
     if kind == "source_inspection":
         # An inspection can point at code; it cannot prove behaviour, and a miss cannot prove absence.
-        return ConditionStatus(cond, "inconclusive", platform=plat)
+        current = [r for r in evid if _matches_current(r, heads, check_repo)]
+        return ConditionStatus(
+            cond, "inconclusive", current=latest(current) if current else None, platform=plat
+        )
 
     current = [r for r in evid if _matches_current(r, heads, check_repo)]
     proven = [r for r in evid if r.verdict in PROVING_VERDICT]
-    last_proven = max(proven, key=order) if proven else None
+    last_proven = latest(proven) if proven else None
     if current:
-        best = max(current, key=order)
+        best = latest(current)
         if best.verdict in PROVING_VERDICT:
             return ConditionStatus(cond, "satisfied", current=best, last_proven=best, platform=plat)
         if best.verdict == "fail":

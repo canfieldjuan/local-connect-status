@@ -8,8 +8,23 @@ from typing import Any
 
 from .evidence import KINDS, PLATFORMS
 
-RUNNERS = ("pytest", "cargo_lib", "accept_ew_ip", "ci_job", "manual_observation", "github_release")
+RUNNERS = (
+    "pytest",
+    "cargo_lib",
+    "accept_ew_ip",
+    "ci_job",
+    "manual_observation",
+    "github_release",
+    "source_inspection",
+)
 LAYERS = ("standalone", "connect", "automate", "release")
+KIND_RUNNERS = {
+    "automated_test": {"pytest", "cargo_lib", "accept_ew_ip"},
+    "ci_run": {"ci_job"},
+    "installed_demo": {"manual_observation"},
+    "release_artifact": {"github_release"},
+    "source_inspection": {"source_inspection"},
+}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -23,6 +38,11 @@ def load(path: Path) -> dict[str, Any]:
             problems.append(f"check {cid}: unknown repo {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
+        if chk.get("runner") == "source_inspection":
+            if not chk.get("paths"):
+                problems.append(f"check {cid}: source inspection needs paths")
+            if not chk.get("markers"):
+                problems.append(f"check {cid}: source inspection needs markers")
     seen_tasks: set[str] = set()
     seen_conds: set[str] = set()
     for t in cat.get("tasks", []):
@@ -43,6 +63,12 @@ def load(path: Path) -> dict[str, Any]:
                 problems.append(f"condition {c['id']}: unknown kind {c.get('kind')!r}")
             if c.get("check") not in checks:
                 problems.append(f"condition {c['id']}: unknown check {c.get('check')!r}")
+            else:
+                runner = checks[c["check"]].get("runner")
+                if runner not in KIND_RUNNERS.get(c.get("kind"), set()):
+                    problems.append(
+                        f"condition {c['id']}: {c.get('kind')!r} cannot use {runner!r} runner"
+                    )
     if problems:
         raise ValueError("catalogue invalid:\n  " + "\n  ".join(problems))
     return cat

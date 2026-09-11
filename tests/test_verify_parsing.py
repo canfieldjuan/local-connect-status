@@ -62,3 +62,175 @@ def test_release_verdict_requires_a_published_release_with_every_required_asset(
              "assets": [{"name": "app-setup.exe"}, {"name": "app_1.0_amd64.deb"}, {"name": "SHA256SUMS"}]}]
     v, summary, detail, tag = release_verdict(full, req)
     assert v == "pass" and detail["missing"] == [] and tag == "v1"
+
+
+
+def test_latest_distinct_workflow_run_beats_older_rerun_attempt():
+    from lcstatus.verify import latest_workflow_runs
+
+    runs = [
+        {"name": "CI", "id": 100, "run_number": 20, "run_attempt": 2,
+         "created_at": "2026-09-10T10:00:00Z"},
+        {"name": "CI", "id": 101, "run_number": 21, "run_attempt": 1,
+         "created_at": "2026-09-11T10:00:00Z"},
+    ]
+    assert latest_workflow_runs(runs)["CI"]["id"] == 101
+
+
+def test_prepare_owned_symlink_refuses_real_directory_without_deleting_it(tmp_path: Path):
+    from lcstatus.verify import prepare_owned_symlink
+
+    link = tmp_path / "watcher-main"
+    link.mkdir()
+    sentinel = link / "keep.txt"
+    sentinel.write_text("keep")
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    target = owned / "tree"
+    target.mkdir()
+
+    failure = prepare_owned_symlink(link, target, owned)
+    assert failure is not None and failure.what == "compatibility_path"
+    assert sentinel.read_text() == "keep"
+    assert not link.is_symlink()
+
+
+def test_prepare_owned_symlink_replaces_only_a_link_into_owned_tree(tmp_path: Path):
+    from lcstatus.verify import prepare_owned_symlink
+
+    owned = tmp_path / "owned"
+    old_target = owned / "old"
+    new_target = owned / "new"
+    old_target.mkdir(parents=True)
+    new_target.mkdir()
+    link = tmp_path / "watcher-main"
+    link.symlink_to(old_target, target_is_directory=True)
+
+    assert prepare_owned_symlink(link, new_target, owned) is None
+    assert link.is_symlink() and link.resolve() == new_target.resolve()
+
+
+def test_uv_sync_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Failure
+    from lcstatus.verify import Runner
+
+    class Mirrors:
+        pass
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ip": {}}})
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    monkeypatch.setattr("lcstatus.verify.shutil.which", lambda name: "/usr/bin/uv")
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 1200)
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", timeout)
+    result = runner._venv("ip", tree, "a" * 40)
+    assert isinstance(result, Failure)
+    assert result.what == "env" and "timed out" in result.why
+
+
+def test_source_inspection_reads_only_the_extracted_revision(tmp_path: Path):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "exact-tree"
+    tree.mkdir()
+    (tree / "scheduler.rs").write_text("pump_connect_queue")
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            assert repo == "ew" and sha == "e" * 40
+            return tree
+
+    class GitHub:
+        pass
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(), {"repos": {"ew": {}}})
+    record = runner.source_inspection(
+        "inspect.scheduler",
+        {"repo": "ew", "paths": ["scheduler.rs", "missing.rs"],
+         "markers": {"queue pump": "pump_connect_queue"}},
+        Revision("ew", "e" * 40, "2026-09-11T00:00:00Z", "head"),
+        ["condition"],
+        ["task"],
+    )
+    assert record.verdict == "inconclusive"
+    assert record.detail["marker_hits"] == {"queue pump": ["scheduler.rs"]}
+    assert record.detail["missing_paths"] == ["missing.rs"]
+    assert "1/1 configured markers found" in record.summary
+
+
+
+def test_prepare_owned_symlink_refuses_foreign_symlink(tmp_path: Path):
+    from lcstatus.verify import prepare_owned_symlink
+
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    link = tmp_path / "watcher-main"
+    link.symlink_to(foreign, target_is_directory=True)
+
+    failure = prepare_owned_symlink(link, owned, owned)
+    assert failure is not None and failure.what == "compatibility_path"
+    assert link.is_symlink() and link.resolve() == foreign.resolve()
+
+
+def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+    from lcstatus.sources import Revision
+
+    trees = {}
+    for repo in ("invoice-processor", "eom-email-watcher", "connect-contracts"):
+        tree = tmp_path / repo
+        tree.mkdir()
+        trees[repo] = tree
+    scripts = trees["invoice-processor"] / "scripts"
+    scripts.mkdir()
+    (scripts / "accept_against_email_watcher.py").write_text("raise SystemExit(0)\n")
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    class GitHub:
+        pass
+
+    runner = verify.Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+        {"repos": {repo: {} for repo in trees}},
+    )
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "WATCHER_COMPAT_PATH", tmp_path / "watcher-main")
+    monkeypatch.setattr(verify, "WATCHER_COMPAT_LOCK", tmp_path / "watcher-main.lock")
+    captured = {}
+
+    def completed(cmd, **kwargs):
+        captured.update({"cmd": cmd, **kwargs})
+        return subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    revisions = {
+        repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
+        for repo, char in zip(trees, "abc")
+    }
+    record = runner.accept_ew_ip(
+        "xapp.accept", {"participants": list(trees)}, revisions, ["condition"], ["task"]
+    )
+
+    assert record.verdict == "pass"
+    assert record.participants == {repo: revisions[repo].sha for repo in trees}
+    isolated_home = Path(captured["env"]["HOME"])
+    assert (isolated_home / "Desktop/invoice-processor").resolve() == trees["invoice-processor"].resolve()
+    assert (isolated_home / "Desktop/connect-contracts").resolve() == trees["connect-contracts"].resolve()
+    assert captured["cwd"] == trees["invoice-processor"]
+    assert record.detail["watcher_tree"] == str(trees["eom-email-watcher"])
+    assert record.detail["contracts_tree"] == str(trees["connect-contracts"])
+    assert not verify.WATCHER_COMPAT_PATH.exists()

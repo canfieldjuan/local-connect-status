@@ -6,8 +6,8 @@ are append-only JSONL; the current report is derived from them, never edited by 
 
 Rules the store enforces, because the report's honesty depends on them:
 
-* A record is identified by the content that matters (kind, repo, revision, platform,
-  condition, source). Delivering the same result twice stores it once.
+* Consecutive deliveries of the same result are stored once. If a check changes and later
+  returns to an earlier result, the recovery is retained as a new observation.
 * Ordering for "latest" is by the revision's commit time, then by when the check finished.
   A late result about an old revision can never displace a result about a newer one.
 * Verdicts are a closed set. "unavailable", "partial" and "skip" are not "pass" and are
@@ -80,7 +80,7 @@ class Record:
             self.record_id = self.identity()
 
     def identity(self) -> str:
-        """Content identity. Two deliveries of the same result collapse to one record."""
+        """Content identity. Store decides whether a repeated result is a new observation."""
         key = {
             "kind": self.kind,
             "repo": self.repo,
@@ -101,6 +101,21 @@ class Record:
         if self.kind in ("change", "collection_failure", "revision"):
             key["summary"] = self.summary
             key["old"] = self.detail.get("old")
+        blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(blob).hexdigest()[:24]
+
+    def series_identity(self) -> str:
+        """Identity of the check stream, excluding the outcome that can change over time."""
+        key = {
+            "kind": self.kind,
+            "repo": self.repo,
+            "revision": self.revision,
+            "platform": self.platform,
+            "condition_ids": sorted(self.condition_ids),
+            "source": self.source,
+            "command": self.command,
+            "participants": dict(sorted(self.participants.items())),
+        }
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(blob).hexdigest()[:24]
 
@@ -136,9 +151,20 @@ class Store:
         return list(self._records)
 
     def add(self, rec: Record) -> bool:
-        """Store a record. Returns False if an identical one already exists."""
+        """Store a record, collapsing only consecutive identical observations."""
         if rec.record_id in self._ids:
-            return False
+            series = rec.series_identity()
+            previous = next(
+                (item for item in reversed(self._records) if item.series_identity() == series),
+                None,
+            )
+            if previous is not None and previous.identity() == rec.identity():
+                return False
+            counter = len(self._records)
+            while rec.record_id in self._ids:
+                seed = f"{rec.identity()}:{rec.recorded_at}:{counter}".encode()
+                rec.record_id = hashlib.sha256(seed).hexdigest()[:24]
+                counter += 1
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write(rec.to_json() + "\n")
             fh.flush()

@@ -230,9 +230,10 @@
       "platform": "linux",
       "participants": [
         "eom-email-watcher",
-        "invoice-processor"
+        "invoice-processor",
+        "connect-contracts"
       ],
-      "note": "Invoice Processor's acceptance script drives the real Email Watcher consumer code against the real provider over loopback, with a stand-in model. Cross-app, both revisions recorded. No GPU."
+      "note": "The acceptance script drives exact extracted Email Watcher and Invoice Processor trees over loopback, with the exact contracts keyring and a stand-in model. All three revisions are recorded. No GPU."
     },
     "manual.ip_removal_test": {
       "runner": "manual_observation",
@@ -249,6 +250,35 @@
       "repo": "eom-email-watcher",
       "platform": "linux",
       "note": "Live Microsoft consent, proposal and confirmed write against a real tenant. Recorded in docs/CONTRACTS.md acceptance appendix."
+    },
+    "inspect.ew_automation_rules": {
+      "runner": "source_inspection",
+      "repo": "eom-email-watcher",
+      "platform": "n/a",
+      "paths": [
+        "src/eom_email_watcher/service.py",
+        "src/eom_email_watcher/db.py"
+      ],
+      "markers": {
+        "scheduling automation identity": "SCHEDULING_AUTOMATION_ID",
+        "stored automation identity": "automation_id"
+      },
+      "note": "Exact-revision discovery hints only. Marker presence or absence never proves that a user-definable rule exists."
+    },
+    "inspect.ew_queue_scheduler": {
+      "runner": "source_inspection",
+      "repo": "eom-email-watcher",
+      "platform": "n/a",
+      "paths": [
+        "desktop/src-tauri/src/scheduler.rs",
+        "desktop/src-tauri/src/lib.rs",
+        "desktop/src-tauri/src/engine.rs"
+      ],
+      "markers": {
+        "scheduler starts": "ConnectQueueScheduler::start",
+        "scheduler pumps": "pump_connect_queue"
+      },
+      "note": "Exact-revision discovery hints only. Behavioral evidence is still required."
     },
     "release.github.ew": {
       "runner": "github_release",
@@ -332,8 +362,7 @@
             "src/eom_email_watcher/service.py"
           ]
         }
-      ],
-      "next_action": "Nothing product-side; this is release packaging away from usable."
+      ]
     },
     {
       "id": "ew.meeting_suggestions_and_confirmed_write",
@@ -381,8 +410,7 @@
             "desktop/src/**"
           ]
         }
-      ],
-      "next_action": "Whether this automation is required for the first release is an open scope decision."
+      ]
     },
     {
       "id": "ds.cited_summary",
@@ -414,8 +442,7 @@
             "src/**"
           ]
         }
-      ],
-      "next_action": "No Windows evidence exists for this app; Rust CI runs on Linux only."
+      ]
     },
     {
       "id": "ip.extract_review_ledger",
@@ -460,8 +487,7 @@
             "tests/**"
           ]
         }
-      ],
-      "next_action": "No CI exists for this repository; all evidence is local. Windows and macOS artifacts are deferred by its roadmap."
+      ]
     },
     {
       "id": "connect.handoff_pdf_to_summarizer",
@@ -507,8 +533,7 @@
             "entitlements/**"
           ]
         }
-      ],
-      "next_action": "No recorded installed-app demonstration of this specific handoff; only tests."
+      ]
     },
     {
       "id": "connect.handoff_bill_to_ledger",
@@ -516,7 +541,7 @@
       "layer": "connect",
       "title": "An emailed bill appears in my ledger",
       "promise": "With both apps installed and licensed, a Read invoice action appears on a bill inside Email Watcher; the bill is handed to Invoice Processor over loopback; it lands in the ledger through the same path as a hand-opened file, entry marked received, waiting for review.",
-      "human_involvement": "You click. You review the entry before it can be paid. A second bill while one is running is queued durably but is only resubmitted when the queue is pumped \u2014 nothing pumps it on its own yet.",
+      "human_involvement": "You click, and you review the entry before it can be paid. A second bill may wait durably while the provider is busy.",
       "conditions": [
         {
           "id": "bill.provider_writes_ledger",
@@ -534,7 +559,7 @@
           "id": "bill.cross_app_acceptance",
           "kind": "automated_test",
           "check": "xapp.accept_ew_to_ip",
-          "proves": "Real Email Watcher consumer code drives the real Invoice Processor provider end to end over loopback, stand-in model, both revisions recorded."
+          "proves": "Exact extracted Email Watcher and Invoice Processor code runs end to end over loopback with the exact contracts keyring, a stand-in model, and all three revisions recorded."
         },
         {
           "id": "bill.busy_job_queued_and_resubmitted",
@@ -576,9 +601,7 @@
             "entitlements/**"
           ]
         }
-      ],
-      "unfinished": "Automatic queue pumping (Email Watcher issue #117): the queue and the pump exist, nothing schedules the pump.",
-      "next_action": "Decide who pumps the queue (scheduler wake-up or engine loop); until then a busy second bill waits."
+      ]
     },
     {
       "id": "automate.unattended_pdf_summary",
@@ -586,13 +609,13 @@
       "layer": "automate",
       "title": "A PDF from a vendor is summarized before I open it",
       "promise": "A rule I define \u2014 this sender, any PDF \u2014 hands the file to Document Summarizer without a click and notifies me with the summary in hand.",
-      "human_involvement": "None once the rule exists. Today the only automation trigger is hardcoded to meeting requests; no rule of this shape can be expressed.",
+      "human_involvement": "You define the rule once; afterward no click is part of the promised flow.",
       "conditions": [
         {
           "id": "auto.user_definable_rule",
           "kind": "source_inspection",
-          "check": "manual.ew_live_calendar",
-          "proves": "A rule you can define exists. (Inspection only: no such code has been found; absence is not proof.)"
+          "check": "inspect.ew_automation_rules",
+          "proves": "A person can define a sender-and-attachment rule for this flow."
         }
       ],
       "depends_on": [
@@ -603,8 +626,7 @@
             "src/eom_email_watcher/db.py"
           ]
         }
-      ],
-      "next_action": "Requires a definable trigger. Whether it is required for the first release is an open scope decision."
+      ]
     },
     {
       "id": "automate.invoice_intake_and_digest",
@@ -612,19 +634,19 @@
       "layer": "automate",
       "title": "Bills file themselves and I get a digest",
       "promise": "A rule \u2014 this vendor, a PDF that looks like a bill \u2014 routes each arrival into the ledger without a click, batches survive a busy provider, and a scheduled digest tells me what arrived and what is due.",
-      "human_involvement": "Review before payment stays with you. Today no such rule can be expressed and nothing pumps the queue unattended.",
+      "human_involvement": "You define the routing and digest rule; review before payment stays with you.",
       "conditions": [
         {
           "id": "auto.invoice_rule",
           "kind": "source_inspection",
-          "check": "manual.ew_live_calendar",
-          "proves": "A definable invoice rule exists. (Not found.)"
+          "check": "inspect.ew_automation_rules",
+          "proves": "A person can define a vendor-and-invoice rule for this flow."
         },
         {
           "id": "auto.queue_pumped_unattended",
           "kind": "source_inspection",
-          "check": "manual.ew_live_calendar",
-          "proves": "Something schedules connect.queue.pump. (Not found.)"
+          "check": "inspect.ew_queue_scheduler",
+          "proves": "The desktop schedules Connect queue pumping without a manual click."
         }
       ],
       "depends_on": [
@@ -642,8 +664,7 @@
             "src/invoice_processor/connect/**"
           ]
         }
-      ],
-      "next_action": "Definable rules and scheduled pumping do not exist. Whether required for the first release is an open scope decision."
+      ]
     },
     {
       "id": "release.linux_and_windows",
@@ -686,7 +707,7 @@
           "kind": "ci_run",
           "check": "ds.ci.rust",
           "platform": "windows",
-          "proves": "Document Summarizer verified on Windows. (No Windows job exists; this stays not checked until one does.)"
+          "proves": "Document Summarizer is verified on Windows."
         },
         {
           "id": "rel.published_ew",
@@ -732,8 +753,7 @@
             "src-tauri/tauri*.conf.json"
           ]
         }
-      ],
-      "next_action": "Invoice Processor has no Windows artifact; Document Summarizer has no Windows CI; no repository has a release."
+      ]
     }
   ]
 }

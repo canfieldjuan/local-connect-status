@@ -213,3 +213,92 @@ def test_release_of_older_code_is_changed_since_once_main_moves_on():
                          revision_time="2026-09-01T00:00:00+00:00", summary="v1")
     s = task_status(t, [old_release], {"ip": NEW}, CAT, CAT["release"])
     assert s.conditions[0].state == "changed_since" and s.maturity != "released"
+
+
+# --- regressions from PR review: observation history and repository isolation -----------
+
+def test_pass_fail_pass_recovery_is_retained_and_wins_after_reload(tmp_path: Path):
+    st = Store(tmp_path / "r.jsonl")
+    first = rec("automated_test", "pass", executed=2, failed=0,
+                recorded_at="2026-09-11T10:00:00+00:00")
+    failed = rec("automated_test", "fail", executed=2, failed=1, exit_code=1,
+                 recorded_at="2026-09-11T10:00:01+00:00")
+    recovered = rec("automated_test", "pass", executed=2, failed=0,
+                    recorded_at="2026-09-11T10:00:02+00:00")
+
+    assert st.add(first) and st.add(failed) and st.add(recovered)
+    loaded = Store(tmp_path / "r.jsonl")
+    assert len(loaded) == 3
+    assert len({item.record_id for item in loaded.all()}) == 3
+
+    status = condition_status(
+        {"id": "c1", "kind": "automated_test", "check": "t.pytest"},
+        loaded.all(),
+        {"ip": NEW},
+        "ip",
+    )
+    assert status.state == "satisfied"
+    assert status.current is not None and status.current.record_id == recovered.record_id
+
+
+def test_foreign_repository_release_record_cannot_satisfy_app_condition():
+    invoice_missing = rec(
+        "release_artifact", "fail", cond="r1", repo="ip",
+        recorded_at="2026-09-11T10:00:00+00:00",
+    )
+    unrelated_release = rec(
+        "release_artifact", "pass", cond="r1", repo="ew",
+        recorded_at="2026-09-11T11:00:00+00:00",
+    )
+    status = condition_status(
+        {"id": "r1", "kind": "release_artifact", "check": "t.rel"},
+        [invoice_missing, unrelated_release],
+        {"ip": NEW, "ew": NEW},
+        "ip",
+    )
+    assert status.state == "check_failed"
+    assert status.current is invoice_missing
+
+
+def test_source_inspection_exposes_current_hint_without_proving_behavior():
+    hint = rec(
+        "source_inspection", "inconclusive", cond="i1", repo="ew",
+        summary="inspection only: 2/2 configured markers found",
+    )
+    status = condition_status(
+        {"id": "i1", "kind": "source_inspection", "check": "t.inspect"},
+        [hint],
+        {"ew": NEW},
+        "ew",
+    )
+    assert status.state == "inconclusive"
+    assert status.current is hint
+    assert status.last_proven is None
+
+
+def test_current_catalogue_has_evidence_driven_status_copy_and_source_checks():
+    from lcstatus.catalogue import load
+
+    catalogue = load(Path(__file__).resolve().parent.parent / "catalogue.json")
+    assert all("unfinished" not in task and "next_action" not in task for task in catalogue["tasks"])
+    source_checks = [check for check in catalogue["checks"].values() if check["runner"] == "source_inspection"]
+    assert source_checks
+    assert all(check["paths"] and check["markers"] for check in source_checks)
+
+
+def test_catalogue_rejects_source_condition_wired_to_manual_runner(tmp_path: Path):
+    from lcstatus.catalogue import load
+
+    catalogue = {
+        "repos": {"ew": {"github": "example/ew"}},
+        "apps": {"watcher": {"repo": "ew"}},
+        "checks": {"inspect": {"runner": "manual_observation", "repo": "ew"}},
+        "tasks": [{
+            "id": "task", "app": "watcher", "layer": "automate",
+            "conditions": [{"id": "condition", "kind": "source_inspection", "check": "inspect"}],
+        }],
+    }
+    path = tmp_path / "catalogue.json"
+    path.write_text(json.dumps(catalogue))
+    with pytest.raises(ValueError, match="cannot use 'manual_observation' runner"):
+        load(path)

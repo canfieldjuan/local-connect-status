@@ -39,6 +39,25 @@ LAYER_BLURB = {
 }
 
 
+def next_action(status: TaskStatus) -> str | None:
+    prefixes = {
+        "check_failed": "Investigate",
+        "changed_since": "Re-run at current code",
+        "not_checked": "Complete the check",
+        "no_evidence": "Collect evidence",
+        "inconclusive": "Add behavioral proof beyond source inspection",
+    }
+    for state in prefixes:
+        condition = next((c for c in status.conditions if c.state == state), None)
+        if condition is not None:
+            return f"{prefixes[state]} ({condition.condition['check']}): {condition.condition.get('proves', '')}"
+    return None
+
+
+def markdown_cell(value: object) -> str:
+    return str(value).replace("|", r"\|").replace("\n", "<br>")
+
+
 def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[str, str],
                    failures: list[dict[str, Any]], state: dict[str, Any], changed: dict[str, tuple[str, str]],
                    records: list[Record]) -> dict[str, Any]:
@@ -65,7 +84,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
             {
                 "id": s.task["id"], "app": s.task["app"], "layer": s.task["layer"], "title": s.task["title"],
                 "promise": s.task["promise"], "human_involvement": s.task.get("human_involvement"),
-                "unfinished": s.task.get("unfinished"), "next_action": s.task.get("next_action"),
+                "next_action": next_action(s),
                 "maturity": s.maturity, "freshness": s.freshness, "platforms": s.platforms, "notes": s.notes,
                 "conditions": [c.as_dict() for c in s.conditions],
                 "depends_on": s.task.get("depends_on", []),
@@ -141,8 +160,10 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
                     evs = f"{ev['kind']} `{ev['revision']}` {ev['verdict']} {ev['recorded_at'][:10]}"
                     if ev.get("executed") is not None:
                         evs += f" ({ev['executed']} run, {ev.get('failed') or 0} failed, {ev.get('skipped') or 0} skipped)"
+                    if ev.get("summary"):
+                        evs += f" — {ev['summary']}"
                 label = "no release published" if (c["kind"] == "release_artifact" and c["state"] == "check_failed") else COND_LABEL[c["state"]]
-                w(f"| {c['proves']} | {label} | {evs} |")
+                w(f"| {markdown_cell(c['proves'])} | {label} | {markdown_cell(evs)} |")
             w("")
     if p["recent_changes"]:
         w("## Recent changes observed")
@@ -194,6 +215,7 @@ const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>'
 function evLine(e){ if(!e) return '—'; let s=`${e.kind} <code>${e.revision}</code> ${e.verdict} ${e.recorded_at.slice(0,10)}`;
   if(e.executed!=null) s+=` · ${e.executed} run, ${e.failed||0} failed, ${e.skipped||0} skipped`;
   if(e.exit_code!=null) s+=` · exit ${e.exit_code}`; if(e.platform && e.platform!=='n/a') s+=` · ${e.platform}`;
+  if(e.summary) s+=` · ${esc(e.summary)}`;
   if(e.participants && Object.keys(e.participants).length) s+=` · with `+Object.entries(e.participants).map(([r,v])=>`${r}@${v}`).join(', ');
   if(e.source && e.source.url) s+=` · <a href="${esc(e.source.url)}" target="_blank" rel="noopener">GitHub job</a>`;
   if(e.log_path){const name=String(e.log_path).split('/').pop(); s+=` · <span class="meta" title="${esc(e.log_path)}">log: ${esc(name)}</span>`;} return s; }
@@ -241,7 +263,8 @@ render((location.hash||'#overview').slice(1));
 
 
 def dashboard_html(p: dict[str, Any], cat: dict[str, Any]) -> str:
-    data = json.dumps(p).replace("</", "<\\/")
+    # Escape every HTML-significant code point before embedding JSON in a script block.
+    data = (json.dumps(p).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"))
     gen = html.escape(p.get("generated_at") or "never")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Local Connect — What works. What's left.</title><style>{CSS}</style></head><body><div class="wrap">
@@ -250,6 +273,6 @@ def dashboard_html(p: dict[str, Any], cat: dict[str, Any]) -> str:
 <p class="sub">The apps, the connections between them, and the work they will do for you automatically — with the evidence for each claim.</p>
 <nav><a href="#overview" data-view="overview">Overview</a><a href="#email-watcher" data-view="email-watcher">Email Watcher</a><a href="#document-summarizer" data-view="document-summarizer">Document Summarizer</a><a href="#invoice-processor" data-view="invoice-processor">Invoice Processor</a><a href="#release" data-view="release">Before we ship</a></nav>
 <div id="root"></div>
-<footer>Every row is derived from recorded evidence in <code>data/records.jsonl</code>; nothing here is written by hand. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Public release requires a published release, which no app has.</footer>
+<footer>Every row is derived from recorded evidence in <code>data/records.jsonl</code>; nothing here is written by hand. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from the release-evidence rows above.</footer>
 </div><script>{JS.replace('__DATA__', data)}</script></body></html>
 """

@@ -13,6 +13,7 @@ Principles that keep these honest:
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import shutil
@@ -24,6 +25,10 @@ from typing import Any
 
 from .evidence import Record, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
+
+
+WATCHER_COMPAT_PATH = Path("/tmp/watcher-main")
+WATCHER_COMPAT_LOCK = Path("/tmp/local-connect-status-watcher-main.lock")
 
 
 def _pyproject_has_dev_group(tree: Path) -> bool:
@@ -94,6 +99,45 @@ def release_verdict(releases: list[dict], required_assets: dict[str, str]) -> tu
     return "pass", f"{latest.get('tag_name')} {latest.get('published_at')}", detail, latest.get("tag_name")
 
 
+def latest_workflow_runs(runs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Latest distinct run wins; attempt only breaks ties within that run."""
+    def number(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return -1
+
+    def order(run: dict[str, Any]) -> tuple[int, str, int, int]:
+        return (
+            number(run.get("run_number")),
+            str(run.get("created_at") or ""),
+            number(run.get("id")),
+            number(run.get("run_attempt")),
+        )
+
+    selected: dict[str, dict[str, Any]] = {}
+    for run in runs:
+        name = run.get("name")
+        if not isinstance(name, str):
+            continue
+        if name not in selected or order(run) > order(selected[name]):
+            selected[name] = run
+    return selected
+
+
+def prepare_owned_symlink(link: Path, target: Path, owned_root: Path) -> Failure | None:
+    """Create a compatibility symlink without removing a path the collector does not own."""
+    if link.is_symlink():
+        existing = link.resolve(strict=False)
+        if not existing.is_relative_to(owned_root.resolve()):
+            return Failure("compatibility_path", f"refusing to replace unowned symlink {link}")
+        link.unlink()
+    elif link.exists():
+        return Failure("compatibility_path", f"refusing to remove existing path {link}")
+    link.symlink_to(target, target_is_directory=True)
+    return None
+
+
 class Runner:
     def __init__(self, mirrors: Mirrors, cache: Path, logs: Path, gh: GitHub, catalogue: dict[str, Any]):
         self.mirrors = mirrors
@@ -118,8 +162,13 @@ class Runner:
             return Failure("env", "uv not installed")
         venv = tree / ".venv"
         env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(venv))
-        r = subprocess.run(uv_sync_command(self.cat["repos"].get(repo, {}).get("python")), cwd=tree,
-                           capture_output=True, text=True, timeout=1200, env=env)
+        try:
+            r = subprocess.run(uv_sync_command(self.cat["repos"].get(repo, {}).get("python")), cwd=tree,
+                               capture_output=True, text=True, timeout=1200, env=env)
+        except subprocess.TimeoutExpired:
+            return Failure("env", "uv sync timed out after 1200 seconds", {"repo": repo, "sha": sha})
+        except OSError as exc:
+            return Failure("env", f"uv sync could not start: {type(exc).__name__}", {"repo": repo, "sha": sha})
         if r.returncode != 0:
             return Failure("env", r.stderr[-400:], {"repo": repo, "sha": sha})
         py = venv / "bin" / "python"
@@ -143,6 +192,39 @@ class Runner:
         if r.returncode != 0:
             return Failure("env", r.stderr[-300:])
         return None
+
+    # ---- source inspection ----------------------------------------------------------
+
+    def source_inspection(self, check_id: str, check: dict[str, Any], rev: Revision,
+                          condition_ids: list[str], task_ids: list[str]) -> Record:
+        repo = check["repo"]
+        base = dict(kind="source_inspection", repo=repo, revision=rev.sha,
+                    revision_time=rev.committed_at, platform=check.get("platform", "n/a"),
+                    condition_ids=condition_ids, task_ids=task_ids,
+                    source={"type": "source_inspection", "check": check_id})
+        tree = self.tree(repo, rev.sha)
+        if isinstance(tree, Failure):
+            return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
+        texts: dict[str, str] = {}
+        missing: list[str] = []
+        for relative in check.get("paths", []):
+            source = tree / relative
+            if not source.is_file():
+                missing.append(relative)
+                continue
+            texts[relative] = source.read_text(encoding="utf-8", errors="replace")
+        hits = {
+            label: [relative for relative, content in texts.items() if marker in content]
+            for label, marker in check.get("markers", {}).items()
+        }
+        found = sum(bool(paths) for paths in hits.values())
+        total = len(hits)
+        summary = f"inspection only: {found}/{total} configured markers found"
+        if missing:
+            summary += f"; {len(missing)} path(s) missing"
+        return Record(verdict="inconclusive", summary=summary,
+                      command=f"inspect exact tree: {', '.join(check.get('paths', []))}",
+                      detail={"marker_hits": hits, "missing_paths": missing}, **base)
 
     # ---- pytest ---------------------------------------------------------------------
 
@@ -246,63 +328,98 @@ class Runner:
     # ---- cross-app acceptance (Email Watcher -> Invoice Processor) --------------------
 
     def accept_ew_ip(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
+        participants = {repo: revs[repo].sha for repo in check["participants"]}
         ip, ew = revs["invoice-processor"], revs["eom-email-watcher"]
-        base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha, revision_time=ip.committed_at,
-                    platform="linux", condition_ids=condition_ids, task_ids=task_ids,
-                    participants={"invoice-processor": ip.sha, "eom-email-watcher": ew.sha},
+        base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha,
+                    revision_time=ip.committed_at, platform="linux", condition_ids=condition_ids,
+                    task_ids=task_ids, participants=participants,
                     source={"type": "local_runner", "check": check_id, "host": os.uname().nodename})
-        ip_tree = self.tree("invoice-processor", ip.sha)
-        ew_tree = self.tree("eom-email-watcher", ew.sha)
-        if isinstance(ip_tree, Failure) or isinstance(ew_tree, Failure):
-            return Record(verdict="unavailable", summary="could not extract a participant tree", **base)
-        # The script hardcodes /tmp/watcher-main for the watcher checkout. Point it at the exact tree.
-        wm = Path("/tmp/watcher-main")
-        if wm.is_symlink() or wm.exists():
-            if wm.is_symlink():
-                wm.unlink()
-            else:
-                shutil.rmtree(wm)
-        wm.symlink_to(ew_tree)
-        # The environment belongs to Invoice Processor: its interpreter pin applies.
+        trees: dict[str, Path] = {}
+        for repo in check["participants"]:
+            tree = self.tree(repo, revs[repo].sha)
+            if isinstance(tree, Failure):
+                return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)
+            trees[repo] = tree
+        ip_tree = trees["invoice-processor"]
+        ew_tree = trees["eom-email-watcher"]
+        contracts_tree = trees["connect-contracts"]
         venv = self._venv("invoice-processor", ip_tree, ip.sha, extra_trees=[ew_tree])
         if isinstance(venv, Failure):
             return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
         script = ip_tree / "scripts" / "accept_against_email_watcher.py"
         if not script.exists():
             return Record(verdict="unavailable", summary="acceptance script absent at this revision", **base)
-        log = self.logs / f"{check_id}.{ip.sha[:8]}-{ew.sha[:8]}.log"
-        env = {k: v for k, v in os.environ.items() if k != "ACCEPTANCE_MODEL"}  # stand-in model, never the GPU
-        env["PYTHONPATH"] = str(ew_tree / "src")
-        env["ACCEPTANCE_DIR"] = str(self.cache / "xapp-run")
-        # The script inserts the developer's ~/Desktop/invoice-processor onto sys.path for
-        # `tests.fixtures` and `tests.oracle`. Pre-import them from the isolated tree, then
-        # assert that is where they came from; if not, this check fails rather than reporting
-        # a result about code we did not choose.
-        wrapper = (
-            "import sys, runpy\n"
-            f"sys.path.insert(0, {str(ip_tree)!r})\n"
-            "import tests.fixtures, tests.oracle\n"
-            f"ok = tests.fixtures.__file__.startswith({str(ip_tree)!r}) and tests.oracle.__file__.startswith({str(ip_tree)!r})\n"
-            "if not ok:\n"
-            "    print('ISOLATION FAILURE: fixtures resolved outside the extracted tree', file=sys.stderr); sys.exit(97)\n"
-            f"runpy.run_path({str(script)!r}, run_name='__main__')\n"
-        )
-        cmd = [str(venv / "bin" / "python"), "-c", wrapper]
-        t0 = time.time()
+
+        key = f"{ip.sha[:12]}-{ew.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
+        compat_home = self.cache / "xapp-homes" / key
+        if compat_home.is_symlink():
+            compat_home.unlink()
+        elif compat_home.exists():
+            shutil.rmtree(compat_home)
+        desktop = compat_home / "Desktop"
+        desktop.mkdir(parents=True)
+        (desktop / "invoice-processor").symlink_to(ip_tree, target_is_directory=True)
+        (desktop / "connect-contracts").symlink_to(contracts_tree, target_is_directory=True)
+
+        # The upstream script hardcodes this compatibility path. Serialize its use and refuse
+        # to remove any directory or foreign symlink already present there.
+        wm = WATCHER_COMPAT_PATH
+        lock_fh = open(WATCHER_COMPAT_LOCK, "w")
         try:
-            r = subprocess.run(cmd, cwd=ip_tree, capture_output=True, text=True, timeout=1800, env=env)
-        except subprocess.TimeoutExpired:
-            return Record(verdict="unavailable", summary="timeout", command="accept_against_email_watcher.py (isolated)", **base)
-        log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
-        last = (r.stdout.strip().splitlines() or [""])[-1]
-        if r.returncode == 97:
-            return Record(verdict="unavailable", summary="isolation failure: fixtures from outside the extracted tree",
-                          command="accept_against_email_watcher.py (isolated)", exit_code=97, log_path=str(log), **base)
-        verdict = "pass" if r.returncode == 0 else "fail"
-        return Record(verdict=verdict, command="accept_against_email_watcher.py (isolated, stand-in model)",
-                      exit_code=r.returncode, summary=last[:200], log_path=str(log),
-                      duration_s=round(time.time() - t0, 1),
-                      detail={"fixtures_pinned_to": str(ip_tree), "watcher_tree": str(ew_tree)}, **base)
+            fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_fh.close()
+            return Record(verdict="unavailable", summary="watcher compatibility path is busy", **base)
+        linked = False
+        try:
+            failure = prepare_owned_symlink(
+                wm, ew_tree, self.cache / "trees" / "eom-email-watcher"
+            )
+            if failure is not None:
+                return Record(verdict="unavailable", summary=failure.why, **base)
+            linked = True
+            log = self.logs / f"{check_id}.{ip.sha[:8]}-{ew.sha[:8]}.log"
+            env = {k: v for k, v in os.environ.items() if k != "ACCEPTANCE_MODEL"}
+            env["HOME"] = str(compat_home)
+            env["PYTHONPATH"] = str(ew_tree / "src")
+            env["ACCEPTANCE_DIR"] = str(self.cache / "xapp-runs" / key)
+            wrapper = (
+                "import sys, runpy\n"
+                f"sys.path.insert(0, {str(ip_tree)!r})\n"
+                "import tests.fixtures, tests.oracle\n"
+                f"ok = tests.fixtures.__file__.startswith({str(ip_tree)!r}) and tests.oracle.__file__.startswith({str(ip_tree)!r})\n"
+                "if not ok:\n"
+                "    print('ISOLATION FAILURE: fixtures resolved outside the extracted tree', file=sys.stderr); sys.exit(97)\n"
+                f"runpy.run_path({str(script)!r}, run_name='__main__')\n"
+            )
+            cmd = [str(venv / "bin" / "python"), "-c", wrapper]
+            t0 = time.time()
+            try:
+                r = subprocess.run(cmd, cwd=ip_tree, capture_output=True, text=True,
+                                   timeout=1800, env=env)
+            except subprocess.TimeoutExpired:
+                return Record(verdict="unavailable", summary="timeout",
+                              command="accept_against_email_watcher.py (isolated)", **base)
+            log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
+            last = (r.stdout.strip().splitlines() or [""])[-1]
+            if r.returncode == 97:
+                return Record(verdict="unavailable", summary="isolation failure: fixtures from outside the extracted tree",
+                              command="accept_against_email_watcher.py (isolated)", exit_code=97,
+                              log_path=str(log), **base)
+            verdict = "pass" if r.returncode == 0 else "fail"
+            return Record(verdict=verdict,
+                          command="accept_against_email_watcher.py (isolated, stand-in model)",
+                          exit_code=r.returncode, summary=last[:200], log_path=str(log),
+                          duration_s=round(time.time() - t0, 1),
+                          detail={"fixtures_pinned_to": str(ip_tree),
+                                  "watcher_tree": str(ew_tree),
+                                  "contracts_tree": str(contracts_tree),
+                                  "isolated_home": str(compat_home)}, **base)
+        finally:
+            if linked and wm.is_symlink() and wm.resolve(strict=False) == ew_tree.resolve():
+                wm.unlink()
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            lock_fh.close()
 
     # ---- GitHub Actions --------------------------------------------------------------
 
@@ -318,12 +435,7 @@ class Runner:
                                   platform=chk.get("platform", "n/a"), condition_ids=conds, task_ids=tasks,
                                   source={"type": "github_actions", "check": cid}, summary=f"{runs.what}: {runs.why}"))
             return out
-        by_workflow: dict[str, dict[str, Any]] = {}
-        for run in runs:
-            name = run.get("name")
-            # keep the latest attempt of the latest run per workflow
-            if name not in by_workflow or run.get("run_attempt", 0) >= by_workflow[name].get("run_attempt", 0):
-                by_workflow[name] = run
+        by_workflow = latest_workflow_runs(runs)
         for cid, chk in checks.items():
             conds, tasks = cond_map.get(cid, ([], []))
             run = by_workflow.get(chk["workflow"])
