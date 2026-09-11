@@ -108,7 +108,8 @@ GitHub Actions run for the exact sha; a local run is for when that isn't enough.
 ## What it cannot do
 
 - Run a human demonstration. The Invoice Processor removal test needs `sudo dpkg`; the
-  calendar write needs a real Microsoft tenant. A person runs those and records the result
+  missing Linux/Windows installer checks need their target operating system; the calendar
+  write needs a real Microsoft tenant. A person runs those and records the result
   with `scripts/record_observation.py`, which requires `--observed-by` and an artifact.
 - Touch a GPU. The cross-app acceptance runs with the stand-in model only.
 - Decide launch scope. Which Automate tasks the first release requires is recorded as
@@ -128,12 +129,12 @@ test that would fail if the dashboard could be fooled that way:
 | accept a cross-app demonstration when one participant has moved | `test_cross_app_demo_with_one_stale_participant_is_changed_since` |
 | let a passing helper test satisfy an installed-demonstration condition | `test_passing_test_cannot_satisfy_demo_condition` |
 | promote anything on a source-string match, or treat a missing string as proof of absence | `test_source_inspection_is_inconclusive_and_never_raises_maturity`, `test_code_change_maps_to_task_and_marker_rename_alone_cannot_prove_removal` |
-| let Linux evidence stand in for Windows | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness` |
+| let Linux evidence stand in for Windows, or call the bundle ready without Invoice Processor and Document Summarizer Windows observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_bundle_readiness_requires_each_unproven_installer_observation` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
 | call something released without a published release | `test_release_requires_release_artifact_not_just_demos`, `test_release_absence_is_an_explicit_not_met_at_current_head` |
-| duplicate progress on a repeated delivery, lose a recovery, or lose a distinct change record | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_change_records_from_different_baselines_are_both_kept` |
+| duplicate progress on a repeated delivery, lose a recovery, changed incomplete release, or distinct change record | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept` |
 | let a docs-only or contract-only change look like running functionality | `test_docs_only_change_is_flagged_and_unmapped_files_surface` |
-| show a failed fetch, missing repository or unavailable GitHub as a clean empty result, including when fetch was intentionally skipped | `test_missing_repository_and_unavailable_github_are_explicit`, `test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown` |
+| show a failed fetch, mirror command exception, missing repository, or unavailable GitHub as a clean empty result, including when fetch was intentionally skipped | `test_missing_repository_and_unavailable_github_are_explicit`, `test_mirror_subprocess_errors_become_failures`, `test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown` |
 | invent data when only rendering, or re-promote evidence after a head became unknown | `test_render_only_never_invents_data`, `test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pass` |
 | label a task with nothing checkable as "verified at current code" | `test_task_with_only_inspection_conditions_is_not_checked_not_current` |
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |

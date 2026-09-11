@@ -201,3 +201,21 @@ def test_no_fetch_and_unavailable_github_leave_cached_mirror_unknown(tmp_path: P
     assert status["heads"] == {}
     assert status["tasks"][0]["conditions"][0]["state"] != "satisfied"
     assert state["unknown_heads"] == ["ghost"]
+
+
+def test_mirror_subprocess_errors_become_failures(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Failure, Mirrors
+
+    mirrors = Mirrors(tmp_path / "mirrors", {"app": {"github": "example/app"}})
+    mirrors.path("app").mkdir()
+    for error in (subprocess.TimeoutExpired(["git", "log"], 300), FileNotFoundError("git missing")):
+        def fail_to_run(*args, **kwargs):
+            raise error
+
+        monkeypatch.setattr("lcstatus.sources.subprocess.run", fail_to_run)
+        head = mirrors.head("app")
+        archive = mirrors.extract("app", "a" * 40, tmp_path / f"tree-{type(error).__name__}")
+        assert isinstance(head, Failure) and head.what == "head"
+        assert type(error).__name__ in head.why
+        assert isinstance(archive, Failure) and archive.what == "archive"
+        assert archive.why == type(error).__name__

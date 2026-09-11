@@ -245,6 +245,30 @@
       ],
       "note": "scripts/removal_test.py: install the .deb, drive the packaged Email Watcher through not-installed / installed / removed. Needs sudo dpkg; a person runs it and records the transcript."
     },
+    "manual.ew_linux_install": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "note": "Install the current Email Watcher Linux artifact on Linux and record the installed-app smoke transcript."
+    },
+    "manual.ip_windows_install": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "windows",
+      "note": "Install the current Invoice Processor Windows artifact on Windows and record the installed-app smoke transcript."
+    },
+    "manual.ds_linux_install": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "note": "Install the current Document Summarizer Linux artifact on Linux and record the installed-app smoke transcript."
+    },
+    "manual.ds_windows_install": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "windows",
+      "note": "Install the current Document Summarizer Windows artifact on Windows and record the installed-app smoke transcript."
+    },
     "manual.ew_live_calendar": {
       "runner": "manual_observation",
       "repo": "eom-email-watcher",
@@ -689,6 +713,13 @@
           "proves": "Email Watcher desktop builds on Linux (no bundle)."
         },
         {
+          "id": "rel.ew_linux_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ew_linux_install",
+          "platform": "linux",
+          "proves": "The current Email Watcher Linux artifact installs and opens on Linux."
+        },
+        {
           "id": "rel.ip_packaging_checks",
           "kind": "automated_test",
           "check": "ip.pytest.packaging",
@@ -703,11 +734,32 @@
           "proves": "Installed .deb discovered and cleanly removed against the real Email Watcher."
         },
         {
-          "id": "rel.ds_windows",
+          "id": "rel.ip_windows_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ip_windows_install",
+          "platform": "windows",
+          "proves": "The current Invoice Processor Windows artifact installs and opens on Windows."
+        },
+        {
+          "id": "rel.ds_linux",
           "kind": "ci_run",
           "check": "ds.ci.rust",
+          "platform": "linux",
+          "proves": "Document Summarizer tests, formatting, frontend build, and lint pass on its Linux CI runner."
+        },
+        {
+          "id": "rel.ds_linux_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ds_linux_install",
+          "platform": "linux",
+          "proves": "The current Document Summarizer Linux artifact installs and opens on Linux."
+        },
+        {
+          "id": "rel.ds_windows",
+          "kind": "installed_demo",
+          "check": "manual.ds_windows_install",
           "platform": "windows",
-          "proves": "Document Summarizer is verified on Windows."
+          "proves": "The current Document Summarizer Windows artifact installs and opens on Windows."
         },
         {
           "id": "rel.published_ew",

@@ -114,6 +114,9 @@ class Record:
         if self.kind in ("change", "collection_failure", "revision"):
             key["summary"] = self.summary
             key["old"] = self.detail.get("old")
+        elif self.kind == "release_artifact":
+            key["summary"] = self.summary
+            key["detail"] = self.detail
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(blob).hexdigest()[:24]
 

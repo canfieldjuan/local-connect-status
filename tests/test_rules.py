@@ -380,3 +380,80 @@ def test_store_latest_revision_uses_absolute_instant_across_offsets(tmp_path: Pa
     )
     assert store.add(older) and store.add(newer)
     assert Store(tmp_path / "r.jsonl").latest_revision("ip") == newer
+
+
+def test_changed_incomplete_release_is_not_deduplicated(tmp_path: Path):
+    store = Store(tmp_path / "r.jsonl")
+    first = Record(
+        kind="release_artifact", repo="ip", revision=NEW, verdict="fail",
+        condition_ids=["r1"], source={"type": "github_releases"},
+        summary="v1 published but missing: windows installer, linux package",
+        detail={"tag": "v1", "assets": ["SHA256SUMS"],
+                "missing": ["windows installer", "linux package"]},
+    )
+    changed = Record(
+        kind="release_artifact", repo="ip", revision=NEW, verdict="fail",
+        condition_ids=["r1"], source={"type": "github_releases"},
+        summary="v1 published but missing: linux package",
+        detail={"tag": "v1", "assets": ["setup.exe", "SHA256SUMS"],
+                "missing": ["linux package"]},
+    )
+    duplicate = Record.from_dict(json.loads(changed.to_json()))
+
+    assert store.add(first) and store.add(changed)
+    assert store.add(duplicate) is False
+    loaded = Store(tmp_path / "r.jsonl").all()
+    assert len(loaded) == 2
+    assert loaded[-1].detail["assets"] == ["setup.exe", "SHA256SUMS"]
+
+
+def test_bundle_readiness_requires_each_unproven_installer_observation():
+    from lcstatus.catalogue import load
+
+    catalogue = load(Path(__file__).resolve().parent.parent / "catalogue.json")
+    release_task = next(item for item in catalogue["tasks"] if item["id"] == "release.linux_and_windows")
+    checks = catalogue["checks"]
+    conditions = {item["id"]: item for item in release_task["conditions"]}
+    assert conditions["rel.ip_windows_installer_demo"] == {
+        "id": "rel.ip_windows_installer_demo",
+        "kind": "installed_demo",
+        "check": "manual.ip_windows_install",
+        "platform": "windows",
+        "proves": "The current Invoice Processor Windows artifact installs and opens on Windows.",
+    }
+    assert conditions["rel.ew_linux_installer_demo"]["check"] == "manual.ew_linux_install"
+    assert conditions["rel.ds_linux"]["check"] == "ds.ci.rust"
+    assert conditions["rel.ds_linux_installer_demo"]["check"] == "manual.ds_linux_install"
+    assert conditions["rel.ds_windows"]["check"] == "manual.ds_windows_install"
+
+    heads = {
+        "eom-email-watcher": "a" * 40,
+        "document-summarizer": "b" * 40,
+        "invoice-processor": "c" * 40,
+    }
+    records = []
+    for condition in release_task["conditions"]:
+        if condition["kind"] == "release_artifact" or condition["id"] == "rel.ip_windows_installer_demo":
+            continue
+        check = checks[condition["check"]]
+        repo = check["repo"]
+        participants = {name: heads[name] for name in check.get("participants", [])}
+        records.append(Record(
+            kind=condition["kind"], repo=repo, revision=heads[repo], verdict="pass",
+            platform=condition.get("platform", check.get("platform", "n/a")),
+            condition_ids=[condition["id"]], participants=participants,
+            executed=1 if condition["kind"] in ("automated_test", "ci_run") else None,
+            failed=0 if condition["kind"] in ("automated_test", "ci_run") else None,
+        ))
+
+    blocked = task_status(release_task, records, heads, catalogue, catalogue["release"])
+    missing = next(item for item in blocked.conditions if item.condition["id"] == "rel.ip_windows_installer_demo")
+    assert missing.state == "no_evidence"
+    assert blocked.maturity != "ready for release"
+
+    records.append(Record(
+        kind="installed_demo", repo="invoice-processor", revision=heads["invoice-processor"],
+        verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
+    ))
+    ready = task_status(release_task, records, heads, catalogue, catalogue["release"])
+    assert ready.maturity == "ready for release"

@@ -39,7 +39,13 @@ class Revision:
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, timeout: int = 300, env: dict | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, env=env)
+    """Run a text command without letting startup/timeout errors escape source adapters."""
+    try:
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False, env=env)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, stdout="", stderr=f"TimeoutExpired after {timeout} seconds")
+    except OSError as exc:
+        return subprocess.CompletedProcess(cmd, 127, stdout="", stderr=f"{type(exc).__name__}: {exc}")
 
 
 class Mirrors:
@@ -115,8 +121,11 @@ class Mirrors:
             shutil.rmtree(dest)
         dest.mkdir(parents=True)
         # bytes, never text: a tar stream is not UTF-8
-        raw = subprocess.run(["git", "-C", str(self.path(repo)), "archive", "--format=tar", sha],
-                             capture_output=True, check=False, timeout=600)
+        try:
+            raw = subprocess.run(["git", "-C", str(self.path(repo)), "archive", "--format=tar", sha],
+                                 capture_output=True, check=False, timeout=600)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return Failure("archive", type(exc).__name__, {"repo": repo, "sha": sha})
         if raw.returncode != 0:
             return Failure("archive", raw.stderr.decode(errors="replace")[-200:], {"repo": repo, "sha": sha})
         with tarfile.open(fileobj=io.BytesIO(raw.stdout), mode="r:") as tf:
