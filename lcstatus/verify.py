@@ -145,7 +145,7 @@ def release_verdict(
 
     Returns (verdict, summary, detail, tag). A release counts only if it is published
     (not draft, not prerelease), every required pattern matches an uploaded nonempty
-    asset, and the checksum assets cover the required installer filenames.
+    asset, and each checksum manifest hash matches the corresponding GitHub asset digest.
     """
     latest, matches, detail = _release_assets(releases, required_assets)
     if latest is None:
