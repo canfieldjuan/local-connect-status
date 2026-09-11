@@ -102,8 +102,10 @@ def main(argv: list[str] | None = None) -> int:
                 failures.append({"repo": repo, "what": head.what, "why": head.why})
                 store.add(Record(kind="collection_failure", repo=repo, revision="", verdict="unavailable",
                                  summary=f"{head.what}: {head.why}", source={"type": "git_head"}))
-                if state["heads"].get(repo):
-                    heads[repo] = state["heads"][repo]   # last known, flagged below
+                # The current head is unknown. It must stay unknown: supplying the last known
+                # SHA would let stored passing evidence read "verified at current code" for a
+                # revision this run never observed. Without a head, the rules can only show
+                # earlier evidence as historical.
                 continue
             revs[repo] = head
             heads[repo] = head.sha

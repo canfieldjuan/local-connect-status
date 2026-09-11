@@ -240,7 +240,8 @@ class Runner:
             else:
                 shutil.rmtree(wm)
         wm.symlink_to(ew_tree)
-        venv = self._venv("xapp", ip_tree, ip.sha, extra_trees=[ew_tree])
+        # The environment belongs to Invoice Processor: its interpreter pin applies.
+        venv = self._venv("invoice-processor", ip_tree, ip.sha, extra_trees=[ew_tree])
         if isinstance(venv, Failure):
             return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
         script = ip_tree / "scripts" / "accept_against_email_watcher.py"
@@ -344,16 +345,30 @@ class Runner:
 
     # ---- releases --------------------------------------------------------------------
 
-    def releases(self, repo: str, rev: Revision, condition_ids: list[str], task_ids: list[str]) -> Record:
+    def releases(self, repo: str, rev: Revision, condition_ids: list[str], task_ids: list[str],
+                 required_assets: dict[str, str] | None = None) -> Record:
+        """Release evidence for ONE repository.
+
+        Passes only when a published (non-draft, non-prerelease) release exists whose assets
+        match every required pattern, and the record's revision is the commit that release
+        actually contains, never the current head. So a release of older code reads
+        "changed since verification" as soon as the default branch moves on.
+        """
         gh_repo = self.cat["repos"][repo]["github"]
         rel = self.gh.releases(gh_repo)
-        base = dict(kind="release_artifact", repo=repo, revision=rev.sha, revision_time=rev.committed_at, platform="n/a",
+        base = dict(kind="release_artifact", repo=repo, platform="n/a",
                     condition_ids=condition_ids, task_ids=task_ids, source={"type": "github_releases"})
         if isinstance(rel, Failure):
-            return Record(verdict="unavailable", summary=f"{rel.what}: {rel.why}", **base)
-        published = [r for r in rel if not r.get("draft") and not r.get("prerelease")]
-        if not published:
-            return Record(verdict="fail", summary="no published release", detail={"count": len(rel)}, **base)
-        latest = published[0]
-        return Record(verdict="pass", summary=f"{latest.get('tag_name')} {latest.get('published_at')}",
-                      detail={"tag": latest.get("tag_name"), "assets": [a.get("name") for a in latest.get("assets", [])]}, **base)
+            return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
+                          summary=f"{rel.what}: {rel.why}", **base)
+        verdict, summary, detail, tag = release_verdict(rel, required_assets or {})
+        if verdict != "pass":
+            return Record(verdict=verdict, revision=rev.sha, revision_time=rev.committed_at, summary=summary,
+                          detail=detail, **base)
+        target = self.gh.tag_commit(gh_repo, tag)
+        if isinstance(target, Failure):
+            return Record(verdict="unavailable", revision=rev.sha, revision_time=rev.committed_at,
+                          summary=f"release {tag} found but its tag could not be resolved: {target.why}",
+                          detail=detail, **base)
+        return Record(verdict="pass", revision=target, revision_time=detail.get("published_at"), summary=summary,
+                      detail=detail, **base)
