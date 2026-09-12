@@ -60,7 +60,7 @@ def test_dashboard_json_cannot_terminate_its_script_and_footer_is_evidence_drive
     assert "</script><script>alert(1)</script>" not in dashboard
     assert "\\u003c/script\\u003e" in dashboard
     assert "No app has a downloadable release" not in dashboard
-    assert "Release status comes from the release-evidence rows above." in dashboard
+    assert "Every status is derived from <code>data/records.jsonl</code>" in dashboard
 
 
 def test_dashboard_escapes_every_manual_revision_field_before_inner_html():

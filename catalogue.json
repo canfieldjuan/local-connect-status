@@ -2,15 +2,19 @@
   "catalogue_version": 1,
   "title": "Local Connect capability catalogue",
   "release": {
-    "target": "Linux and Windows together",
+    "target": "Linux and Windows app releases, followed by the Local Connect bundle",
     "required_platforms": [
       "linux",
       "windows"
     ],
     "automate_scope": {
-      "decision": "undecided",
-      "note": "Which Automate tasks are required for the first release has not been decided. Automate tasks are tracked but are neither assumed mandatory nor assumed deferred until a person records that decision here.",
-      "required_for_first_release": null
+      "decision": "deferred until after the first public release",
+      "note": "Automate remains visible on the dashboard, but unattended rules and scheduled workflows do not block the first releases. They can ship in later releases while the manual Connect handoffs remain supported.",
+      "required_for_first_release": false
+    },
+    "issue_gate": {
+      "milestone": "First Public Release",
+      "note": "Every open issue in this milestone blocks the affected app release; the bundle gate includes all four repositories. Issues explain blockers but never count as evidence."
     }
   },
   "repos": {
@@ -269,25 +273,25 @@
       "runner": "manual_observation",
       "repo": "eom-email-watcher",
       "platform": "linux",
-      "note": "Install the current Email Watcher Linux artifact on Linux and record the installed-app smoke transcript."
+      "note": "Install the current Email Watcher Linux artifact and record the installed primary-flow smoke transcript."
     },
     "manual.ip_windows_install": {
       "runner": "manual_observation",
       "repo": "invoice-processor",
       "platform": "windows",
-      "note": "Install the current Invoice Processor Windows artifact on Windows and record the installed-app smoke transcript."
+      "note": "Install the current Invoice Processor Windows artifact through the chosen distribution/signing path and record the installed primary-flow and persistent-data smoke transcript."
     },
     "manual.ds_linux_install": {
       "runner": "manual_observation",
       "repo": "document-summarizer",
       "platform": "linux",
-      "note": "Install the current Document Summarizer Linux artifact on Linux and record the installed-app smoke transcript."
+      "note": "Install the current Document Summarizer Linux artifact and record the installed primary-flow smoke transcript."
     },
     "manual.ds_windows_install": {
       "runner": "manual_observation",
       "repo": "document-summarizer",
       "platform": "windows",
-      "note": "Install the current Document Summarizer Windows artifact on Windows and record the installed-app smoke transcript."
+      "note": "Install the current Document Summarizer Windows artifact through the chosen distribution/signing path and record the installed primary-flow smoke transcript."
     },
     "manual.ew_live_calendar": {
       "runner": "manual_observation",
@@ -356,6 +360,88 @@
         "checksums": "(SHA256SUMS|\\.sha256)$"
       },
       "note": "A published GitHub Release of THIS app whose assets include a Windows installer, a Linux package and checksums. The record's revision is the commit the release contains."
+    },
+    "manual.ew_windows_install": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "windows",
+      "note": "Install the current Email Watcher Windows artifact through the chosen distribution/signing path and record the installed primary-flow smoke transcript."
+    },
+    "manual.ip_linux_install": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "note": "Install the current Invoice Processor Linux artifact and record the installed primary-flow and persistent-data smoke transcript."
+    },
+    "manual.connect_pdf_linux": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "connect-contracts"
+      ],
+      "note": "With packaged Linux apps, discover Document Summarizer, hand it a PDF from Email Watcher, record the cited result returning to the message, then verify discovery stops after provider uninstall."
+    },
+    "manual.connect_pdf_windows": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "connect-contracts"
+      ],
+      "note": "With packaged Windows apps, discover Document Summarizer, hand it a PDF from Email Watcher, record the cited result returning to the message, then verify discovery stops after provider uninstall."
+    },
+    "manual.connect_invoice_windows": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "invoice-processor",
+        "connect-contracts"
+      ],
+      "note": "With packaged Windows apps, discover Invoice Processor, hand it a bill from Email Watcher, record the grounded ledger entry plus busy/retry UI state, then verify discovery stops after provider uninstall."
+    },
+    "ew.pytest.entitlement": {
+      "runner": "pytest",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "args": [
+        "tests/test_entitlement.py"
+      ],
+      "note": "Exact-revision Email Watcher tests for the shared feature id, local signature verification, time bounds, private activation, and fail-closed discovery."
+    },
+    "release.issues.ew": {
+      "runner": "github_issues",
+      "repo": "eom-email-watcher",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Email Watcher issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.ds": {
+      "runner": "github_issues",
+      "repo": "document-summarizer",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Document Summarizer issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.ip": {
+      "runner": "github_issues",
+      "repo": "invoice-processor",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Invoice Processor issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.contracts": {
+      "runner": "github_issues",
+      "repo": "connect-contracts",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Connect Contracts issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
     }
   },
   "tasks": [
@@ -717,13 +803,20 @@
       ]
     },
     {
-      "id": "release.linux_and_windows",
-      "app": "bundle",
+      "id": "release.email_watcher",
+      "app": "email-watcher",
       "layer": "release",
-      "title": "Before we ship: install, licence, model, records, both platforms",
-      "promise": "Installers for Linux and Windows for all three apps; first run says whether a model is visible; the licence activates locally; records survive uninstall; published downloads with checksums.",
-      "human_involvement": "Signing is a deliberate operator decision, deferred until all three apps and the Connect/Automate flow are proven.",
+      "title": "Release Email Watcher for Linux and Windows",
+      "promise": "The current Email Watcher passes its primary suite, installs on Linux and Windows, completes its installed primary flow, and has downloadable packages with checksums.",
+      "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
       "conditions": [
+        {
+          "id": "rel.ew_primary_tests",
+          "kind": "ci_run",
+          "check": "ew.ci.test",
+          "platform": "linux",
+          "proves": "Email Watcher primary tests pass in CI at the exact release revision."
+        },
         {
           "id": "rel.ew_windows_installer_builds",
           "kind": "ci_run",
@@ -736,88 +829,33 @@
           "kind": "ci_run",
           "check": "ew.ci.desktop",
           "platform": "linux",
-          "proves": "Email Watcher desktop builds on Linux (no bundle)."
+          "proves": "Email Watcher desktop builds on Linux."
         },
         {
           "id": "rel.ew_linux_installer_demo",
           "kind": "installed_demo",
           "check": "manual.ew_linux_install",
           "platform": "linux",
-          "proves": "The current Email Watcher Linux artifact installs and opens on Linux."
+          "proves": "The current Email Watcher artifact installs and completes its primary flow on Linux."
         },
         {
-          "id": "rel.ip_packaging_checks",
-          "kind": "automated_test",
-          "check": "ip.pytest.packaging",
-          "platform": "linux",
-          "proves": "Invoice Processor bundle carries its sidecar; uninstall leaves data; nothing claims a signature."
-        },
-        {
-          "id": "rel.ip_licence_activation",
-          "kind": "automated_test",
-          "check": "ip.pytest.entitlement",
-          "platform": "linux",
-          "proves": "The shared local licence is found at the configured user path and a valid signed entitlement activates the capability."
-        },
-        {
-          "id": "rel.ip_first_run_model",
-          "kind": "automated_test",
-          "check": "ip.pytest.first_run_model",
-          "platform": "linux",
-          "proves": "First run reports model reachability and, when unavailable, names the bundle's recommended model and local runtime."
-        },
-        {
-          "id": "rel.ip_removal_demo",
+          "id": "rel.ew_windows_installer_demo",
           "kind": "installed_demo",
-          "check": "manual.ip_removal_test",
-          "platform": "linux",
-          "proves": "Installed .deb discovered and cleanly removed against the real Email Watcher."
-        },
-        {
-          "id": "rel.ip_windows_installer_demo",
-          "kind": "installed_demo",
-          "check": "manual.ip_windows_install",
+          "check": "manual.ew_windows_install",
           "platform": "windows",
-          "proves": "The current Invoice Processor Windows artifact installs and opens on Windows."
-        },
-        {
-          "id": "rel.ds_linux",
-          "kind": "ci_run",
-          "check": "ds.ci.rust",
-          "platform": "linux",
-          "proves": "Document Summarizer tests, formatting, frontend build, and lint pass on its Linux CI runner."
-        },
-        {
-          "id": "rel.ds_linux_installer_demo",
-          "kind": "installed_demo",
-          "check": "manual.ds_linux_install",
-          "platform": "linux",
-          "proves": "The current Document Summarizer Linux artifact installs and opens on Linux."
-        },
-        {
-          "id": "rel.ds_windows",
-          "kind": "installed_demo",
-          "check": "manual.ds_windows_install",
-          "platform": "windows",
-          "proves": "The current Document Summarizer Windows artifact installs and opens on Windows."
+          "proves": "The current Email Watcher artifact installs through the chosen distribution path and completes its primary flow on Windows."
         },
         {
           "id": "rel.published_ew",
           "kind": "release_artifact",
           "check": "release.github.ew",
-          "proves": "Email Watcher: a public release with a Windows installer, a Linux package and checksums, containing the current code."
+          "proves": "A public Email Watcher release contains the current code, Linux and Windows installers, and checksums."
         },
         {
-          "id": "rel.published_ds",
-          "kind": "release_artifact",
-          "check": "release.github.ds",
-          "proves": "Document Summarizer: a public release with a Windows installer, a Linux package and checksums, containing the current code."
-        },
-        {
-          "id": "rel.published_ip",
-          "kind": "release_artifact",
-          "check": "release.github.ip",
-          "proves": "Invoice Processor: a public release with a Windows installer, a Linux package and checksums, containing the current code."
+          "id": "rel.ew_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ew",
+          "proves": "Email Watcher has no open first-public-release issue."
         }
       ],
       "depends_on": [
@@ -828,7 +866,118 @@
             "scripts/build_desktop_sidecar.py",
             "desktop/src-tauri/tauri*.conf.json"
           ]
+        }
+      ]
+    },
+    {
+      "id": "release.document_summarizer",
+      "app": "document-summarizer",
+      "layer": "release",
+      "title": "Release Document Summarizer for Linux and Windows",
+      "promise": "The current Document Summarizer passes its primary suite, installs on Linux and Windows, completes an installed cited-summary flow, and has downloadable packages with checksums.",
+      "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
+      "conditions": [
+        {
+          "id": "rel.ds_linux",
+          "kind": "ci_run",
+          "check": "ds.ci.rust",
+          "platform": "linux",
+          "proves": "Document Summarizer tests, formatting, frontend build, and lint pass at the exact release revision."
         },
+        {
+          "id": "rel.ds_linux_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ds_linux_install",
+          "platform": "linux",
+          "proves": "The current Document Summarizer artifact installs and completes a cited-summary flow on Linux."
+        },
+        {
+          "id": "rel.ds_windows",
+          "kind": "installed_demo",
+          "check": "manual.ds_windows_install",
+          "platform": "windows",
+          "proves": "The current Document Summarizer artifact installs through the chosen distribution path and completes a cited-summary flow on Windows."
+        },
+        {
+          "id": "rel.published_ds",
+          "kind": "release_artifact",
+          "check": "release.github.ds",
+          "proves": "A public Document Summarizer release contains the current code, Linux and Windows installers, and checksums."
+        },
+        {
+          "id": "rel.ds_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ds",
+          "proves": "Document Summarizer has no open first-public-release issue."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "document-summarizer",
+          "paths": [
+            ".github/workflows/**",
+            "src-tauri/tauri*.conf.json"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "release.invoice_processor",
+      "app": "invoice-processor",
+      "layer": "release",
+      "title": "Release Invoice Processor for Linux and Windows",
+      "promise": "The current Invoice Processor passes its primary suite, reports model readiness, installs on Linux and Windows without losing its ledger, and has downloadable packages with checksums.",
+      "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
+      "conditions": [
+        {
+          "id": "rel.ip_primary_tests",
+          "kind": "automated_test",
+          "check": "ip.pytest.all",
+          "platform": "linux",
+          "proves": "Invoice Processor primary tests pass at the exact release revision."
+        },
+        {
+          "id": "rel.ip_packaging_checks",
+          "kind": "automated_test",
+          "check": "ip.pytest.packaging",
+          "platform": "linux",
+          "proves": "The package carries its sidecar and uninstall preserves user data."
+        },
+        {
+          "id": "rel.ip_first_run_model",
+          "kind": "automated_test",
+          "check": "ip.pytest.first_run_model",
+          "platform": "linux",
+          "proves": "First run reports model reachability and names the recommended local setup when unavailable."
+        },
+        {
+          "id": "rel.ip_linux_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ip_linux_install",
+          "platform": "linux",
+          "proves": "The current Invoice Processor artifact installs, completes its primary flow, and preserves its ledger on Linux."
+        },
+        {
+          "id": "rel.ip_windows_installer_demo",
+          "kind": "installed_demo",
+          "check": "manual.ip_windows_install",
+          "platform": "windows",
+          "proves": "The current Invoice Processor artifact installs through the chosen distribution path, completes its primary flow, and preserves its ledger on Windows."
+        },
+        {
+          "id": "rel.published_ip",
+          "kind": "release_artifact",
+          "check": "release.github.ip",
+          "proves": "A public Invoice Processor release contains the current code, Linux and Windows installers, and checksums."
+        },
+        {
+          "id": "rel.ip_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ip",
+          "proves": "Invoice Processor has no open first-public-release issue."
+        }
+      ],
+      "depends_on": [
         {
           "repo": "invoice-processor",
           "paths": [
@@ -841,12 +990,165 @@
             "tests/test_packaging.py",
             "tests/test_shell.py"
           ]
+        }
+      ]
+    },
+    {
+      "id": "release.local_connect_bundle",
+      "app": "bundle",
+      "layer": "release",
+      "title": "Release the three-app Local Connect bundle",
+      "promise": "The packaged apps discover each other locally, hand PDFs and bills across Connect on Linux and Windows, keep busy work retryable, enforce the local entitlement, and uninstall without leaving a callable provider.",
+      "human_involvement": "Run the packaged cross-app demonstrations on both platforms. Automate rules and scheduled workflows remain a later release.",
+      "conditions": [
+        {
+          "id": "rel.bundle_pdf_contract",
+          "kind": "automated_test",
+          "check": "xapp.accept_ew_to_ds",
+          "platform": "linux",
+          "proves": "Exact Email Watcher, Document Summarizer, and contracts trees complete the PDF handoff."
+        },
+        {
+          "id": "rel.bundle_invoice_contract",
+          "kind": "automated_test",
+          "check": "xapp.accept_ew_to_ip",
+          "platform": "linux",
+          "proves": "Exact Email Watcher, Invoice Processor, and contracts trees complete the invoice handoff."
+        },
+        {
+          "id": "rel.bundle_busy_retry",
+          "kind": "automated_test",
+          "check": "ew.pytest.queue_retry",
+          "platform": "linux",
+          "proves": "Provider busy and lost acknowledgement keep the same durable request retryable."
+        },
+        {
+          "id": "rel.bundle_entitlement_ew",
+          "kind": "automated_test",
+          "check": "ew.pytest.entitlement",
+          "platform": "linux",
+          "proves": "Email Watcher verifies the shared Connect feature locally from its Ed25519 keyring and gates discovery dynamically."
+        },
+        {
+          "id": "rel.bundle_entitlement_ds",
+          "kind": "automated_test",
+          "check": "ds.cargo.lib",
+          "platform": "linux",
+          "proves": "Document Summarizer library tests verify the shared Connect feature locally from its Ed25519 keyring and gate the provider."
+        },
+        {
+          "id": "rel.bundle_entitlement_ip",
+          "kind": "automated_test",
+          "check": "ip.pytest.entitlement",
+          "platform": "linux",
+          "proves": "Invoice Processor verifies the shared Connect feature locally from its Ed25519 keyring and gates the provider."
+        },
+        {
+          "id": "rel.bundle_invoice_linux",
+          "kind": "installed_demo",
+          "check": "manual.ip_removal_test",
+          "platform": "linux",
+          "proves": "Packaged Linux apps discover Invoice Processor, complete an invoice handoff, and stop exposing it after uninstall."
+        },
+        {
+          "id": "rel.bundle_pdf_linux",
+          "kind": "installed_demo",
+          "check": "manual.connect_pdf_linux",
+          "platform": "linux",
+          "proves": "Packaged Linux apps discover Document Summarizer, return a cited PDF result, and stop exposing the provider after uninstall."
+        },
+        {
+          "id": "rel.bundle_pdf_windows",
+          "kind": "installed_demo",
+          "check": "manual.connect_pdf_windows",
+          "platform": "windows",
+          "proves": "Packaged Windows apps discover Document Summarizer, return a cited PDF result, and stop exposing the provider after uninstall."
+        },
+        {
+          "id": "rel.bundle_invoice_windows",
+          "kind": "installed_demo",
+          "check": "manual.connect_invoice_windows",
+          "platform": "windows",
+          "proves": "Packaged Windows apps discover Invoice Processor, return a grounded ledger entry with a retryable busy state, and stop exposing the provider after uninstall."
+        },
+        {
+          "id": "rel.bundle_published_ew",
+          "kind": "release_artifact",
+          "check": "release.github.ew",
+          "proves": "The current Email Watcher package is publicly released."
+        },
+        {
+          "id": "rel.bundle_published_ds",
+          "kind": "release_artifact",
+          "check": "release.github.ds",
+          "proves": "The current Document Summarizer package is publicly released."
+        },
+        {
+          "id": "rel.bundle_published_ip",
+          "kind": "release_artifact",
+          "check": "release.github.ip",
+          "proves": "The current Invoice Processor package is publicly released."
+        },
+        {
+          "id": "rel.bundle_ew_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ew",
+          "proves": "Email Watcher has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_ds_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ds",
+          "proves": "Document Summarizer has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_ip_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ip",
+          "proves": "Invoice Processor has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_contracts_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.contracts",
+          "proves": "Connect Contracts has no open issue blocking the bundle release."
+        }
+      ],
+      "depends_on": [
+        {
+          "repo": "eom-email-watcher",
+          "paths": [
+            "src/eom_email_watcher/connect/**",
+            "src/eom_email_watcher/engine_api.py",
+            "src/eom_email_watcher/entitlement.py",
+            "desktop/src/**"
+          ]
         },
         {
           "repo": "document-summarizer",
           "paths": [
-            ".github/workflows/**",
+            "src-tauri/src/connect/**",
+            "src-tauri/src/bin/connect_provider.rs",
+            "src-tauri/src/entitlement.rs",
             "src-tauri/tauri*.conf.json"
+          ]
+        },
+        {
+          "repo": "invoice-processor",
+          "paths": [
+            "src/invoice_processor/connect/**",
+            "src/invoice_processor/entitlement/**",
+            "scripts/removal_test.py",
+            "desktop/src/**"
+          ]
+        },
+        {
+          "repo": "connect-contracts",
+          "paths": [
+            "contracts/**",
+            "entitlements/**",
+            "connect_windows.py",
+            "docs/**"
           ]
         }
       ]

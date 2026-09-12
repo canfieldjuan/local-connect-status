@@ -720,6 +720,80 @@ class Runner:
 
     # ---- GitHub Actions --------------------------------------------------------------
 
+    def release_issues(
+        self, check_id: str, check: dict[str, Any], rev: Revision,
+        condition_ids: list[str], task_ids: list[str],
+    ) -> Record:
+        """Record the exact open-issue gate for one repository and release milestone."""
+        repo = check["repo"]
+        milestone = check["milestone"]
+        gh_repo = self.cat["repos"][repo]["github"]
+        base = dict(
+            kind="issue_gate", repo=repo, revision=rev.sha,
+            revision_time=rev.committed_at, platform="n/a",
+            condition_ids=condition_ids, task_ids=task_ids,
+            source=self._source("github_issues", check_id, check, condition_ids),
+        )
+        items = self.gh.open_items(gh_repo, "issues")
+        if isinstance(items, Failure):
+            return Record(
+                verdict="unavailable", summary=f"{items.what}: {items.why}",
+                detail={"milestone": milestone}, **base,
+            )
+        if not isinstance(items, list):
+            return Record(
+                verdict="unavailable", summary="GitHub issues response was not a list",
+                detail={"milestone": milestone}, **base,
+            )
+
+        blockers: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                return Record(
+                    verdict="unavailable", summary="GitHub issues response contained a malformed issue",
+                    detail={"milestone": milestone}, **base,
+                )
+            item_milestone = item.get("milestone")
+            if item_milestone is None:
+                continue
+            if not isinstance(item_milestone, dict) or not isinstance(item_milestone.get("title"), str):
+                return Record(
+                    verdict="unavailable", summary="GitHub issues response contained a malformed milestone",
+                    detail={"milestone": milestone}, **base,
+                )
+            if item_milestone["title"] != milestone:
+                continue
+            number, title = item.get("number"), item.get("title")
+            raw_labels = item.get("labels", [])
+            if (
+                not isinstance(number, int) or number <= 0
+                or not isinstance(title, str) or not title.strip()
+                or not isinstance(raw_labels, list)
+                or any(not isinstance(label, dict) for label in raw_labels)
+            ):
+                return Record(
+                    verdict="unavailable", summary="GitHub issues response contained a malformed release issue",
+                    detail={"milestone": milestone}, **base,
+                )
+            blockers.append({
+                "repo": repo,
+                "number": number,
+                "title": title.strip(),
+                "url": f"https://github.com/{gh_repo}/issues/{number}",
+                "labels": sorted(
+                    label["name"] for label in raw_labels
+                    if isinstance(label.get("name"), str) and label["name"]
+                ),
+            })
+        blockers.sort(key=lambda issue: issue["number"])
+        count = len(blockers)
+        return Record(
+            verdict="fail" if blockers else "pass",
+            summary=f"{count} open issue{'s' if count != 1 else ''} in {milestone}",
+            detail={"milestone": milestone, "issues": blockers},
+            **base,
+        )
+
     def ci_jobs(self, repo: str, rev: Revision, checks: dict[str, dict[str, Any]], cond_map: dict[str, tuple[list[str], list[str]]]) -> list[Record]:
         """Record every CI job for this exact sha that a check references. Missing jobs stay 'not checked'."""
         gh_repo = self.cat["repos"][repo]["github"]

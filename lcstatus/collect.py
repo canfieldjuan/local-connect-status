@@ -145,7 +145,6 @@ def main(argv: list[str] | None = None) -> int:
     heads: dict[str, str] = {}
     revs: dict[str, Revision] = {}
     changed: dict[str, tuple[str, str]] = {}
-
     if not args.render_only:
         # ---- observe ------------------------------------------------------------------
         for repo in cat["repos"]:
@@ -259,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     store_result(store, failures, result)
                 continue
+            if runner_kind == "github_issues":
+                rev = revs.get(chk["repo"])
+                if rev is not None:
+                    store_result(store, failures, runner.release_issues(cid, chk, rev, conds, tasks))
+                continue
             if runner_kind == "manual_observation":
                 continue   # only a person records these, via scripts/record_observation.py
             if args.no_local or not wanted(cid, chk):
@@ -316,7 +320,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- derive & render ----------------------------------------------------------
     records = store.all()
-    statuses = [task_status(t, records, heads, cat, cat["release"]) for t in cat["tasks"]]
+    statuses = [
+        task_status(t, records, heads, cat, cat["release"])
+        for t in cat["tasks"]
+    ]
     render_all(Path(args.site), cat, statuses, records, heads, failures, state, changed)
     print(f"rendered {args.site} ({len(records)} records; {len(failures)} source failures)")
     return 2 if failures else 0

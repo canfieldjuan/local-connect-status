@@ -17,7 +17,7 @@ than the evidence allows:
     partly built      some automated conditions satisfied
     built             every automated (test / CI) condition satisfied at the current revision
     demonstrated      built, and every installed-demo condition satisfied
-    ready for release demonstrated on every required platform, and every release check passes
+    ready for release demonstrated on every required platform, and every issue gate passes
     released          a published release exists
 
 A demo whose participants' revisions no longer match current heads is shown, but as
@@ -68,6 +68,9 @@ class TaskStatus:
     conditions: list[ConditionStatus] = field(default_factory=list)
     platforms: dict[str, str] = field(default_factory=dict)   # platform -> state
     notes: list[str] = field(default_factory=list)
+    release_issue_gate: str = "not_applicable"  # not_applicable | clear | blocked | unavailable
+    release_issue_blockers: list[dict[str, Any]] = field(default_factory=list)
+    release_issue_unavailable_repos: list[str] = field(default_factory=list)
 
 
 def _current_head(heads: dict[str, str], repo: str) -> str | None:
@@ -142,7 +145,13 @@ def condition_status(
     return ConditionStatus(cond, "no_evidence", platform=plat)
 
 
-def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, str], catalogue: dict[str, Any], release: dict[str, Any]) -> TaskStatus:
+def task_status(
+    task: dict[str, Any],
+    records: list[Record],
+    heads: dict[str, str],
+    catalogue: dict[str, Any],
+    release: dict[str, Any],
+) -> TaskStatus:
     checks = catalogue["checks"]
     conds: list[ConditionStatus] = []
     for c in task["conditions"]:
@@ -152,12 +161,40 @@ def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, st
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
     demos = [c for c in conds if c.condition["kind"] == "installed_demo"]
+    gates = [c for c in conds if c.condition["kind"] == "issue_gate"]
     rels = [c for c in conds if c.condition["kind"] == "release_artifact"]
     sat = lambda cs: all(c.state == "satisfied" for c in cs) and bool(cs)  # noqa: E731
 
+    issue_blockers = sorted(
+        (
+            issue
+            for gate in gates
+            if gate.current is not None and gate.current.verdict == "fail"
+            for issue in gate.current.detail.get("issues", [])
+        ),
+        key=lambda issue: (issue.get("repo", ""), issue.get("number", 0)),
+    )
+    issue_unavailable = sorted({
+        checks[gate.condition["check"]]["repo"]
+        for gate in gates
+        if gate.state not in {"satisfied", "check_failed"}
+    })
+    if not gates:
+        issue_gate = "not_applicable"
+    elif issue_unavailable:
+        issue_gate = "unavailable"
+    elif issue_blockers:
+        issue_gate = "blocked"
+    else:
+        issue_gate = "clear"
+
     # maturity: never higher than evidence allows
     release_ready = (
-        sat(automated) and sat(demos) and task.get("layer") == "release" and _all_platforms(conds, release)
+        sat(automated)
+        and sat(demos)
+        and task.get("layer") == "release"
+        and _all_platforms(conds, release)
+        and (sat(gates) if gates else True)
     )
     if sat(rels) and release_ready:
         maturity = "released"
@@ -195,8 +232,15 @@ def task_status(task: dict[str, Any], records: list[Record], heads: dict[str, st
     notes: list[str] = []
     if any(c.state == "changed_since" for c in demos):
         notes.append("Last demonstration was at an earlier revision; shown, not current.")
+    if issue_gate == "blocked":
+        notes.append("Open issues in the First Public Release milestone block readiness; evidence remains visible.")
+    elif issue_gate == "unavailable":
+        notes.append("First-release issue status is unavailable, so readiness fails closed.")
 
-    return TaskStatus(task, maturity, freshness, conds, _platform_states(conds, release), notes)
+    return TaskStatus(
+        task, maturity, freshness, conds, _platform_states(conds, release), notes,
+        issue_gate, issue_blockers, issue_unavailable,
+    )
 
 
 def _platform_states(conds: list[ConditionStatus], release: dict[str, Any]) -> dict[str, str]:

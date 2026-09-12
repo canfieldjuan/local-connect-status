@@ -40,6 +40,11 @@ LAYER_BLURB = {
 
 
 def next_action(status: TaskStatus) -> str | None:
+    if status.release_issue_gate == "unavailable":
+        return "Restore GitHub issue visibility for: " + ", ".join(status.release_issue_unavailable_repos)
+    if status.release_issue_blockers:
+        issue = status.release_issue_blockers[0]
+        return f"Resolve first-release issue {issue['repo']}#{issue['number']}: {issue['title']}"
     prefixes = {
         "check_failed": "Investigate",
         "changed_since": "Re-run at current code",
@@ -56,6 +61,13 @@ def next_action(status: TaskStatus) -> str | None:
 
 def markdown_cell(value: object) -> str:
     return str(value).replace("|", r"\|").replace("\n", "<br>")
+
+
+def markdown_text(value: object) -> str:
+    text = html.escape(str(value), quote=False).replace("\n", " ")
+    for marker in ("\\", "`", "*", "_", "[", "]", "(", ")", "|"):
+        text = text.replace(marker, "\\" + marker)
+    return text
 
 
 def condition_payload(status: Any) -> dict[str, Any]:
@@ -117,6 +129,9 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
                 "promise": s.task["promise"], "human_involvement": s.task.get("human_involvement"),
                 "next_action": next_action(s),
                 "maturity": s.maturity, "freshness": s.freshness, "platforms": s.platforms, "notes": s.notes,
+                "release_issue_gate": s.release_issue_gate,
+                "release_issue_blockers": s.release_issue_blockers,
+                "release_issue_unavailable_repos": s.release_issue_unavailable_repos,
                 "conditions": [condition_payload(c) for c in s.conditions],
                 "depends_on": s.task.get("depends_on", []),
             }
@@ -158,7 +173,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
         w(f"| {repo} | `{(h['sha'] or '')[:12]}` | {h.get('subject') or '—'} |")
     w("")
     sc = p["release"]["automate_scope"]
-    w("## Unresolved launch-scope decision")
+    w("## First-release automation scope")
     w("")
     w(f"Automate scope for the first release: **{sc['decision']}**. {sc['note']}")
     w("")
@@ -180,7 +195,16 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
                 w(f"*Unfinished.* {t['unfinished']}")
                 w("")
             if t.get("next_action"):
-                w(f"*Next useful action.* {t['next_action']}")
+                w(f"*Next useful action.* {markdown_text(t['next_action'])}")
+                w("")
+            if t.get("release_issue_gate") == "unavailable":
+                w("*Release issue gate.* **Unavailable** for " + ", ".join(t["release_issue_unavailable_repos"]) + ".")
+                w("")
+            if t.get("release_issue_blockers"):
+                w("*Release blockers.*")
+                w("")
+                for issue in t["release_issue_blockers"]:
+                    w(f"- [{issue['repo']}#{issue['number']}]({issue['url']}) — {markdown_text(issue['title'])}")
                 w("")
             w("| Condition | State | Evidence |")
             w("|---|---|---|")
@@ -237,7 +261,7 @@ a{color:var(--accent)}.hidden{display:none}footer{margin-top:40px;color:var(--mu
 
 JS = """
 const DATA = __DATA__;
-const pillFor = (s)=>({satisfied:'p-ok',verified:'p-ok',current:'p-ok',changed_since:'p-warn',changed_since_verification:'p-warn',check_failed:'p-bad',not_checked:'p-mute',no_evidence:'p-mute',inconclusive:'p-info',pending:'p-mute'}[s]||'p-mute');
+const pillFor = (s)=>({satisfied:'p-ok',verified:'p-ok',current:'p-ok',clear:'p-ok',blocked:'p-bad',unavailable:'p-bad',changed_since:'p-warn',changed_since_verification:'p-warn',check_failed:'p-bad',not_checked:'p-mute',no_evidence:'p-mute',inconclusive:'p-info',pending:'p-mute'}[s]||'p-mute');
 const matPill = (m)=>({'released':'p-ok','ready for release':'p-ok','demonstrated':'p-ok','built':'p-info','partly built':'p-warn','planned':'p-mute'}[m]||'p-mute');
 const FRESH = {current:'verified at current code',changed_since_verification:'changed since verification',check_failed:'check failed',not_checked:'a check ran but gave no result',no_evidence:'no evidence'};
 const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',no_evidence:'no evidence',inconclusive:'needs verification'};
@@ -254,6 +278,7 @@ function taskCard(t){
   const plats = Object.entries(t.platforms).map(([p,s])=>`<span class="plat"><b>${esc(p)}</b>: ${esc(COND[s]||s)}</span>`).join('');
   const conds = t.conditions.map(c=>{const ev=c.current||c.last_proven; return `<tr><td>${esc(c.proves)}<div class="meta">${esc(c.kind)} · check <code>${esc(c.check)}</code>${c.platform&&c.platform!=='n/a'?' · '+esc(c.platform):''}</div></td><td><span class="pill ${pillFor(c.state)}">${esc(condLabel(c))}</span>${c.state==='changed_since'&&c.last_proven?`<div class="meta">last proven at <code>${esc(c.last_proven.revision)}</code></div>`:''}</td><td>${evLine(ev)}</td></tr>`}).join('');
   const deps = (t.depends_on||[]).map(d=>`<li><code>${esc(d.repo)}</code>: ${d.paths.map(p=>'<code>'+esc(p)+'</code>').join(', ')}</li>`).join('');
+  const issueBlockers = (t.release_issue_blockers||[]).map(issue=>`<li><a href="${esc(issue.url)}" target="_blank" rel="noopener">${esc(issue.repo)}#${esc(issue.number)}</a> — ${esc(issue.title)}</li>`).join('');
   return `<div class="card" id="task-${esc(t.id)}"><h3>${esc(t.title)}</h3>
    <div style="margin:8px 0"><span class="pill ${matPill(t.maturity)}">${esc(t.maturity)}</span><span class="pill ${pillFor(t.freshness)}">${esc(FRESH[t.freshness])}</span></div>
    <div>${plats}</div>
@@ -261,6 +286,8 @@ function taskCard(t){
    ${t.human_involvement?`<div class="field"><b>What still needs you</b>${esc(t.human_involvement)}</div>`:''}
    ${t.unfinished?`<div class="field"><b>Unfinished</b>${esc(t.unfinished)}</div>`:''}
    ${t.notes&&t.notes.length?`<div class="field"><b>Notes</b>${t.notes.map(esc).join('<br>')}</div>`:''}
+   ${t.release_issue_gate==='unavailable'?`<div class="field"><b>Release issue gate</b><span class="pill p-bad">unavailable</span> ${esc((t.release_issue_unavailable_repos||[]).join(', '))}</div>`:''}
+   ${issueBlockers?`<div class="field"><b>Release blockers</b><ul style="margin:4px 0 0 18px;padding:0">${issueBlockers}</ul></div>`:''}
    ${t.next_action?`<div class="field"><b>Next useful action</b>${esc(t.next_action)}</div>`:''}
    <details><summary>Evidence and technical detail</summary>
      <div class="evidence"><table><thead><tr><th>What must be true</th><th>State</th><th>Dated evidence</th></tr></thead><tbody>${conds}</tbody></table></div>
@@ -274,7 +301,7 @@ function render(view){
   const stale = p.tasks.filter(t=>t.freshness==='changed_since_verification').length, failed=p.tasks.filter(t=>t.freshness==='check_failed').length;
   if(failed) h+=`<div class="banner bad"><b>${failed} task(s) have a failing check</b> at the current code.</div>`;
   if(stale) h+=`<div class="banner warn"><b>${stale} task(s) changed since they were last verified.</b> The last proven result stays visible; it is not a current result.</div>`;
-  const sc=p.release.automate_scope; h+=`<div class="banner"><b>Unresolved launch-scope decision:</b> which Automate tasks are required for the first release is <b>${esc(sc.decision)}</b>. ${esc(sc.note)}</div>`;
+  const sc=p.release.automate_scope; h+=`<div class="banner"><b>First-release automation scope:</b> <b>${esc(sc.decision)}</b>. ${esc(sc.note)}</div>`;
   const apps={'email-watcher':'Email Watcher','document-summarizer':'Document Summarizer','invoice-processor':'Invoice Processor'};
   const show = view==='overview'? p.tasks : view==='release' ? p.tasks.filter(t=>t.layer==='release') : p.tasks.filter(t=>t.app===view);
   if(view==='overview'){
@@ -304,6 +331,6 @@ def dashboard_html(p: dict[str, Any], cat: dict[str, Any]) -> str:
 <p class="sub">The apps, the connections between them, and the work they will do for you automatically — with the evidence for each claim.</p>
 <nav><a href="#overview" data-view="overview">Overview</a><a href="#email-watcher" data-view="email-watcher">Email Watcher</a><a href="#document-summarizer" data-view="document-summarizer">Document Summarizer</a><a href="#invoice-processor" data-view="invoice-processor">Invoice Processor</a><a href="#release" data-view="release">Before we ship</a></nav>
 <div id="root"></div>
-<footer>Every row is derived from recorded evidence in <code>data/records.jsonl</code>; nothing here is written by hand. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from the release-evidence rows above.</footer>
+<footer>Every status is derived from <code>data/records.jsonl</code>; issue-gate records can block release but never prove product capability. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from both the capability rows and the issue-gate rows above.</footer>
 </div><script>{JS.replace('__DATA__', data)}</script></body></html>
 """

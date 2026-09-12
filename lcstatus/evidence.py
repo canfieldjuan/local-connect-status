@@ -32,6 +32,7 @@ KINDS = (
     "automated_test",       # a test process this collector ran
     "ci_run",               # a GitHub Actions job result for a revision
     "installed_demo",       # a recorded observation of installed apps working together
+    "issue_gate",           # open release-milestone issues observed through GitHub
     "release_artifact",     # a published release the public can download
     "collection_failure",   # a source could not be read; the absence of data is data
 )
@@ -227,7 +228,7 @@ class Record:
             key["old"] = self.detail.get("old")
             if self.kind == "change":
                 key["commits_complete"] = self.detail.get("commits_complete", True)
-        elif self.kind == "release_artifact":
+        elif self.kind in ("issue_gate", "release_artifact"):
             key["summary"] = self.summary
             key["detail"] = self.detail
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
