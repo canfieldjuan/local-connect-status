@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -80,6 +81,46 @@ def test_render_only_never_invents_data(tmp_path: Path):
     status = json.loads((tmp_path / "s" / "status.json").read_text())
     assert status["generated_at"] is None and status["heads"] == {}
     assert status["tasks"][0]["maturity"] == "planned"
+
+
+@pytest.mark.parametrize("last_failures", [
+    [],
+    [{"repo": "ghost", "what": "github_head", "why": "unavailable"}],
+])
+def test_vercel_build_publishes_clean_or_degraded_render(tmp_path: Path, last_failures: list[dict]):
+    shutil.copytree(ROOT / "lcstatus", tmp_path / "lcstatus")
+    (tmp_path / "catalogue.json").write_bytes((ROOT / "catalogue.json").read_bytes())
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "records.jsonl").write_text("")
+    (data / "state.json").write_text(json.dumps({
+        "heads": {}, "runs": 1, "last_run_at": "2026-09-11T00:00:00+00:00",
+        "last_failures": last_failures,
+    }))
+    build_command = json.loads((ROOT / "vercel.json").read_text())["buildCommand"]
+
+    result = subprocess.run(
+        ["/bin/sh", "-c", build_command], cwd=tmp_path, capture_output=True, text=True,
+        env=dict(os.environ, PYTHONPATH=str(tmp_path)), timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert {path.name for path in (tmp_path / "site").iterdir()} == {
+        "dashboard.html", "index.html", "report.md", "status.json",
+    }
+
+
+def test_vercel_build_preserves_genuine_render_failure(tmp_path: Path):
+    shutil.copytree(ROOT / "lcstatus", tmp_path / "lcstatus")
+    build_command = json.loads((ROOT / "vercel.json").read_text())["buildCommand"]
+
+    result = subprocess.run(
+        ["/bin/sh", "-c", build_command], cwd=tmp_path, capture_output=True, text=True,
+        env=dict(os.environ, PYTHONPATH=str(tmp_path)), timeout=120,
+    )
+
+    assert result.returncode not in (0, 2)
+    assert not (tmp_path / "site").exists()
 
 
 
