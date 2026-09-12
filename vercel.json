@@ -2,6 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "true",
-  "buildCommand": "python3 -m lcstatus.collect --render-only",
+  "buildCommand": "python3 -m lcstatus.collect --render-only || test $? -eq 2",
   "outputDirectory": "site"
 }
