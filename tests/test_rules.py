@@ -9,7 +9,7 @@ import pytest
 
 from lcstatus.change import assess
 from lcstatus.evidence import (
-    Record, Store, check_fingerprint, condition_fingerprint,
+    LEGACY_EVIDENCE_PREFIX_ROWS, Record, Store, check_fingerprint, condition_fingerprint,
     record_check_fingerprint, record_condition_fingerprint,
 )
 from lcstatus.rules import condition_status as _condition_status, task_status
@@ -171,8 +171,11 @@ def test_condition_evidence_must_match_the_current_claim_semantics():
 def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp_path: Path):
     root = Path(__file__).resolve().parent.parent
     catalogue = json.loads((root / "catalogue.json").read_text())
-    original = (root / "data" / "records.jsonl").read_bytes()
-    migrated = Store(root / "data" / "records.jsonl").all()
+    stored = (root / "data" / "records.jsonl").read_bytes()
+    original = b"".join(stored.splitlines(keepends=True)[:LEGACY_EVIDENCE_PREFIX_ROWS])
+    fixture = tmp_path / "legacy-prefix.jsonl"
+    fixture.write_bytes(original)
+    migrated = Store(fixture).all()
     legacy_check_records = [
         r for r in migrated
         if r.source.get("check") and "check_fingerprint" not in r.source
