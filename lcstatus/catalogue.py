@@ -31,6 +31,13 @@ KIND_RUNNERS = {
 def load(path: Path) -> dict[str, Any]:
     cat = json.loads(Path(path).read_text(encoding="utf-8"))
     problems: list[str] = []
+    release = cat.get("release", {})
+    issue_gate = release.get("issue_gate")
+    if issue_gate is not None:
+        if not isinstance(issue_gate, dict):
+            problems.append("release issue gate must be an object")
+        elif not isinstance(issue_gate.get("milestone"), str) or not issue_gate["milestone"].strip():
+            problems.append("release issue gate needs a non-empty milestone")
     checks = cat.get("checks", {})
     for cid, chk in checks.items():
         if chk.get("runner") not in RUNNERS:
@@ -56,6 +63,13 @@ def load(path: Path) -> dict[str, Any]:
         if app != "bundle" and app not in cat.get("apps", {}):
             problems.append(f"task {t['id']}: unknown app {app!r}")
         t["app_repo"] = cat["apps"].get(app, {}).get("repo", "") if app != "bundle" else ""
+        issue_repos = t.get("release_issue_repos", [])
+        if issue_gate is not None and t.get("layer") == "release" and not issue_repos:
+            problems.append(f"task {t['id']}: release task needs release_issue_repos")
+        if issue_repos and t.get("layer") != "release":
+            problems.append(f"task {t['id']}: only release tasks may define release_issue_repos")
+        if not isinstance(issue_repos, list) or any(repo not in cat.get("repos", {}) for repo in issue_repos):
+            problems.append(f"task {t['id']}: release_issue_repos must name known repositories")
         for c in t.get("conditions", []):
             if c["id"] in seen_conds:
                 problems.append(f"duplicate condition id {c['id']}")

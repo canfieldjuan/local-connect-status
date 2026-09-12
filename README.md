@@ -11,6 +11,7 @@ means "check again".
 
 ```
 GitHub default branches ──poll──▶ bare mirrors (.cache/mirrors)
+GitHub First Public Release issues ──poll──▶ release blocker overlay
                                         │
                         head moved? ──▶ change record: which tasks it touches, which files nobody mapped
                                         │
@@ -45,9 +46,15 @@ a string in the code is a hint, not proof, and a missing string is not proof of 
 
 Maturity never exceeds the evidence: `planned` → `partly built` → `built` (all test/CI
 conditions verified) → `demonstrated` (plus installed-app observations) → `ready for
-release` (plus every required platform and release check) → `released` (a published GitHub
-Release recorded for that repository). Linux and Windows are scored separately; Linux alone
-never means ready.
+release` (plus every required platform and a clear issue gate) → `released` (a published
+GitHub Release recorded for the current repository revision). Linux and Windows are scored
+separately; Linux alone never means ready. Email Watcher, Document Summarizer, and Invoice
+Processor have independent release rows; the Local Connect bundle has its own cross-app row.
+
+Open issues in the `First Public Release` milestone block the affected release row without
+changing any evidence result. Closing an issue removes a blocker but proves nothing by itself.
+An unavailable issue query fails closed. The complete boundary, including which hardening can
+move after launch, is in [`docs/RELEASE_CONTRACT.md`](docs/RELEASE_CONTRACT.md).
 
 Consecutive identical observations are stored once. If a result changes and later returns
 to an earlier value, that recovery remains a separate observation and becomes the latest result,
@@ -126,8 +133,10 @@ Routine Document Summarizer evidence remains its GitHub Actions run for the exac
   write needs a real Microsoft tenant. A person runs those and records the result
   with `scripts/record_observation.py`, which requires `--observed-by` and an artifact.
 - Touch a GPU. The cross-app acceptance runs with the stand-in model only.
-- Decide launch scope. Which Automate tasks the first release requires is recorded as
-  `undecided` in the catalogue until a person changes it.
+- Treat an issue count as completion evidence. Issues explain why a release is blocked; checks,
+  installed demonstrations, and published artifacts prove release state.
+- Require Automate for the first public release. Automate remains tracked, but its unattended
+  rules and scheduled workflows are explicitly deferred to later releases.
 
 ## What the tests prove
 
@@ -144,7 +153,8 @@ test that would fail if the dashboard could be fooled that way:
 | let a passing helper test satisfy an installed-demonstration condition | `test_passing_test_cannot_satisfy_demo_condition` |
 | let evidence from a replaced/reconfigured check or a changed condition claim satisfy a condition, or treat a new fingerprint-free row as migrated legacy evidence | `test_condition_evidence_must_come_from_its_current_configured_check`, `test_condition_evidence_must_match_the_current_check_configuration`, `test_condition_evidence_must_match_the_current_claim_semantics`, `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence` |
 | promote anything on a source-string match, or treat a missing string as proof of absence | `test_source_inspection_is_inconclusive_and_never_raises_maturity`, `test_code_change_maps_to_task_and_marker_rename_alone_cannot_prove_removal` |
-| let Linux evidence stand in for Windows, ignore a check's configured platform, or call the bundle ready without Invoice Processor and Document Summarizer Windows observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_check_platform_filters_mixed_evidence_when_condition_omits_platform`, `test_bundle_readiness_requires_each_unproven_installer_observation` |
+| let Linux evidence stand in for Windows, ignore a check's configured platform, or call an app or bundle ready without its installed platform observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_check_platform_filters_mixed_evidence_when_condition_omits_platform`, `test_each_release_gate_requires_platform_installed_observations` |
+| count an issue as proof, ignore a first-release blocker, or treat an unavailable issue source as an empty list | `test_open_release_issue_blocks_readiness_but_never_erases_evidence`, `test_unavailable_issue_source_blocks_readiness_instead_of_looking_empty`, `test_issue_collection_keeps_only_open_first_release_milestone_and_is_fail_loud` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
 | call something released without uploaded, nonempty installers whose manifest hashes match GitHub's asset digests, a published release, local licence proof, or first-run model guidance | `test_release_verdict_requires_a_published_release_with_every_required_asset`, `test_release_checksum_download_failure_is_unavailable`, `test_release_asset_download_rejects_binary_checksum_content`, `test_release_requires_release_artifact_not_just_demos`, `test_release_promise_requires_licence_and_first_run_model_evidence`, `test_release_absence_is_an_explicit_not_met_at_current_head` |
 | duplicate progress on a repeated delivery, lose a recovery across volatile source metadata, changed incomplete release, or distinct change range | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_actions_recovery_survives_volatile_source_metadata`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept`, `test_recent_changes_supersede_retry_without_collapsing_distinct_baselines` |

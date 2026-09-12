@@ -199,7 +199,12 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
             if condition_id in conditions:
                 current = condition_fingerprint(conditions[condition_id])
                 assert (historical == current) is (
-                    condition_id not in {"bill.cross_app_acceptance", "rel.ds_windows"}
+                    condition_id not in {
+                        "bill.cross_app_acceptance",
+                        "rel.ds_windows",
+                        "rel.ew_linux_desktop_builds",
+                        "rel.ip_packaging_checks",
+                    }
                 )
 
     installed = next(r for r in migrated if r.source.get("check") == "manual.ip_removal_test")
@@ -303,16 +308,23 @@ def test_release_requires_release_artifact_not_just_demos():
     assert s.maturity == "demonstrated"
 
 
-@pytest.mark.parametrize("missing_id", ["rel.ip_licence_activation", "rel.ip_first_run_model"])
-def test_release_promise_requires_licence_and_first_run_model_evidence(missing_id):
+@pytest.mark.parametrize(
+    ("task_id", "missing_id", "expected_check"),
+    [
+        ("release.local_connect_bundle", "rel.bundle_entitlement_ip", "ip.pytest.entitlement"),
+        ("release.invoice_processor", "rel.ip_first_run_model", "ip.pytest.first_run_model"),
+    ],
+)
+def test_release_promise_requires_licence_and_first_run_model_evidence(
+    task_id, missing_id, expected_check,
+):
     from lcstatus.catalogue import load
 
     catalogue = load(Path(__file__).resolve().parent.parent / "catalogue.json")
-    release_task = next(item for item in catalogue["tasks"] if item["id"] == "release.linux_and_windows")
+    release_task = next(item for item in catalogue["tasks"] if item["id"] == task_id)
     checks = catalogue["checks"]
     conditions = {condition["id"]: condition for condition in release_task["conditions"]}
-    assert conditions["rel.ip_licence_activation"]["check"] == "ip.pytest.entitlement"
-    assert conditions["rel.ip_first_run_model"]["check"] == "ip.pytest.first_run_model"
+    assert conditions[missing_id]["check"] == expected_check
     assert checks["ip.pytest.first_run_model"]["args"] == [
         "tests/test_shell.py::test_first_run_names_the_recommended_model"
     ]
@@ -320,6 +332,7 @@ def test_release_promise_requires_licence_and_first_run_model_evidence(missing_i
         "eom-email-watcher": "a" * 40,
         "document-summarizer": "b" * 40,
         "invoice-processor": "c" * 40,
+        "connect-contracts": "d" * 40,
     }
 
     def evidence_for(condition):
@@ -649,33 +662,35 @@ def test_changed_incomplete_release_is_not_deduplicated(tmp_path: Path):
     assert loaded[-1].detail["assets"] == ["setup.exe", "SHA256SUMS"]
 
 
-def test_bundle_readiness_requires_each_unproven_installer_observation():
+def test_each_release_gate_requires_platform_installed_observations():
     from lcstatus.catalogue import load
 
     catalogue = load(Path(__file__).resolve().parent.parent / "catalogue.json")
-    release_task = next(item for item in catalogue["tasks"] if item["id"] == "release.linux_and_windows")
+    release_tasks = {item["id"]: item for item in catalogue["tasks"] if item["layer"] == "release"}
     checks = catalogue["checks"]
+    email_conditions = {item["id"]: item for item in release_tasks["release.email_watcher"]["conditions"]}
+    invoice_conditions = {item["id"]: item for item in release_tasks["release.invoice_processor"]["conditions"]}
+    document_conditions = {item["id"]: item for item in release_tasks["release.document_summarizer"]["conditions"]}
+    release_task = release_tasks["release.local_connect_bundle"]
     conditions = {item["id"]: item for item in release_task["conditions"]}
-    assert conditions["rel.ip_windows_installer_demo"] == {
-        "id": "rel.ip_windows_installer_demo",
-        "kind": "installed_demo",
-        "check": "manual.ip_windows_install",
-        "platform": "windows",
-        "proves": "The current Invoice Processor Windows artifact installs and opens on Windows.",
-    }
-    assert conditions["rel.ew_linux_installer_demo"]["check"] == "manual.ew_linux_install"
-    assert conditions["rel.ds_linux"]["check"] == "ds.ci.rust"
-    assert conditions["rel.ds_linux_installer_demo"]["check"] == "manual.ds_linux_install"
-    assert conditions["rel.ds_windows"]["check"] == "manual.ds_windows_install"
+    assert email_conditions["rel.ew_linux_installer_demo"]["check"] == "manual.ew_linux_install"
+    assert email_conditions["rel.ew_windows_installer_demo"]["check"] == "manual.ew_windows_install"
+    assert invoice_conditions["rel.ip_linux_installer_demo"]["check"] == "manual.ip_linux_install"
+    assert invoice_conditions["rel.ip_windows_installer_demo"]["check"] == "manual.ip_windows_install"
+    assert document_conditions["rel.ds_linux_installer_demo"]["check"] == "manual.ds_linux_install"
+    assert document_conditions["rel.ds_windows"]["check"] == "manual.ds_windows_install"
+    assert conditions["rel.bundle_pdf_windows"]["check"] == "manual.connect_pdf_windows"
+    assert conditions["rel.bundle_invoice_windows"]["check"] == "manual.connect_invoice_windows"
 
     heads = {
         "eom-email-watcher": "a" * 40,
         "document-summarizer": "b" * 40,
         "invoice-processor": "c" * 40,
+        "connect-contracts": "d" * 40,
     }
     records = []
     for condition in release_task["conditions"]:
-        if condition["kind"] == "release_artifact" or condition["id"] == "rel.ip_windows_installer_demo":
+        if condition["kind"] == "release_artifact" or condition["id"] == "rel.bundle_invoice_windows":
             continue
         check = checks[condition["check"]]
         repo = check["repo"]
@@ -696,18 +711,19 @@ def test_bundle_readiness_requires_each_unproven_installer_observation():
         ))
 
     blocked = task_status(release_task, records, heads, catalogue, catalogue["release"])
-    missing = next(item for item in blocked.conditions if item.condition["id"] == "rel.ip_windows_installer_demo")
+    missing = next(item for item in blocked.conditions if item.condition["id"] == "rel.bundle_invoice_windows")
     assert missing.state == "no_evidence"
     assert blocked.maturity != "ready for release"
 
     records.append(Record(
         kind="installed_demo", repo="invoice-processor", revision=heads["invoice-processor"],
-            verdict="pass", platform="windows", condition_ids=["rel.ip_windows_installer_demo"],
-            source={"check": "manual.ip_windows_install",
-                    "check_fingerprint": check_fingerprint(checks["manual.ip_windows_install"]),
+            verdict="pass", platform="windows", condition_ids=["rel.bundle_invoice_windows"],
+            participants={name: heads[name] for name in checks["manual.connect_invoice_windows"]["participants"]},
+            source={"check": "manual.connect_invoice_windows",
+                    "check_fingerprint": check_fingerprint(checks["manual.connect_invoice_windows"]),
                     "condition_fingerprints": {
-                        "rel.ip_windows_installer_demo": condition_fingerprint(
-                            conditions["rel.ip_windows_installer_demo"]
+                        "rel.bundle_invoice_windows": condition_fingerprint(
+                            conditions["rel.bundle_invoice_windows"]
                         ),
                     }},
     ))

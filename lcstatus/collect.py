@@ -91,6 +91,77 @@ def validate_baselines(
     return validated
 
 
+def collect_release_issues(
+    gh: GitHub,
+    cat: dict[str, Any],
+    state: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    """Read open first-release issues without turning an unavailable source into zero blockers."""
+    milestone = cat.get("release", {}).get("issue_gate", {}).get("milestone")
+    if not milestone:
+        return {}, set()
+    known = dict(state.get("release_issues", {}))
+    unavailable: set[str] = set()
+    for repo, config in cat["repos"].items():
+        items = gh.open_items(config["github"], "issues")
+        if isinstance(items, Failure):
+            unavailable.add(repo)
+            failures.append({"repo": repo, "what": "github_issues", "why": items.why})
+            continue
+        if not isinstance(items, list):
+            unavailable.add(repo)
+            failures.append({"repo": repo, "what": "github_issues", "why": "response was not a list"})
+            continue
+        selected: list[dict[str, Any]] = []
+        malformed = False
+        for item in items:
+            if not isinstance(item, dict):
+                malformed = True
+                break
+            item_milestone = item.get("milestone")
+            if not isinstance(item_milestone, dict) or item_milestone.get("title") != milestone:
+                continue
+            number, title = item.get("number"), item.get("title")
+            if not isinstance(number, int) or number <= 0 or not isinstance(title, str) or not title.strip():
+                malformed = True
+                break
+            raw_labels = item.get("labels", [])
+            if not isinstance(raw_labels, list) or any(not isinstance(label, dict) for label in raw_labels):
+                malformed = True
+                break
+            selected.append({
+                "repo": repo,
+                "number": number,
+                "title": title.strip(),
+                "url": f"https://github.com/{config['github']}/issues/{number}",
+                "labels": sorted(
+                    label["name"] for label in raw_labels
+                    if isinstance(label.get("name"), str) and label["name"]
+                ),
+            })
+        if malformed:
+            unavailable.add(repo)
+            failures.append({"repo": repo, "what": "github_issues", "why": "response contained a malformed release issue"})
+            continue
+        known[repo] = sorted(selected, key=lambda issue: issue["number"])
+    return known, unavailable
+
+
+def release_issue_state(
+    cat: dict[str, Any], state: dict[str, Any],
+) -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+    """Load an issue snapshot; a pre-feature state has unknown, not clear, gates."""
+    if not cat.get("release", {}).get("issue_gate"):
+        return {}, set()
+    if "release_issues" not in state or "release_issue_unavailable_repos" not in state:
+        return {}, set(cat.get("repos", {}))
+    return (
+        dict(state.get("release_issues", {})),
+        set(state.get("release_issue_unavailable_repos", [])),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lcstatus.collect")
     ap.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
@@ -145,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     heads: dict[str, str] = {}
     revs: dict[str, Revision] = {}
     changed: dict[str, tuple[str, str]] = {}
+    release_issues, issue_unavailable_repos = release_issue_state(cat, state)
 
     if not args.render_only:
         # ---- observe ------------------------------------------------------------------
@@ -230,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
                                      detail=dict(a.as_detail(), old=prev, commits=commit_summaries,
                                                  commits_complete=commits_complete)))
 
+        release_issues, issue_unavailable_repos = collect_release_issues(gh, cat, state, failures)
+
         # ---- decide what to verify --------------------------------------------------
         cond_map: dict[str, tuple[list[str], list[str]]] = {}
         for t in cat["tasks"]:
@@ -309,6 +383,8 @@ def main(argv: list[str] | None = None) -> int:
         state["runs"] = state.get("runs", 0) + 1
         state["last_run_at"] = now_iso()
         state["last_failures"] = failures
+        state["release_issues"] = release_issues
+        state["release_issue_unavailable_repos"] = sorted(issue_unavailable_repos)
         atomic_write(state_path, json.dumps(state, indent=2))
     else:
         heads = render_heads(state)
@@ -316,7 +392,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- derive & render ----------------------------------------------------------
     records = store.all()
-    statuses = [task_status(t, records, heads, cat, cat["release"]) for t in cat["tasks"]]
+    statuses = [
+        task_status(
+            t, records, heads, cat, cat["release"],
+            release_issues=release_issues,
+            issue_unavailable_repos=issue_unavailable_repos,
+        )
+        for t in cat["tasks"]
+    ]
     render_all(Path(args.site), cat, statuses, records, heads, failures, state, changed)
     print(f"rendered {args.site} ({len(records)} records; {len(failures)} source failures)")
     return 2 if failures else 0
