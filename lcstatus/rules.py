@@ -17,7 +17,7 @@ than the evidence allows:
     partly built      some automated conditions satisfied
     built             every automated (test / CI) condition satisfied at the current revision
     demonstrated      built, and every installed-demo condition satisfied
-    ready for release demonstrated on every required platform, and every release check passes
+    ready for release demonstrated on every required platform, and every issue gate passes
     released          a published release exists
 
 A demo whose participants' revisions no longer match current heads is shown, but as
@@ -151,9 +151,6 @@ def task_status(
     heads: dict[str, str],
     catalogue: dict[str, Any],
     release: dict[str, Any],
-    *,
-    release_issues: dict[str, list[dict[str, Any]]] | None = None,
-    issue_unavailable_repos: set[str] | None = None,
 ) -> TaskStatus:
     checks = catalogue["checks"]
     conds: list[ConditionStatus] = []
@@ -164,16 +161,25 @@ def task_status(
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
     demos = [c for c in conds if c.condition["kind"] == "installed_demo"]
+    gates = [c for c in conds if c.condition["kind"] == "issue_gate"]
     rels = [c for c in conds if c.condition["kind"] == "release_artifact"]
     sat = lambda cs: all(c.state == "satisfied" for c in cs) and bool(cs)  # noqa: E731
 
-    issue_repos = task.get("release_issue_repos", [])
-    issue_unavailable = sorted(set(issue_repos) & (issue_unavailable_repos or set()))
     issue_blockers = sorted(
-        (issue for repo in issue_repos for issue in (release_issues or {}).get(repo, [])),
+        (
+            issue
+            for gate in gates
+            if gate.current is not None and gate.current.verdict == "fail"
+            for issue in gate.current.detail.get("issues", [])
+        ),
         key=lambda issue: (issue.get("repo", ""), issue.get("number", 0)),
     )
-    if not issue_repos:
+    issue_unavailable = sorted({
+        checks[gate.condition["check"]]["repo"]
+        for gate in gates
+        if gate.state not in {"satisfied", "check_failed"}
+    })
+    if not gates:
         issue_gate = "not_applicable"
     elif issue_unavailable:
         issue_gate = "unavailable"
@@ -188,7 +194,7 @@ def task_status(
         and sat(demos)
         and task.get("layer") == "release"
         and _all_platforms(conds, release)
-        and issue_gate in {"clear", "not_applicable"}
+        and (sat(gates) if gates else True)
     )
     if sat(rels) and release_ready:
         maturity = "released"

@@ -18,7 +18,7 @@ The **Local Connect bundle** additionally requires exact-tree PDF and invoice ha
 
 `First Public Release` is the single blocking milestone in each product or contracts repository. Every open issue in that milestone blocks the affected app release. The bundle row combines milestone issues from all four repositories.
 
-Issues are a blocking overlay, not evidence and not a completion percentage. Closing an issue removes the blocker; it does not satisfy a test, installed demonstration, platform, or publication condition. An issue API failure is shown as unavailable and blocks readiness instead of looking like an empty issue list.
+Issue queries produce append-only issue-gate records at the current repository revision. They are evidence only of whether the release gate is clear, never evidence of product capability and never a completion percentage. Closing an issue removes the blocker on the next recorded query; it does not satisfy a test, installed demonstration, platform, or publication condition. An issue API failure records an unavailable gate and blocks readiness instead of looking like an empty issue list.
 
 Issues outside this milestone remain visible in GitHub but do not block the first release. Put an issue in the milestone when it is a realistic first-release failure in one of these classes:
 

@@ -211,6 +211,10 @@ def test_unavailable_results_from_any_runner_are_run_failures(tmp_path: Path):
         source={"type": "github_releases"}, summary="release lookup failed",
     ))
     store_result(store, failures, Record(
+        kind="issue_gate", repo="ghost", revision="a" * 40, verdict="unavailable",
+        source={"type": "github_issues"}, summary="issue lookup failed",
+    ))
+    store_result(store, failures, Record(
         kind="source_inspection", repo="ghost", revision="a" * 40, verdict="unavailable",
         source={"type": "source_inspection"}, summary="tree unavailable",
     ))
@@ -221,6 +225,7 @@ def test_unavailable_results_from_any_runner_are_run_failures(tmp_path: Path):
     assert failures == [
         {"repo": "ghost", "what": "github_actions", "why": "Actions API timed out"},
         {"repo": "ghost", "what": "github_releases", "why": "release lookup failed"},
+        {"repo": "ghost", "what": "github_issues", "why": "issue lookup failed"},
         {"repo": "ghost", "what": "source_inspection", "why": "tree unavailable"},
         {"repo": "ghost", "what": "local_runner", "why": "test environment unavailable"},
     ]

@@ -15,6 +15,7 @@ RUNNERS = (
     "accept_ew_ds",
     "ci_job",
     "manual_observation",
+    "github_issues",
     "github_release",
     "source_inspection",
 )
@@ -23,6 +24,7 @@ KIND_RUNNERS = {
     "automated_test": {"pytest", "cargo_lib", "accept_ew_ip", "accept_ew_ds"},
     "ci_run": {"ci_job"},
     "installed_demo": {"manual_observation"},
+    "issue_gate": {"github_issues"},
     "release_artifact": {"github_release"},
     "source_inspection": {"source_inspection"},
 }
@@ -46,6 +48,13 @@ def load(path: Path) -> dict[str, Any]:
             problems.append(f"check {cid}: unknown repo {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
+        if chk.get("runner") == "github_issues":
+            if chk.get("repo") == "*":
+                problems.append(f"check {cid}: GitHub issue gate must name one repository")
+            if not isinstance(chk.get("milestone"), str) or not chk["milestone"].strip():
+                problems.append(f"check {cid}: GitHub issue gate needs a milestone")
+            elif isinstance(issue_gate, dict) and chk["milestone"] != issue_gate.get("milestone"):
+                problems.append(f"check {cid}: GitHub issue milestone must match the release issue gate")
         if chk.get("runner") == "source_inspection":
             if not chk.get("paths"):
                 problems.append(f"check {cid}: source inspection needs paths")
@@ -63,13 +72,11 @@ def load(path: Path) -> dict[str, Any]:
         if app != "bundle" and app not in cat.get("apps", {}):
             problems.append(f"task {t['id']}: unknown app {app!r}")
         t["app_repo"] = cat["apps"].get(app, {}).get("repo", "") if app != "bundle" else ""
-        issue_repos = t.get("release_issue_repos", [])
-        if issue_gate is not None and t.get("layer") == "release" and not issue_repos:
-            problems.append(f"task {t['id']}: release task needs release_issue_repos")
-        if issue_repos and t.get("layer") != "release":
-            problems.append(f"task {t['id']}: only release tasks may define release_issue_repos")
-        if not isinstance(issue_repos, list) or any(repo not in cat.get("repos", {}) for repo in issue_repos):
-            problems.append(f"task {t['id']}: release_issue_repos must name known repositories")
+        if issue_gate is not None and t.get("layer") == "release":
+            if not any(c.get("kind") == "issue_gate" for c in t.get("conditions", [])):
+                problems.append(f"task {t['id']}: release task needs an issue_gate condition")
+        if t.get("layer") != "release" and any(c.get("kind") == "issue_gate" for c in t.get("conditions", [])):
+            problems.append(f"task {t['id']}: only release tasks may use issue_gate conditions")
         for c in t.get("conditions", []):
             if c["id"] in seen_conds:
                 problems.append(f"duplicate condition id {c['id']}")

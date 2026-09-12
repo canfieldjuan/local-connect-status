@@ -11,7 +11,7 @@ means "check again".
 
 ```
 GitHub default branches ──poll──▶ bare mirrors (.cache/mirrors)
-GitHub First Public Release issues ──poll──▶ release blocker overlay
+GitHub First Public Release issues ──poll──▶ issue-gate runner
                                         │
                         head moved? ──▶ change record: which tasks it touches, which files nobody mapped
                                         │
@@ -20,6 +20,7 @@ GitHub First Public Release issues ──poll──▶ release blocker overlay
               · GitHub Actions jobs for that exact sha (per platform)
               · cross-app acceptance: exact Email Watcher + Invoice Processor + contracts trees
               · GitHub Releases
+              · open release-milestone issues at the exact repository revision
               · human observations (scripts/record_observation.py)
                                         │
                      rules.py ──▶ site/status.json, site/report.md, site/dashboard.html  (atomic)
@@ -51,10 +52,11 @@ GitHub Release recorded for the current repository revision). Linux and Windows 
 separately; Linux alone never means ready. Email Watcher, Document Summarizer, and Invoice
 Processor have independent release rows; the Local Connect bundle has its own cross-app row.
 
-Open issues in the `First Public Release` milestone block the affected release row without
-changing any evidence result. Closing an issue removes a blocker but proves nothing by itself.
-An unavailable issue query fails closed. The complete boundary, including which hardening can
-move after launch, is in [`docs/RELEASE_CONTRACT.md`](docs/RELEASE_CONTRACT.md).
+Open issues in the `First Public Release` milestone are recorded in `data/records.jsonl` and
+block the affected release row without changing any capability result. Closing an issue removes
+a blocker but proves nothing about product behavior by itself. An unavailable issue query records
+an unavailable gate and fails closed. The complete boundary, including which hardening can move
+after launch, is in [`docs/RELEASE_CONTRACT.md`](docs/RELEASE_CONTRACT.md).
 
 Consecutive identical observations are stored once. If a result changes and later returns
 to an earlier value, that recovery remains a separate observation and becomes the latest result,
@@ -154,7 +156,7 @@ test that would fail if the dashboard could be fooled that way:
 | let evidence from a replaced/reconfigured check or a changed condition claim satisfy a condition, or treat a new fingerprint-free row as migrated legacy evidence | `test_condition_evidence_must_come_from_its_current_configured_check`, `test_condition_evidence_must_match_the_current_check_configuration`, `test_condition_evidence_must_match_the_current_claim_semantics`, `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence` |
 | promote anything on a source-string match, or treat a missing string as proof of absence | `test_source_inspection_is_inconclusive_and_never_raises_maturity`, `test_code_change_maps_to_task_and_marker_rename_alone_cannot_prove_removal` |
 | let Linux evidence stand in for Windows, ignore a check's configured platform, or call an app or bundle ready without its installed platform observations | `test_linux_only_evidence_leaves_windows_not_checked_and_blocks_release_readiness`, `test_check_platform_filters_mixed_evidence_when_condition_omits_platform`, `test_each_release_gate_requires_platform_installed_observations` |
-| count an issue as proof, ignore a first-release blocker, or treat an unavailable issue source as an empty list | `test_open_release_issue_blocks_readiness_but_never_erases_evidence`, `test_unavailable_issue_source_blocks_readiness_instead_of_looking_empty`, `test_issue_collection_keeps_only_open_first_release_milestone_and_is_fail_loud` |
+| count an issue as capability proof, ignore a first-release blocker, lose the gate during render-only, or treat an unavailable issue source as empty | `test_open_release_issue_blocks_readiness_but_never_erases_capability_evidence`, `test_unavailable_or_missing_issue_evidence_blocks_readiness_instead_of_looking_empty`, `test_render_only_reconstructs_latest_issue_gate_from_records`, `test_github_issue_runner_records_only_the_exact_milestone_and_fails_loud` |
 | show pending / unavailable / partial as green | `test_non_results_are_not_checked` |
 | call something released without uploaded, nonempty installers whose manifest hashes match GitHub's asset digests, a published release, local licence proof, or first-run model guidance | `test_release_verdict_requires_a_published_release_with_every_required_asset`, `test_release_checksum_download_failure_is_unavailable`, `test_release_asset_download_rejects_binary_checksum_content`, `test_release_requires_release_artifact_not_just_demos`, `test_release_promise_requires_licence_and_first_run_model_evidence`, `test_release_absence_is_an_explicit_not_met_at_current_head` |
 | duplicate progress on a repeated delivery, lose a recovery across volatile source metadata, changed incomplete release, or distinct change range | `test_duplicate_delivery_stores_once`, `test_pass_fail_pass_recovery_is_retained_and_wins_after_reload`, `test_actions_recovery_survives_volatile_source_metadata`, `test_changed_incomplete_release_is_not_deduplicated`, `test_change_records_from_different_baselines_are_both_kept`, `test_recent_changes_supersede_retry_without_collapsing_distinct_baselines` |

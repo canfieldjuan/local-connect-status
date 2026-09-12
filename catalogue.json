@@ -414,6 +414,34 @@
         "tests/test_entitlement.py"
       ],
       "note": "Exact-revision Email Watcher tests for the shared feature id, local signature verification, time bounds, private activation, and fail-closed discovery."
+    },
+    "release.issues.ew": {
+      "runner": "github_issues",
+      "repo": "eom-email-watcher",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Email Watcher issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.ds": {
+      "runner": "github_issues",
+      "repo": "document-summarizer",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Document Summarizer issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.ip": {
+      "runner": "github_issues",
+      "repo": "invoice-processor",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Invoice Processor issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.contracts": {
+      "runner": "github_issues",
+      "repo": "connect-contracts",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Connect Contracts issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
     }
   },
   "tasks": [
@@ -781,9 +809,6 @@
       "title": "Release Email Watcher for Linux and Windows",
       "promise": "The current Email Watcher passes its primary suite, installs on Linux and Windows, completes its installed primary flow, and has downloadable packages with checksums.",
       "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
-      "release_issue_repos": [
-        "eom-email-watcher"
-      ],
       "conditions": [
         {
           "id": "rel.ew_primary_tests",
@@ -825,6 +850,12 @@
           "kind": "release_artifact",
           "check": "release.github.ew",
           "proves": "A public Email Watcher release contains the current code, Linux and Windows installers, and checksums."
+        },
+        {
+          "id": "rel.ew_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ew",
+          "proves": "Email Watcher has no open first-public-release issue."
         }
       ],
       "depends_on": [
@@ -845,9 +876,6 @@
       "title": "Release Document Summarizer for Linux and Windows",
       "promise": "The current Document Summarizer passes its primary suite, installs on Linux and Windows, completes an installed cited-summary flow, and has downloadable packages with checksums.",
       "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
-      "release_issue_repos": [
-        "document-summarizer"
-      ],
       "conditions": [
         {
           "id": "rel.ds_linux",
@@ -875,6 +903,12 @@
           "kind": "release_artifact",
           "check": "release.github.ds",
           "proves": "A public Document Summarizer release contains the current code, Linux and Windows installers, and checksums."
+        },
+        {
+          "id": "rel.ds_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ds",
+          "proves": "Document Summarizer has no open first-public-release issue."
         }
       ],
       "depends_on": [
@@ -894,9 +928,6 @@
       "title": "Release Invoice Processor for Linux and Windows",
       "promise": "The current Invoice Processor passes its primary suite, reports model readiness, installs on Linux and Windows without losing its ledger, and has downloadable packages with checksums.",
       "human_involvement": "Run one installed demonstration per platform and choose the Windows distribution/signing path before publishing.",
-      "release_issue_repos": [
-        "invoice-processor"
-      ],
       "conditions": [
         {
           "id": "rel.ip_primary_tests",
@@ -938,6 +969,12 @@
           "kind": "release_artifact",
           "check": "release.github.ip",
           "proves": "A public Invoice Processor release contains the current code, Linux and Windows installers, and checksums."
+        },
+        {
+          "id": "rel.ip_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ip",
+          "proves": "Invoice Processor has no open first-public-release issue."
         }
       ],
       "depends_on": [
@@ -963,12 +1000,6 @@
       "title": "Release the three-app Local Connect bundle",
       "promise": "The packaged apps discover each other locally, hand PDFs and bills across Connect on Linux and Windows, keep busy work retryable, enforce the local entitlement, and uninstall without leaving a callable provider.",
       "human_involvement": "Run the packaged cross-app demonstrations on both platforms. Automate rules and scheduled workflows remain a later release.",
-      "release_issue_repos": [
-        "eom-email-watcher",
-        "document-summarizer",
-        "invoice-processor",
-        "connect-contracts"
-      ],
       "conditions": [
         {
           "id": "rel.bundle_pdf_contract",
@@ -1057,6 +1088,30 @@
           "kind": "release_artifact",
           "check": "release.github.ip",
           "proves": "The current Invoice Processor package is publicly released."
+        },
+        {
+          "id": "rel.bundle_ew_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ew",
+          "proves": "Email Watcher has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_ds_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ds",
+          "proves": "Document Summarizer has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_ip_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ip",
+          "proves": "Invoice Processor has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_contracts_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.contracts",
+          "proves": "Connect Contracts has no open issue blocking the bundle release."
         }
       ],
       "depends_on": [

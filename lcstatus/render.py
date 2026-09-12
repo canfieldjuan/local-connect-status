@@ -331,6 +331,6 @@ def dashboard_html(p: dict[str, Any], cat: dict[str, Any]) -> str:
 <p class="sub">The apps, the connections between them, and the work they will do for you automatically — with the evidence for each claim.</p>
 <nav><a href="#overview" data-view="overview">Overview</a><a href="#email-watcher" data-view="email-watcher">Email Watcher</a><a href="#document-summarizer" data-view="document-summarizer">Document Summarizer</a><a href="#invoice-processor" data-view="invoice-processor">Invoice Processor</a><a href="#release" data-view="release">Before we ship</a></nav>
 <div id="root"></div>
-<footer>Every evidence claim is derived from <code>data/records.jsonl</code>; open first-release issues are a separate blocking gate and never count as proof. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from both the release-evidence rows and the issue gate above.</footer>
+<footer>Every status is derived from <code>data/records.jsonl</code>; issue-gate records can block release but never prove product capability. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from both the capability rows and the issue-gate rows above.</footer>
 </div><script>{JS.replace('__DATA__', data)}</script></body></html>
 """
