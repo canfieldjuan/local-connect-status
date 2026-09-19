@@ -126,12 +126,11 @@ def test_collapsed_execution_removal_failure_is_only_a_warning(tmp_path: Path, m
     store, failures = Store(tmp_path / "records.jsonl"), []
     store_result(store, failures, _pytest(runner))
     second = _pytest(runner)
-    logs = tmp_path / "logs"
-    logs.chmod(0o500)                                       # unlink now raises PermissionError
-    try:
-        store_result(store, failures, second)
-    finally:
-        logs.chmod(0o700)
+    def denied(self, missing_ok=False):
+        raise PermissionError(f"cannot remove {self}")
+
+    monkeypatch.setattr(Path, "unlink", denied)             # privilege-independent: root ignores directory modes
+    store_result(store, failures, second)
 
     assert len(store) == 1 and failures == []
     assert second.verdict == "pass"
