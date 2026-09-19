@@ -39,9 +39,11 @@ The condition's own claim says "with the exact contracts keyring". The contracts
 ## Observable behaviour
 
 B1. **Host licence resolution.** Before launching the script, the runner resolves the *collector's*
-installed licence path the way the product does on Linux: `$XDG_CONFIG_HOME/local-connect/entitlement-v1.json`
-when `XDG_CONFIG_HOME` is set and absolute, otherwise `$HOME/.config/local-connect/entitlement-v1.json`,
-using the environment the collector itself runs in (before any isolation).
+installed licence path exactly the way the product does on Linux (`entitlement.py:296-310`):
+`$XDG_CONFIG_HOME/local-connect/entitlement-v1.json` when `XDG_CONFIG_HOME` is set, otherwise
+`$HOME/.config/local-connect/entitlement-v1.json`; a relative root, or neither variable set, is an
+unreadable licence path (no fallback, as in the product). The environment used is the one the
+collector itself runs in, before any isolation.
 
 B2. **Pre-check (structure and window only, never the signature).** The file must be a regular file of
 1–16384 bytes (the product's own `MAX_ENTITLEMENT_BYTES`), a JSON object with `format_version == 1`, a
@@ -97,6 +99,7 @@ I7. AGENTS.md holds: no product repository or developer checkout is read or writ
 
 | Situation | Result |
 |---|---|
+| `XDG_CONFIG_HOME` set but relative, or neither it nor `HOME` set | `unavailable`, `installed Connect entitlement unreadable: <reason>`; script not launched |
 | Host licence absent | `unavailable`, `no installed Connect entitlement at <path>`; script not launched |
 | Host licence not a regular file, empty, > 16384 bytes, not JSON, wrong `format_version`, missing `key_id`/`payload_base64url`, payload undecodable, timestamps missing/naive | `unavailable`, `installed Connect entitlement unreadable: <reason>`; script not launched |
 | `now < not_before` | `unavailable`, `… not valid before <iso>`; script not launched |
