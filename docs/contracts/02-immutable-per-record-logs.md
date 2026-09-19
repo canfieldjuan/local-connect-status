@@ -38,6 +38,16 @@ is `None` when nothing was written. Today's behaviour per runner is kept: pytest
 runners write nothing on timeout or startup failure (`log_path` absent); `cargo_lib` writes the output
 gathered from the steps that did complete and names that file. Only the *name* changes.
 
+B2a. **Recorded command names what ran, not where the artefact landed.** The JUnit path is now
+per execution, and `command` is part of record identity (`evidence.py` `Record.identity`), so a
+recorded pytest `command` that still carried `--junitxml=<path>` would never collapse again and the
+store would grow every tick. The recorded pytest `command` therefore omits the `--junitxml` argument
+(interpreter prefix, `-m pytest`, its options and the catalogue `args` stay); the JUnit file is the
+log's sibling, reachable from `log_path`. Counts still come from that file. One-time effect after
+deployment: the first execution of each pytest check at the current revision has a different
+`command` than its stored legacy record and is stored as a new observation with the same verdict at
+the same revision — no label can change — and collapsing resumes from the next tick.
+
 B3. **One file set per stored record.** `collect.store_result` observes `Store.add`'s result. When the
 record was **collapsed** as an identical consecutive observation, the files that execution wrote (the
 log and, if present, the JUnit sibling) are removed: the stored record's own files already hold the
@@ -106,10 +116,14 @@ Unit (runner tests drive the real naming and removal code; the store is the real
    `data/logs` identical.
 7. `test_log_name_collision_is_suffixed`: a file already at the computed name is not overwritten.
 
-Live (after merge and fast-forward): the next routine tick, which stores no new records (all
-observations identical), leaves `ls data/logs | wc -l` unchanged and appends nothing; the first tick
-after a product head moves adds exactly one file set per new record, and every new record's `log_path`
-exists and contains that tick's output.
+Live (after merge and fast-forward): the first routine tick stores one new record per pytest check
+at the current revisions (B2a; same verdicts) and exactly one new file set per new record, each new
+record's `log_path` existing and holding that tick's output; the second tick stores nothing and
+leaves `ls data/logs | wc -l` unchanged. Thereafter the first tick after a product head moves adds
+exactly one file set per new record.
+
+8. `test_recorded_command_omits_the_per_execution_junit_path`: two executions record the same
+   `command`, without `--junitxml`, and still count from their own JUnit.
 
 ## Decisions
 
