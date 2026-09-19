@@ -48,9 +48,13 @@ collector itself runs in, before any isolation.
 B2. **Pre-check (structure and window only, never the signature).** The file must be a regular file of
 1–16384 bytes (the product's own `MAX_ENTITLEMENT_BYTES`), a JSON object with `format_version == 1`, a
 string `key_id`, and a `payload_base64url` that decodes (base64url, missing padding tolerated) to a JSON
-object whose `not_before` and `expires_at` parse as timezone-aware instants with
-`not_before <= now < expires_at` (`now` = the collector's UTC clock). Signature validity is the product's
-job and is not evaluated.
+object whose `not_before` and `expires_at` are UTC instants in the products' own grammar
+(`UTC_TIMESTAMP_PATTERN`, `YYYY-MM-DDTHH:MM:SS[.fff]Z` — an offset form such as `+00:00` is rejected by
+the watcher and therefore by the pre-check) with `not_before <= now < expires_at` (`now` = the
+collector's UTC clock). Parsing that can exhaust the interpreter (deeply nested JSON in the file or the
+payload) is an unreadable licence, never an exception. Signature validity is the product's job and is
+not evaluated. The pre-check mirrors the products' grammar: if that grammar ever drifts, the result is a
+loud `unavailable`, never product evidence.
 
 B3. **Staging.** The runner creates `<compat_home>/.config` (0700), `/local-connect` (0700) and writes
 `entitlement-v1.json` (0600) with the host file's exact bytes. It also creates `<compat_home>/.local/share`,
@@ -64,8 +68,10 @@ is left as inherited: the pre-isolation passes ran with it inherited and the scr
 provider's runtime directory itself (`accept_against_email_watcher.py:131-133`); changing it is out of scope.
 
 B5. **Cleanup.** The staged licence file is removed in the runner's `finally`, on every exit path
-(pass, fail, isolation failure, timeout, `OSError`). The rest of `<compat_home>` is left as today (it is
-rebuilt from scratch on the next run, `verify.py:529-533`).
+(pass, fail, isolation failure, timeout, `OSError`), including a failure *during* staging that has
+already created the file (the cleanup path is fixed before the copy starts). The rest of
+`<compat_home>` is left as today (it is rebuilt from scratch on the next run, `verify.py:529-533`).
+A cleanup warning is best-effort and can never itself abort the runner.
 
 B6. **Record.** `detail` gains `entitlement_source` (the host path as a string), `entitlement_key_id`,
 `entitlement_not_before`, `entitlement_expires_at` — never the payload or signature. When the script's
@@ -130,13 +136,18 @@ Unit (all in `tests/test_verify_parsing.py`, using a stub script written by the 
 3. `test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entitlement`: two host files
    built by the test (unsigned payloads with past `expires_at` / future `not_before`) → `unavailable`
    with the respective summary; stub never ran.
-4. `test_cross_app_runner_records_unavailable_for_malformed_entitlement`: oversize, non-JSON, naive
-   timestamp → `unavailable … unreadable: …`.
+4. `test_cross_app_runner_records_unavailable_for_malformed_entitlement`: oversize, non-JSON, deeply
+   nested JSON (file and payload), not-a-UTC-timestamp forms including `+00:00`, and a non-regular path →
+   `unavailable … unreadable: …`.
 5. `test_cross_app_runner_inherited_xdg_config_home_does_not_leak`: `XDG_CONFIG_HOME` set to a directory
    holding a *different* licence → the host resolution (B1) uses it, the stub sees only the staged copy under
-   the isolated home.
+   the isolated home. `test_cross_app_runner_relative_xdg_config_home_is_unreadable` and
+   `test_cross_app_runner_records_unavailable_without_configuration_root` cover the two unresolvable
+   host-side cases.
 6. `test_cross_app_runner_removes_staged_entitlement_on_every_exit`: after pass, fail, exit 97 and a
-   simulated `TimeoutExpired`, the staged file is gone.
+   simulated `TimeoutExpired`, the staged file is gone;
+   `test_cross_app_runner_removes_partially_staged_entitlement_when_staging_fails` covers a copy that
+   fails after creating the file.
 7. `test_cross_app_runner_records_watcher_decision_line`: stub prints
    `watcher entitlement decision                missing` then exits 1 → `fail`,
    `detail.watcher_decision == "missing"`.
