@@ -234,10 +234,15 @@ def _entitlement_document(*, not_before: str, expires_at: str, key_id: str = "lo
                        "signature_base64url": "unsigned"}).encode()
 
 
+def _utc_stamp(moment: datetime) -> str:
+    """The only timestamp grammar the watcher accepts (its UTC_TIMESTAMP_PATTERN): ...Z, never +00:00."""
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _active_entitlement(**overrides: str) -> bytes:
     now = datetime.now(timezone.utc)
-    fields = dict(not_before=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
-                  expires_at=(now + timedelta(days=1)).isoformat(timespec="seconds"))
+    fields = dict(not_before=_utc_stamp(now - timedelta(hours=1)),
+                  expires_at=_utc_stamp(now + timedelta(days=1)))
     fields.update(overrides)
     return _entitlement_document(**fields)
 
@@ -376,7 +381,7 @@ def test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entit
     import lcstatus.verify as verify
 
     runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
-    stamp = (datetime.now(timezone.utc) + delta).isoformat(timespec="seconds")
+    stamp = _utc_stamp(datetime.now(timezone.utc) + delta)
     _install_host_entitlement(monkeypatch, tmp_path / "host-home", _active_entitlement(**{field: stamp}))
     monkeypatch.setattr(verify.subprocess, "run", _never_run)
 
@@ -386,19 +391,30 @@ def test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entit
     assert record.summary == prefix + stamp
 
 
+def _payload(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
 @pytest.mark.parametrize("content, reason", [
     (b"{" * (16 * 1024 + 1), "16385 bytes (limit 16384)"),
     (b"not json", "not JSON"),
+    (b"[" * (16 * 1024), "not JSON"),                       # nesting that exhausts the parser, in the file
     (b"[]", "not a JSON object"),
     (json.dumps({"format_version": 2, "key_id": "k", "payload_base64url": "e30"}).encode(), "format_version is not 1"),
     (json.dumps({"format_version": 1, "payload_base64url": "e30"}).encode(), "key_id missing"),
     (json.dumps({"format_version": 1, "key_id": "k"}).encode(), "payload_base64url missing"),
-    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "!!"}).encode(), "payload is not base64url JSON"),
+    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "e"}).encode(), "payload is not base64url JSON"),
+    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": _payload(b"[" * 4000)}).encode(),
+     "payload is not base64url JSON"),                       # ... and in the payload
     (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "e30"}).encode(), "not_before missing"),
-    (_entitlement_document(not_before="2026-09-01T00:00:00", expires_at="2027-09-01T00:00:00+00:00"),
-     "not_before is a naive timestamp"),
-    (_entitlement_document(not_before="2026-09-01T00:00:00+00:00", expires_at="soon"),
-     "expires_at is not an ISO timestamp"),
+    (_entitlement_document(not_before="2026-09-01T00:00:00", expires_at="2027-09-01T00:00:00Z"),
+     "not_before is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"),
+    (_entitlement_document(not_before="2026-09-01T00:00:00+00:00", expires_at="2027-09-01T00:00:00Z"),
+     "not_before is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"),  # the watcher rejects the offset form
+    (_entitlement_document(not_before="2026-09-01T00:00:00Z", expires_at="2027-13-01T00:00:00Z"),
+     "expires_at is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"),  # matches the grammar, not a date
+    (_entitlement_document(not_before="2026-09-01T00:00:00Z", expires_at="soon"),
+     "expires_at is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"),
     (None, "not a regular file"),
 ])
 def test_cross_app_runner_records_unavailable_for_malformed_entitlement(tmp_path: Path, monkeypatch, content, reason):
@@ -447,6 +463,45 @@ def test_cross_app_runner_inherited_xdg_config_home_does_not_leak(tmp_path: Path
     assert seen["config"] == str(Path(seen["home"]) / ".config")
     assert Path(seen["home"]) not in (tmp_path / "host-home", xdg)
     assert seen["staged_bytes"] == xdg_licence.read_bytes()
+
+
+def test_cross_app_runner_records_unavailable_without_configuration_root(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "installed Connect entitlement unreadable: neither XDG_CONFIG_HOME nor HOME is set"
+
+
+def test_cross_app_runner_removes_partially_staged_entitlement_when_staging_fails(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    created = {}
+
+    def half_written(compat_home, content):
+        target = compat_home / ".config" / "local-connect" / "entitlement-v1.json"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(content[:8])
+        created["target"] = target
+        raise OSError("disk full")
+
+    monkeypatch.setattr(verify, "stage_entitlement", half_written)
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "installed Connect entitlement unreadable: could not stage (OSError)"
+    assert not created["target"].exists()
+    assert not verify.WATCHER_COMPAT_PATH.exists()
 
 
 def test_cross_app_runner_relative_xdg_config_home_is_unreadable(tmp_path: Path, monkeypatch):
