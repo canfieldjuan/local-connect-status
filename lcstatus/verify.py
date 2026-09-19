@@ -382,6 +382,34 @@ def watcher_decision(stdout: str) -> str | None:
     return None
 
 
+def execution_files(record: Record) -> list[Path]:
+    """The files one execution wrote, exactly as its record names them: the log and, for pytest, the
+    JUnit sibling that shares its stem. A record without a log names nothing."""
+    if not record.log_path:
+        return []
+    log = Path(record.log_path)
+    return [log, log.with_suffix(".junit.xml")] if log.suffix == ".log" else [log]
+
+
+def discard_execution_files(record: Record) -> None:
+    """Remove the files of an execution the store collapsed as an identical consecutive observation.
+
+    The stored record's own files already hold the equivalent evidence, so keeping these would only
+    grow ``data/logs`` with every tick. Failure to remove is a warning, never a verdict.
+    """
+    for path in execution_files(record):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            try:
+                print(f"warning: could not remove {path} from a collapsed execution: {type(exc).__name__}",
+                      file=sys.stderr)
+            except (OSError, ValueError):
+                pass
+
+
 class Runner:
     def __init__(self, mirrors: Mirrors, cache: Path, logs: Path, gh: GitHub, catalogue: dict[str, Any]):
         self.mirrors = mirrors
@@ -404,6 +432,17 @@ class Runner:
         }
 
     # ---- trees & environments --------------------------------------------------------
+
+    def _execution_paths(self, check_id: str, key: str) -> tuple[Path, Path]:
+        """Fresh log and JUnit names for one execution, carrying its start instant. A stored record's
+        files are never reused: if the names exist, the stem is suffixed rather than overwritten."""
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        base = stem = f"{check_id}.{key}.{stamp}"
+        counter = 0
+        while (self.logs / f"{stem}.log").exists() or (self.logs / f"{stem}.junit.xml").exists():
+            counter += 1
+            stem = f"{base}.{counter}"
+        return self.logs / f"{stem}.log", self.logs / f"{stem}.junit.xml"
 
     def tree(self, repo: str, sha: str) -> Failure | Path:
         return self.mirrors.extract(repo, sha, self.cache / "trees" / repo / sha[:12])
@@ -543,12 +582,14 @@ class Runner:
             f = self._desktop_deps(tree)
             if isinstance(f, Failure):
                 return Record(verdict="unavailable", summary=f"desktop deps: {f.why}", **base)
-        junit = self.logs / f"{check_id}.{rev.sha[:12]}.junit.xml"
-        log = self.logs / f"{check_id}.{rev.sha[:12]}.log"
+        log, junit = self._execution_paths(check_id, rev.sha[:12])
         # No -q here: a repo whose addopts already has -q would become -qq and lose its
         # summary line. Verdicts never depend on that line; people reading logs do.
         cmd = [str(venv / "bin" / "python"), "-m", "pytest", "-p", "no:cacheprovider",
                f"--junitxml={junit}", *check.get("args", [])]
+        # The JUnit path is per execution and `command` is part of record identity, so the recorded
+        # command names what ran; where this execution's artefacts landed is log_path's job.
+        recorded = " ".join(arg for arg in cmd if not arg.startswith("--junitxml="))
         t0 = time.time()
         try:
             r = subprocess.run(
@@ -556,10 +597,10 @@ class Runner:
                 env=sanitized_python_env(),
             )
         except subprocess.TimeoutExpired:
-            return Record(verdict="unavailable", summary="timeout", command=" ".join(cmd), **base)
+            return Record(verdict="unavailable", summary="timeout", command=recorded, **base)
         except OSError as exc:
             return Record(verdict="unavailable", summary=f"could not start: {type(exc).__name__}",
-                          command=" ".join(cmd), **base)
+                          command=recorded, **base)
         dur = round(time.time() - t0, 1)
         log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
         executed = failed = skipped = None
@@ -585,7 +626,7 @@ class Runner:
             verdict = "fail"
         else:
             verdict = "pass"
-        return Record(verdict=verdict, command=f"[{interpreter_version(venv)}] " + " ".join(cmd), exit_code=r.returncode, executed=executed,
+        return Record(verdict=verdict, command=f"[{interpreter_version(venv)}] {recorded}", exit_code=r.returncode, executed=executed,
                       failed=failed, skipped=skipped, summary=summary, log_path=str(log), duration_s=dur, **base)
 
     # ---- cargo (Document Summarizer) -------------------------------------------------
@@ -603,7 +644,7 @@ class Runner:
         for tool in ("npm", "cargo"):
             if not shutil.which(tool):
                 return Record(verdict="unavailable", summary=f"{tool} not installed", **base)
-        log = self.logs / f"{check_id}.{rev.sha[:12]}.log"
+        log, _ = self._execution_paths(check_id, rev.sha[:12])
         t0 = time.time()
         steps = [(["npm", "install", "--silent"], tree), (["npm", "run", "build"], tree),
                  (["cargo", "test", "--lib"], tree / "src-tauri")]
@@ -712,7 +753,7 @@ class Runner:
                 return Record(verdict="unavailable",
                               summary=f"installed Connect entitlement unreadable: could not stage ({type(exc).__name__})",
                               **base)
-            log = self.logs / f"{check_id}.{ip.sha[:8]}-{ew.sha[:8]}.log"
+            log, _ = self._execution_paths(check_id, f"{ip.sha[:8]}-{ew.sha[:8]}")
             env = sanitized_python_env(
                 HOME=str(compat_home),
                 PYTHONPATH=str(ew_tree / "src"),
@@ -819,7 +860,7 @@ class Runner:
             return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
 
         key = f"{ew.sha[:12]}-{ds.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
-        log = self.logs / f"{check_id}.{key}.log"
+        log, _ = self._execution_paths(check_id, key)
         env = sanitized_python_env(
             LOCAL_CONNECT_ENTITLEMENT_KEYRING_FILE=str(keyring),
             LIBGL_ALWAYS_SOFTWARE="1",

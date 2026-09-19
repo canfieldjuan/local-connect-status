@@ -60,7 +60,13 @@ after launch, is in [`docs/RELEASE_CONTRACT.md`](docs/RELEASE_CONTRACT.md).
 
 Consecutive identical observations are stored once. If a result changes and later returns
 to an earlier value, that recovery remains a separate observation and becomes the latest result,
-even when GitHub run IDs, URLs, or other per-attempt metadata differ. All evidence timestamps are
+even when GitHub run IDs, URLs, or other per-attempt metadata differ. Every execution writes its own
+log files, named with the execution's start instant; when the store collapses an execution as an
+identical observation its files are removed, so `data/logs` holds exactly one log set per stored
+record and a stored record's log is never overwritten. A pytest record's `command` omits the JUnit
+path (the file is the log's sibling), so identical executions still collapse. Files written before
+2026-09-19 had one fixed name per check and revision and may hold the output of a later execution at
+the same revision. All evidence timestamps are
 compared as absolute instants across timezone offsets. Manual
 observations validate and normalize their observation time, so a backfilled older result cannot
 displace a newer observation.
@@ -173,6 +179,7 @@ test that would fail if the dashboard could be fooled that way:
 | label a task with nothing checkable as "verified at current code" | `test_task_with_only_inspection_conditions_is_not_checked_not_current` |
 | let another repository's release satisfy an app condition, or dispatch an app release check across every repository | `test_foreign_repository_release_record_cannot_satisfy_app_condition`, `test_release_dispatch_is_scoped_to_the_configured_repository` |
 | prefer an older workflow rerun over a newer workflow run | `test_latest_distinct_workflow_run_beats_older_rerun_attempt` |
+| overwrite or lose a stored record's log, keep a duplicate log per tick, name a file an execution did not write, or touch legacy logs | `test_identical_executions_keep_one_log_set`, `test_changed_result_keeps_both_log_sets`, `test_collapsed_execution_removal_failure_is_only_a_warning`, `test_timeout_and_startup_failure_name_only_what_was_written`, `test_legacy_fixed_name_files_are_never_touched`, `test_execution_names_carry_the_start_instant_and_never_collide`, `test_render_only_writes_and_removes_nothing` |
 | delete an unowned compatibility path, read cross-app fixtures from developer checkouts, or claim the PDF handoff without the exact consumer/provider/contracts tuple | `test_prepare_owned_symlink_refuses_real_directory_without_deleting_it`, `test_prepare_owned_symlink_refuses_foreign_symlink`, `test_cross_app_runner_uses_all_exact_trees_and_isolated_home`, `test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees`, `test_pdf_handoff_runner_records_nonzero_proof_as_failure` |
 | record a harness-caused entitlement failure as product evidence, leak the operator's configuration into the isolated installation, or leave the staged licence behind | `test_cross_app_runner_records_unavailable_without_installed_entitlement`, `test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entitlement`, `test_cross_app_runner_records_unavailable_for_malformed_entitlement`, `test_cross_app_runner_inherited_xdg_config_home_does_not_leak`, `test_cross_app_runner_relative_xdg_config_home_is_unreadable`, `test_cross_app_runner_records_unavailable_without_configuration_root`, `test_cross_app_runner_removes_staged_entitlement_on_every_exit`, `test_cross_app_runner_removes_partially_staged_entitlement_when_staging_fails`, `test_cross_app_runner_records_watcher_decision_line` |
 | let inherited `PYTHONPATH` or `PYTHONHOME` redirect an exact-tree pytest run into a developer checkout | `test_pytest_clears_inherited_python_paths_and_records_startup_error` |

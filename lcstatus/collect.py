@@ -25,7 +25,7 @@ from .evidence import Record, Store, atomic_write, now_iso
 from .render import render_all
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
-from .verify import Runner
+from .verify import Runner, discard_execution_files
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -62,7 +62,10 @@ def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tu
 
 
 def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
-    store.add(rec)
+    if not store.add(rec):
+        # An identical consecutive observation: the stored record's own files are the evidence,
+        # so this execution's files would only duplicate them, tick after tick.
+        discard_execution_files(rec)
     if rec.verdict == "unavailable":
         source_type = rec.source.get("type") or rec.kind
         failure = {"repo": rec.repo, "what": source_type, "why": rec.summary or "unavailable"}
