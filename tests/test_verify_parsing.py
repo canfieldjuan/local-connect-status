@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import stat
 import subprocess
 import sys
 import textwrap
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -222,7 +226,35 @@ def test_prepare_owned_symlink_refuses_foreign_symlink(tmp_path: Path):
     assert link.is_symlink() and link.resolve() == foreign.resolve()
 
 
-def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path, monkeypatch):
+def _entitlement_document(*, not_before: str, expires_at: str, key_id: str = "local-connect-test") -> bytes:
+    """An installed-licence envelope shaped like the products' own. Unsigned: the pre-check never verifies."""
+    claims = {"not_before": not_before, "expires_at": expires_at, "features": ["connect.capability_exchange"]}
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    return json.dumps({"format_version": 1, "key_id": key_id, "payload_base64url": payload,
+                       "signature_base64url": "unsigned"}).encode()
+
+
+def _active_entitlement(**overrides: str) -> bytes:
+    now = datetime.now(timezone.utc)
+    fields = dict(not_before=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
+                  expires_at=(now + timedelta(days=1)).isoformat(timespec="seconds"))
+    fields.update(overrides)
+    return _entitlement_document(**fields)
+
+
+def _install_host_entitlement(monkeypatch, home: Path, content: bytes | None = None) -> Path:
+    """The collector's own installation: a HOME holding a private licence where the products look."""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    target = home / ".config" / "local-connect" / "entitlement-v1.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content if content is not None else _active_entitlement())
+    target.chmod(0o600)
+    return target
+
+
+def _cross_app_runner(tmp_path: Path, monkeypatch):
+    """Exact-tree stand-ins for the Email Watcher -> Invoice Processor acceptance."""
     import lcstatus.verify as verify
     from lcstatus.sources import Revision
 
@@ -251,30 +283,237 @@ def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path,
     monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
     monkeypatch.setattr(verify, "WATCHER_COMPAT_PATH", tmp_path / "watcher-main")
     monkeypatch.setattr(verify, "WATCHER_COMPAT_LOCK", tmp_path / "watcher-main.lock")
-    captured = {}
-
-    def completed(cmd, **kwargs):
-        captured.update({"cmd": cmd, **kwargs})
-        return subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr="")
-
-    monkeypatch.setattr(verify.subprocess, "run", completed)
     revisions = {
         repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
         for repo, char in zip(trees, "abc")
     }
-    record = runner.accept_ew_ip(
+    return runner, trees, revisions
+
+
+def _accept(runner, trees, revisions):
+    return runner.accept_ew_ip(
         "xapp.accept", {"participants": list(trees)}, revisions, ["condition"], ["task"]
     )
 
+
+def _never_run(*args, **kwargs):
+    raise AssertionError("the acceptance script must not be launched")
+
+
+def _staged_licence(env: dict) -> Path:
+    return Path(env["XDG_CONFIG_HOME"]) / "local-connect" / "entitlement-v1.json"
+
+
+def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    licence = _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    monkeypatch.setenv("XDG_DATA_HOME", "/developer/share")   # inherited XDG values must not reach the script
+    seen = {}
+
+    def completed(cmd, **kwargs):
+        env = kwargs["env"]
+        staged = _staged_licence(env)
+        seen.update(cmd=cmd, env=env, cwd=kwargs["cwd"], staged=staged,
+                    staged_bytes=staged.read_bytes(), staged_mode=stat.S_IMODE(staged.stat().st_mode),
+                    config_mode=stat.S_IMODE(staged.parent.parent.stat().st_mode))
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="watcher entitlement decision                active\naccepted\n", stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    record = _accept(runner, trees, revisions)
+
     assert record.verdict == "pass"
     assert record.participants == {repo: revisions[repo].sha for repo in trees}
-    isolated_home = Path(captured["env"]["HOME"])
+    isolated_home = Path(seen["env"]["HOME"])
     assert (isolated_home / "Desktop/invoice-processor").resolve() == trees["invoice-processor"].resolve()
     assert (isolated_home / "Desktop/connect-contracts").resolve() == trees["connect-contracts"].resolve()
-    assert captured["cwd"] == trees["invoice-processor"]
+    assert seen["cwd"] == trees["invoice-processor"]
+    # The licence is staged where the products look, privately, byte for byte, and only for the run.
+    assert seen["staged"] == isolated_home / ".config/local-connect/entitlement-v1.json"
+    assert seen["staged_bytes"] == licence.read_bytes()
+    assert (seen["staged_mode"], seen["config_mode"]) == (0o600, 0o700)
+    assert not seen["staged"].exists()
+    for variable, subdir in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
+                             ("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state")):
+        assert Path(seen["env"][variable]) == isolated_home / subdir
+        assert (isolated_home / subdir).is_dir()
     assert record.detail["watcher_tree"] == str(trees["eom-email-watcher"])
     assert record.detail["contracts_tree"] == str(trees["connect-contracts"])
+    assert record.detail["entitlement_source"] == str(licence)
+    assert record.detail["entitlement_key_id"] == "local-connect-test"
+    assert record.detail["watcher_decision"] == "active"
     assert not verify.WATCHER_COMPAT_PATH.exists()
+
+
+def test_cross_app_runner_records_unavailable_without_installed_entitlement(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    host_home = tmp_path / "host-home"
+    host_home.mkdir()
+    monkeypatch.setenv("HOME", str(host_home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    expected = host_home / ".config" / "local-connect" / "entitlement-v1.json"
+    assert record.summary == f"no installed Connect entitlement at {expected}"
+    assert record.participants == {repo: revisions[repo].sha for repo in trees}
+    assert not (runner.cache / "xapp-homes").exists()
+
+
+@pytest.mark.parametrize("field, delta, prefix", [
+    ("expires_at", timedelta(hours=-1), "installed Connect entitlement expired at "),
+    ("not_before", timedelta(hours=1), "installed Connect entitlement not valid before "),
+])
+def test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entitlement(
+    tmp_path: Path, monkeypatch, field, delta, prefix,
+):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    stamp = (datetime.now(timezone.utc) + delta).isoformat(timespec="seconds")
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home", _active_entitlement(**{field: stamp}))
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == prefix + stamp
+
+
+@pytest.mark.parametrize("content, reason", [
+    (b"{" * (16 * 1024 + 1), "16385 bytes (limit 16384)"),
+    (b"not json", "not JSON"),
+    (b"[]", "not a JSON object"),
+    (json.dumps({"format_version": 2, "key_id": "k", "payload_base64url": "e30"}).encode(), "format_version is not 1"),
+    (json.dumps({"format_version": 1, "payload_base64url": "e30"}).encode(), "key_id missing"),
+    (json.dumps({"format_version": 1, "key_id": "k"}).encode(), "payload_base64url missing"),
+    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "!!"}).encode(), "payload is not base64url JSON"),
+    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "e30"}).encode(), "not_before missing"),
+    (_entitlement_document(not_before="2026-09-01T00:00:00", expires_at="2027-09-01T00:00:00+00:00"),
+     "not_before is a naive timestamp"),
+    (_entitlement_document(not_before="2026-09-01T00:00:00+00:00", expires_at="soon"),
+     "expires_at is not an ISO timestamp"),
+    (None, "not a regular file"),
+])
+def test_cross_app_runner_records_unavailable_for_malformed_entitlement(tmp_path: Path, monkeypatch, content, reason):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    if content is None:
+        monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        (tmp_path / "host-home" / ".config" / "local-connect" / "entitlement-v1.json").mkdir(parents=True)
+    else:
+        _install_host_entitlement(monkeypatch, tmp_path / "host-home", content)
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == f"installed Connect entitlement unreadable: {reason}"
+
+
+def test_cross_app_runner_inherited_xdg_config_home_does_not_leak(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home", _active_entitlement(key_id="from-home"))
+    xdg = tmp_path / "host-xdg"
+    xdg_licence = xdg / "local-connect" / "entitlement-v1.json"
+    xdg_licence.parent.mkdir(parents=True)
+    xdg_licence.write_bytes(_active_entitlement(key_id="from-xdg"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    seen = {}
+
+    def completed(cmd, **kwargs):
+        env = kwargs["env"]
+        seen.update(config=env["XDG_CONFIG_HOME"], home=env["HOME"], staged_bytes=_staged_licence(env).read_bytes())
+        return subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "pass"
+    # The host side honours XDG_CONFIG_HOME exactly as the product does ...
+    assert record.detail["entitlement_source"] == str(xdg_licence)
+    assert record.detail["entitlement_key_id"] == "from-xdg"
+    # ... while the script sees only the isolated installation, never the host directory.
+    assert seen["config"] == str(Path(seen["home"]) / ".config")
+    assert Path(seen["home"]) not in (tmp_path / "host-home", xdg)
+    assert seen["staged_bytes"] == xdg_licence.read_bytes()
+
+
+def test_cross_app_runner_relative_xdg_config_home_is_unreadable(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative/config")
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "installed Connect entitlement unreadable: configuration root is not absolute: relative/config"
+
+
+@pytest.mark.parametrize("outcome, verdict", [
+    ("pass", "pass"), ("fail", "fail"), ("isolation", "unavailable"),
+    ("timeout", "unavailable"), ("oserror", "unavailable"),
+])
+def test_cross_app_runner_removes_staged_entitlement_on_every_exit(tmp_path: Path, monkeypatch, outcome, verdict):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    seen = {}
+
+    def completed(cmd, **kwargs):
+        staged = _staged_licence(kwargs["env"])
+        seen.update(staged=staged, present_during_run=staged.is_file())
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(cmd, 1800)
+        if outcome == "oserror":
+            raise PermissionError()
+        return subprocess.CompletedProcess(cmd, {"pass": 0, "fail": 1, "isolation": 97}[outcome], stdout="", stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", completed)
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == verdict
+    assert seen["present_during_run"]
+    assert not seen["staged"].exists()
+    assert not verify.WATCHER_COMPAT_PATH.exists()
+
+
+def test_cross_app_runner_records_watcher_decision_line(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    stdout = ("watcher commit                              abc1234 subject\n"
+              "watcher entitlement decision                missing\n"
+              "STOP                                        the watcher does not consider this installation entitled\n")
+    monkeypatch.setattr(verify.subprocess, "run",
+                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, stdout=stdout, stderr=""))
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "fail"          # the product's verdict stands; the line only explains it
+    assert record.detail["watcher_decision"] == "missing"
+    assert record.summary.startswith("STOP")
+
+    monkeypatch.setattr(verify.subprocess, "run",
+                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr=""))
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "pass"
+    assert "watcher_decision" not in record.detail
 
 
 def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
@@ -722,6 +961,7 @@ def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, mo
     monkeypatch.setattr(verify, "WATCHER_COMPAT_PATH", tmp_path / "watcher-main")
     monkeypatch.setattr(verify, "WATCHER_COMPAT_LOCK", tmp_path / "watcher-main.lock")
     monkeypatch.setattr(verify.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
     revisions = {
         repo: Revision(repo, char * 40, "2026-09-11T00:00:00+00:00", repo)
         for repo, char in zip(trees, "abc")

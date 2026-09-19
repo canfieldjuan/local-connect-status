@@ -9,20 +9,28 @@ Principles that keep these honest:
 * A GitHub job is recorded as `ci_run` with the job's own conclusion and the platform read
   from the job, not assumed. Pending and cancelled stay pending and skip.
 * A runner that cannot run records `unavailable` with the reason. It never returns nothing.
+* The cross-app acceptance stages the operator's installed Connect licence into its isolated
+  installation, because the products accept only their production authority. A licence that is
+  absent, malformed or outside its validity window is `unavailable`, never a product failure.
 """
 
 from __future__ import annotations
 
+import base64
 import fcntl
 import hashlib
+import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
@@ -30,6 +38,13 @@ from .sources import Failure, GitHub, Mirrors, Revision
 
 WATCHER_COMPAT_PATH = Path("/tmp/watcher-main")
 WATCHER_COMPAT_LOCK = Path("/tmp/local-connect-status-watcher-main.lock")
+
+# Where the products look for an installed Connect licence on Linux, relative to the configuration
+# root, and the size they refuse to read past. Both mirror eom_email_watcher/entitlement.py.
+INSTALLED_ENTITLEMENT = Path("local-connect") / "entitlement-v1.json"
+MAX_ENTITLEMENT_BYTES = 16 * 1024
+# The acceptance script prints the watcher's own entitlement verdict on this line.
+WATCHER_DECISION_PREFIX = "watcher entitlement decision"
 
 
 def _pyproject_has_dev_group(tree: Path) -> bool:
@@ -238,6 +253,130 @@ def prepare_owned_symlink(link: Path, target: Path, owned_root: Path) -> Failure
     elif link.exists():
         return Failure("compatibility_path", f"refusing to remove existing path {link}")
     link.symlink_to(target, target_is_directory=True)
+    return None
+
+
+def installed_entitlement_path(env: Mapping[str, str]) -> Path | Failure:
+    """Where this environment's installed Connect licence lives, resolved as the products do on Linux."""
+    xdg, home = env.get("XDG_CONFIG_HOME"), env.get("HOME")
+    if xdg:
+        root = Path(xdg)
+    elif home:
+        root = Path(home) / ".config"
+    else:
+        return Failure("entitlement", "neither XDG_CONFIG_HOME nor HOME is set")
+    if not root.is_absolute():
+        return Failure("entitlement", f"configuration root is not absolute: {root}")
+    return root / INSTALLED_ENTITLEMENT
+
+
+def _instant(value: Any, field_name: str) -> datetime | Failure:
+    if not isinstance(value, str) or not value:
+        return Failure("entitlement", f"{field_name} missing")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return Failure("entitlement", f"{field_name} is not an ISO timestamp")
+    if parsed.tzinfo is None:
+        return Failure("entitlement", f"{field_name} is a naive timestamp")
+    return parsed
+
+
+def read_installed_entitlement(
+    source: Path, now: datetime | None = None,
+) -> tuple[bytes, dict[str, str]] | Failure:
+    """Read an installed licence and check its shape and validity window, never its signature.
+
+    A Failure here means the environment cannot run the acceptance, so the caller records
+    ``unavailable``. Signature validity stays the products' decision; this can never produce a pass.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    def unreadable(why: str) -> Failure:
+        return Failure("entitlement", f"installed Connect entitlement unreadable: {why}")
+
+    try:
+        metadata = source.stat()
+    except FileNotFoundError:
+        return Failure("entitlement", f"no installed Connect entitlement at {source}")
+    except OSError as exc:
+        return unreadable(type(exc).__name__)
+    if not stat.S_ISREG(metadata.st_mode):
+        return unreadable("not a regular file")
+    if not 0 < metadata.st_size <= MAX_ENTITLEMENT_BYTES:
+        return unreadable(f"{metadata.st_size} bytes (limit {MAX_ENTITLEMENT_BYTES})")
+    try:
+        content = source.read_bytes()
+        envelope = json.loads(content)
+    except OSError as exc:
+        return unreadable(type(exc).__name__)
+    except ValueError:
+        return unreadable("not JSON")
+    if not isinstance(envelope, dict):
+        return unreadable("not a JSON object")
+    if envelope.get("format_version") != 1:
+        return unreadable("format_version is not 1")
+    key_id = envelope.get("key_id")
+    if not isinstance(key_id, str) or not key_id:
+        return unreadable("key_id missing")
+    payload = envelope.get("payload_base64url")
+    if not isinstance(payload, str) or not payload:
+        return unreadable("payload_base64url missing")
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except ValueError:
+        return unreadable("payload is not base64url JSON")
+    if not isinstance(claims, dict):
+        return unreadable("payload is not a JSON object")
+    not_before = _instant(claims.get("not_before"), "not_before")
+    if isinstance(not_before, Failure):
+        return unreadable(not_before.why)
+    expires_at = _instant(claims.get("expires_at"), "expires_at")
+    if isinstance(expires_at, Failure):
+        return unreadable(expires_at.why)
+    if now < not_before:
+        return Failure("entitlement", f"installed Connect entitlement not valid before {claims['not_before']}")
+    if now >= expires_at:
+        return Failure("entitlement", f"installed Connect entitlement expired at {claims['expires_at']}")
+    return content, {
+        "entitlement_source": str(source),
+        "entitlement_key_id": key_id,
+        "entitlement_not_before": claims["not_before"],
+        "entitlement_expires_at": claims["expires_at"],
+    }
+
+
+def stage_entitlement(compat_home: Path, content: bytes) -> Path:
+    """Place the licence where the products look for it inside the isolated installation, privately."""
+    config = compat_home / ".config"
+    for directory in (
+        config, config / "local-connect",
+        compat_home / ".local", compat_home / ".local" / "share", compat_home / ".local" / "state",
+        compat_home / ".cache",
+    ):
+        directory.mkdir(mode=0o700, exist_ok=True)
+    target = config / INSTALLED_ENTITLEMENT
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(content)
+    return target
+
+
+def isolated_xdg_env(compat_home: Path) -> dict[str, str]:
+    """XDG base directories inside the isolated installation, so no inherited value escapes it."""
+    return {
+        "XDG_CONFIG_HOME": str(compat_home / ".config"),
+        "XDG_DATA_HOME": str(compat_home / ".local" / "share"),
+        "XDG_CACHE_HOME": str(compat_home / ".cache"),
+        "XDG_STATE_HOME": str(compat_home / ".local" / "state"),
+    }
+
+
+def watcher_decision(stdout: str) -> str | None:
+    """The watcher's own entitlement verdict as the script printed it; diagnostic only."""
+    for line in stdout.splitlines():
+        if line.startswith(WATCHER_DECISION_PREFIX):
+            return line[len(WATCHER_DECISION_PREFIX):].strip() or None
     return None
 
 
@@ -508,6 +647,16 @@ class Runner:
                     source=self._source(
                         "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
                     ))
+        # The products only honour a licence signed by their production authority, so the run
+        # borrows the operator's installed one. Without a usable licence the acceptance cannot run.
+        licence_path = installed_entitlement_path(os.environ)
+        if isinstance(licence_path, Failure):
+            return Record(verdict="unavailable",
+                          summary=f"installed Connect entitlement unreadable: {licence_path.why}", **base)
+        licence = read_installed_entitlement(licence_path)
+        if isinstance(licence, Failure):
+            return Record(verdict="unavailable", summary=licence.why, **base)
+        licence_bytes, entitlement = licence
         trees: dict[str, Path] = {}
         for repo in check["participants"]:
             tree = self.tree(repo, revs[repo].sha)
@@ -545,6 +694,7 @@ class Runner:
             lock_fh.close()
             return Record(verdict="unavailable", summary="watcher compatibility path is busy", **base)
         linked = False
+        staged: Path | None = None
         try:
             failure = prepare_owned_symlink(
                 wm, ew_tree, self.cache / "trees" / "eom-email-watcher"
@@ -552,11 +702,18 @@ class Runner:
             if failure is not None:
                 return Record(verdict="unavailable", summary=failure.why, **base)
             linked = True
+            try:
+                staged = stage_entitlement(compat_home, licence_bytes)
+            except OSError as exc:
+                return Record(verdict="unavailable",
+                              summary=f"installed Connect entitlement unreadable: could not stage ({type(exc).__name__})",
+                              **base)
             log = self.logs / f"{check_id}.{ip.sha[:8]}-{ew.sha[:8]}.log"
             env = sanitized_python_env(
                 HOME=str(compat_home),
                 PYTHONPATH=str(ew_tree / "src"),
                 ACCEPTANCE_DIR=str(self.cache / "xapp-runs" / key),
+                **isolated_xdg_env(compat_home),
             )
             env.pop("ACCEPTANCE_MODEL", None)
             wrapper = (
@@ -586,6 +743,7 @@ class Runner:
                               command="accept_against_email_watcher.py (isolated)", exit_code=97,
                               log_path=str(log), **base)
             verdict = "pass" if r.returncode == 0 else "fail"
+            decision = watcher_decision(r.stdout)
             return Record(verdict=verdict,
                           command="accept_against_email_watcher.py (isolated, stand-in model)",
                           exit_code=r.returncode, summary=last[:200], log_path=str(log),
@@ -593,8 +751,18 @@ class Runner:
                           detail={"fixtures_pinned_to": str(ip_tree),
                                   "watcher_tree": str(ew_tree),
                                   "contracts_tree": str(contracts_tree),
-                                  "isolated_home": str(compat_home)}, **base)
+                                  "isolated_home": str(compat_home),
+                                  **entitlement,
+                                  **({"watcher_decision": decision} if decision else {})}, **base)
         finally:
+            if staged is not None:
+                try:
+                    staged.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    print(f"warning: staged entitlement left behind at {staged}: {type(exc).__name__}",
+                          file=sys.stderr)
             if linked and wm.is_symlink() and wm.resolve(strict=False) == ew_tree.resolve():
                 wm.unlink()
             fcntl.flock(lock_fh, fcntl.LOCK_UN)
