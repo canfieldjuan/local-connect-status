@@ -593,6 +593,65 @@ def test_cross_app_runner_records_watcher_decision_line(tmp_path: Path, monkeypa
     assert "watcher_decision" not in record.detail
 
 
+def test_invoice_handoff_timeout_writes_nothing_and_names_no_log(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    monkeypatch.setattr(verify.subprocess, "run",
+                        lambda cmd, **kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, 1800)))
+
+    record = _accept(runner, trees, revisions)
+
+    assert (record.verdict, record.summary, record.log_path) == ("unavailable", "timeout", None)
+    assert list((tmp_path / "logs").iterdir()) == []
+
+
+def test_pdf_handoff_timeout_keeps_gathered_output_under_the_execution_name(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+    from lcstatus.sources import Revision
+
+    trees = _pdf_handoff_trees(tmp_path)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    class GitHub:
+        pass
+
+    runner = verify.Runner(
+        Mirrors(), tmp_path / "cache", tmp_path / "logs", GitHub(),
+        {"repos": {repo: {} for repo in trees}},
+    )
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "find_tool", lambda name: f"/tools/{name}")
+
+    def steps(cmd, **kwargs):
+        if cmd[:2] == ["/tools/uv", "run"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="contracts fixtures ok\n", stderr="")
+        raise subprocess.TimeoutExpired(cmd, 3600)
+
+    monkeypatch.setattr(verify.subprocess, "run", steps)
+    revisions = {
+        repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
+        for repo, char in zip(trees, "abc")
+    }
+    record = runner.accept_ew_ds(
+        "xapp.accept_ew_to_ds", {"participants": list(trees), "repo": "eom-email-watcher", "heavy": True},
+        revisions, ["condition"], ["task"],
+    )
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "timeout in /tools/npm install --silent"
+    written = list((tmp_path / "logs").iterdir())
+    assert written == [Path(record.log_path)]                # exactly the file this execution wrote
+    assert "contracts fixtures ok" in written[0].read_text()
+    assert ".junit" not in written[0].name and "xapp.accept_ew_to_ds.aaaaaaaaaaaa-bbbbbbbbbbbb-cccccccccccc." in written[0].name
+
+
 def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
     trees = {
         repo: tmp_path / repo
