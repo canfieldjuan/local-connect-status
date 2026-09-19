@@ -404,8 +404,8 @@ def _payload(raw: bytes) -> str:
     (json.dumps({"format_version": 1, "payload_base64url": "e30"}).encode(), "key_id missing"),
     (json.dumps({"format_version": 1, "key_id": "k"}).encode(), "payload_base64url missing"),
     (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "e"}).encode(), "payload is not base64url JSON"),
-    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": _payload(b"[" * 4000)}).encode(),
-     "payload is not base64url JSON"),                       # ... and in the payload
+    (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": _payload(b"[" * 12000)}).encode(),
+     "payload is not base64url JSON"),                       # ... and in the payload (16061-byte envelope)
     (json.dumps({"format_version": 1, "key_id": "k", "payload_base64url": "e30"}).encode(), "not_before missing"),
     (_entitlement_document(not_before="2026-09-01T00:00:00", expires_at="2027-09-01T00:00:00Z"),
      "not_before is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)"),
@@ -463,6 +463,28 @@ def test_cross_app_runner_inherited_xdg_config_home_does_not_leak(tmp_path: Path
     assert seen["config"] == str(Path(seen["home"]) / ".config")
     assert Path(seen["home"]) not in (tmp_path / "host-home", xdg)
     assert seen["staged_bytes"] == xdg_licence.read_bytes()
+
+
+def test_cross_app_runner_contains_parser_exhaustion_in_the_payload(tmp_path: Path, monkeypatch):
+    """The depth that exhausts the C scanner is interpreter-defined, so pin the branch itself too."""
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    real_loads = verify.json.loads
+
+    def exhausted(data, *args, **kwargs):
+        if isinstance(data, bytes) and data.startswith(b"{\"not_before\""):
+            raise RecursionError("maximum recursion depth exceeded")
+        return real_loads(data, *args, **kwargs)
+
+    monkeypatch.setattr(verify.json, "loads", exhausted)
+    monkeypatch.setattr(verify.subprocess, "run", _never_run)
+
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "installed Connect entitlement unreadable: payload is not base64url JSON"
 
 
 def test_cross_app_runner_records_unavailable_without_configuration_root(tmp_path: Path, monkeypatch):
