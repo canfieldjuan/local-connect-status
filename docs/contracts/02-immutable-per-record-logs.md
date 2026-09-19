@@ -34,9 +34,10 @@ the invoice handoff; `ew12-ds12-cc12` for the PDF handoff). If a name already ex
 `.1`, `.2`, … to the stem rather than overwriting.
 
 B2. **`log_path` is exact.** A record's `log_path` names precisely the file that execution wrote, and
-is `None` when nothing was written. Today's behaviour per runner is kept: pytest and the two cross-app
-runners write nothing on timeout or startup failure (`log_path` absent); `cargo_lib` writes the output
-gathered from the steps that did complete and names that file. Only the *name* changes.
+is `None` when nothing was written. Today's behaviour per runner is kept: pytest and the invoice
+handoff (`accept_ew_ip`) write nothing on timeout or startup failure (`log_path` absent); `cargo_lib`
+and the PDF handoff (`accept_ew_ds`) write the output gathered from the steps that did complete and
+name that file. Only the *name* changes.
 
 B2a. **Recorded command names what ran, not where the artefact landed.** The JUnit path is now
 per execution, and `command` is part of record identity (`evidence.py` `Record.identity`), so a
@@ -74,15 +75,16 @@ I4. `--render-only`, `--set-baseline`, and `scripts/record_observation.py` write
 `data/logs`.
 I5. `data/logs` growth is bounded by stored records: a tick that stores nothing leaves the directory
 with the same file count it started with.
-I6. Record identity is unchanged (`log_path` is not part of it), so this slice cannot change any
-label, any collapse decision, or any fingerprint.
+I6. The identity fields are unchanged and `log_path` is not one of them. The only value that changes
+is the pytest `command` text, once, as B2a states — the single collapse decision this slice alters.
+No label and no fingerprint can change.
 
 ## Failure cases
 
 | Situation | Result |
 |---|---|
-| pytest / cross-app timeout or cannot start | `unavailable`, `log_path = None`, no file (as today) |
-| `cargo_lib` step timeout or cannot start | `unavailable`, the output gathered so far is written under the per-execution name and named in `log_path` (as today, new name) |
+| pytest / invoice handoff timeout or cannot start | `unavailable`, `log_path = None`, no file (as today) |
+| `cargo_lib` / PDF handoff step or proof timeout or cannot start | `unavailable`, the output gathered so far is written under the per-execution name and named in `log_path` (as today, new name) |
 | pytest ran but produced no JUnit | verdict `unknown` as today; the log is kept and named in `log_path`; no JUnit sibling |
 | identical consecutive observation (collapsed) | record not stored; its log (+ JUnit) removed |
 | collapsed, but removal fails | stderr warning; nothing else changes |
@@ -107,14 +109,17 @@ Unit (runner tests drive the real naming and removal code; the store is the real
    untouched byte for byte.
 3. `test_collapsed_execution_removal_failure_is_only_a_warning`: removal raises → warning on stderr,
    verdict/exit unchanged, store unchanged.
-4. `test_timeout_and_startup_failure_name_only_what_was_written`: pytest and cross-app timeout /
-   `OSError` → `log_path is None`, `data/logs` unchanged; `cargo_lib` timeout → exactly one new file
-   holding the gathered output, named in `log_path`.
+4. `test_timeout_and_startup_failure_name_only_what_was_written`: pytest timeout / `OSError` →
+   `log_path is None`, `data/logs` unchanged; `cargo_lib` timeout → exactly one new file holding the
+   gathered output, named in `log_path`. `test_invoice_handoff_timeout_writes_nothing_and_names_no_log`
+   and `test_pdf_handoff_timeout_keeps_gathered_output_under_the_execution_name` cover the two cross-app
+   runners the same way.
 5. `test_legacy_fixed_name_files_are_never_touched`: a pre-existing `<check>.<sha12>.log` survives an
    execution of the same check at the same revision, and the new record names a different file.
 6. `test_render_only_writes_and_removes_nothing`: `--render-only` on a store with records leaves
    `data/logs` identical.
-7. `test_log_name_collision_is_suffixed`: a file already at the computed name is not overwritten.
+7. `test_execution_names_carry_the_start_instant_and_never_collide`: the name carries the start
+   instant, and a file already at the computed name is not overwritten.
 
 Live (after merge and fast-forward): the first routine tick stores one new record per pytest check
 at the current revisions (B2a; same verdicts) and exactly one new file set per new record, each new
