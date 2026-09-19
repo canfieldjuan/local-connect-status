@@ -40,9 +40,11 @@ WATCHER_COMPAT_PATH = Path("/tmp/watcher-main")
 WATCHER_COMPAT_LOCK = Path("/tmp/local-connect-status-watcher-main.lock")
 
 # Where the products look for an installed Connect licence on Linux, relative to the configuration
-# root, and the size they refuse to read past. Both mirror eom_email_watcher/entitlement.py.
+# root, the size they refuse to read past, and the only timestamp grammar they accept. All three
+# mirror eom_email_watcher/entitlement.py; drift there surfaces here as an unavailable result.
 INSTALLED_ENTITLEMENT = Path("local-connect") / "entitlement-v1.json"
 MAX_ENTITLEMENT_BYTES = 16 * 1024
+UTC_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 # The acceptance script prints the watcher's own entitlement verdict on this line.
 WATCHER_DECISION_PREFIX = "watcher entitlement decision"
 
@@ -271,15 +273,15 @@ def installed_entitlement_path(env: Mapping[str, str]) -> Path | Failure:
 
 
 def _instant(value: Any, field_name: str) -> datetime | Failure:
+    """A claim timestamp exactly as the watcher parses it: the ``...Z`` grammar, then a UTC instant."""
     if not isinstance(value, str) or not value:
         return Failure("entitlement", f"{field_name} missing")
+    if not UTC_TIMESTAMP_PATTERN.match(value):
+        return Failure("entitlement", f"{field_name} is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
     try:
-        parsed = datetime.fromisoformat(value)
+        return datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
     except ValueError:
-        return Failure("entitlement", f"{field_name} is not an ISO timestamp")
-    if parsed.tzinfo is None:
-        return Failure("entitlement", f"{field_name} is a naive timestamp")
-    return parsed
+        return Failure("entitlement", f"{field_name} is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
 
 
 def read_installed_entitlement(
@@ -310,7 +312,7 @@ def read_installed_entitlement(
         envelope = json.loads(content)
     except OSError as exc:
         return unreadable(type(exc).__name__)
-    except ValueError:
+    except (ValueError, RecursionError):   # deep nesting exhausts the parser, not the collector
         return unreadable("not JSON")
     if not isinstance(envelope, dict):
         return unreadable("not a JSON object")
@@ -324,7 +326,7 @@ def read_installed_entitlement(
         return unreadable("payload_base64url missing")
     try:
         claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-    except ValueError:
+    except (ValueError, RecursionError):
         return unreadable("payload is not base64url JSON")
     if not isinstance(claims, dict):
         return unreadable("payload is not a JSON object")
@@ -702,8 +704,10 @@ class Runner:
             if failure is not None:
                 return Record(verdict="unavailable", summary=failure.why, **base)
             linked = True
+            # Fix the cleanup path before the copy starts, so a copy that fails half-way is still removed.
+            staged = compat_home / ".config" / INSTALLED_ENTITLEMENT
             try:
-                staged = stage_entitlement(compat_home, licence_bytes)
+                stage_entitlement(compat_home, licence_bytes)
             except OSError as exc:
                 return Record(verdict="unavailable",
                               summary=f"installed Connect entitlement unreadable: could not stage ({type(exc).__name__})",
@@ -761,8 +765,11 @@ class Runner:
                 except FileNotFoundError:
                     pass
                 except OSError as exc:
-                    print(f"warning: staged entitlement left behind at {staged}: {type(exc).__name__}",
-                          file=sys.stderr)
+                    try:   # a warning must never abort the cleanup that follows it
+                        print(f"warning: staged entitlement left behind at {staged}: {type(exc).__name__}",
+                              file=sys.stderr)
+                    except (OSError, ValueError):
+                        pass
             if linked and wm.is_symlink() and wm.resolve(strict=False) == ew_tree.resolve():
                 wm.unlink()
             fcntl.flock(lock_fh, fcntl.LOCK_UN)
