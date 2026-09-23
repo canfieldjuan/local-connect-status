@@ -152,14 +152,46 @@ def test_old_failure_never_rerun_reads_stale_failure():
     assert condition_status(COND, [rec("fail")], HEADS, "ip", CHECK).state == "check_failed"
 
 
-def test_stale_failure_needs_a_known_head():
-    old_fail = rec("fail", revision=OLD, recorded_at="2026-09-01T11:00:00+00:00")
-    assert condition_status(COND, [old_fail], {}, "ip", CHECK).state == "not_checked"
-    assert condition_status(COND, [old_fail], HEADS, "ip", CHECK).state == "stale_failure"
+def test_declared_participants_is_defined_once():
+    assert catmod.declared_participants({"repo": "ip"}) == ["ip"]
+    assert catmod.declared_participants({"repo": "ip", "participants": ["ip", "ew"]}) == ["ip", "ew"]
+    assert catmod.participants_required({"repo": "ip"}) is False
+    assert catmod.participants_required({"repo": "ip", "participants": ["ip"]}) is True
+    root = Path(__file__).resolve().parent.parent
+    writer = (root / "scripts" / "record_observation.py").read_text()
+    rules = (root / "lcstatus" / "rules.py").read_text()
+    assert "declared_participants(" in writer and 'get("participants"' not in writer
+    assert "declared_participants(" in rules and '"participants" in check' not in rules
+
+
+def test_unobserved_head_never_claims_a_revision_relation():
+    for verdict, maturity in (("pass", "partly built"), ("fail", "planned"), ("skip", "planned")):
+        row = rec(verdict, recorded_at="2026-09-09T10:01:00+00:00")       # at the true head
+        s = condition_status(COND, [row], {}, "ip", CHECK)                 # ...but the head was not observed
+        assert s.state == "head_unobserved", verdict
+        assert s.current is None and s.last_result is row
+        assert (s.last_proven is row) is (verdict == "pass")
+        assert condition_payload(s)["label"] == "current revision not observed this tick"
+        ts = task_status(TASK, [row], {}, CAT, CAT["release"])
+        assert ts.freshness == "head_unobserved" and ts.maturity == maturity
+        assert ts.platforms == {"linux": "head_unobserved"}
+        assert ts.unobserved_repos == ["ip"]
+        assert next_action(ts) == "Restore repository visibility for: ip"
+        assert any("was not observed this tick" in n for n in ts.notes)
+        # with the head observed, the ordinary states return
+        expected = {"pass": "satisfied", "fail": "check_failed", "skip": "not_checked"}[verdict]
+        assert condition_status(COND, [row], HEADS, "ip", CHECK).state == expected
+    # a cross-app row with one participant head missing is the same, whatever its revision
     xfail = rec("fail", cond=XCOND, check=XCHECK, revision=OLD, participants={"ip": OLD, "ew": OLD},
                 recorded_at="2026-09-01T11:00:00+00:00")
-    assert condition_status(XCOND, [xfail], {"ip": NEW}, "ip", XCHECK).state == "not_checked"
+    assert condition_status(XCOND, [xfail], {"ip": NEW}, "ip", XCHECK).state == "head_unobserved"
     assert condition_status(XCOND, [xfail], HEADS, "ip", XCHECK).state == "stale_failure"
+    # never proving, never "changed since": an old pass under an unobserved head
+    old_pass = rec("pass", revision=OLD)
+    s = condition_status(COND, [old_pass], {}, "ip", CHECK)
+    assert s.state == "head_unobserved" and s.last_proven is old_pass
+    # no admitted evidence: the revision-free states are unchanged
+    assert condition_status(COND, [], {}, "ip", CHECK).state == "no_evidence"
 
 
 def test_stale_failure_gate_and_release_fail_closed():

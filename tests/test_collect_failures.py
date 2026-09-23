@@ -159,7 +159,8 @@ def test_render_only_excludes_head_marked_unknown_and_does_not_repromote_old_pas
     status = json.loads((tmp_path / "site" / "status.json").read_text())
     assert status["heads"] == {}
     condition = status["tasks"][0]["conditions"][0]
-    assert condition["state"] == "changed_since"
+    # contract 04 B7: a head marked unknown yields "current revision not observed", never a re-promoted pass
+    assert condition["state"] == "head_unobserved"
     assert condition["current"] is None
 
 

@@ -11,6 +11,8 @@ For every condition of every task, the rules find the best evidence and classify
                          condition once passed under an earlier one — kept visible, never proof
     stale_failure        the latest evidence is a failure at an earlier revision and nothing has
                          run since — kept visible, never proof, nothing known about current code
+    head_unobserved      the repository's current revision was not observed this tick, so no
+                         revision relation can be claimed; the last result stays visible
     no_evidence          no record of the right kind exists for this condition at all
     inconclusive         source inspection only, which can hint but not prove
 
@@ -33,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .catalogue import declared_participants, participants_required
 from .evidence import (
     Record, check_fingerprint, condition_fingerprint, instant_key,
     record_check_fingerprint, record_condition_fingerprint, resolve_check_fingerprint,
@@ -45,10 +48,10 @@ PROVING_VERDICT = ("pass",)
 @dataclass
 class ConditionStatus:
     condition: dict[str, Any]
-    state: str                      # satisfied | changed_since | check_failed | not_checked | stale_failure | config_changed | no_evidence | inconclusive
+    state: str                      # satisfied | changed_since | check_failed | not_checked | stale_failure | head_unobserved | config_changed | no_evidence | inconclusive
     current: Record | None = None   # best record at the current revision, if any
     last_proven: Record | None = None
-    last_result: Record | None = None   # stale_failure only: the failing record that was never re-run
+    last_result: Record | None = None   # stale_failure / head_unobserved: the latest admitted record
     platform: str = "n/a"
 
     def as_dict(self) -> dict[str, Any]:
@@ -77,6 +80,7 @@ class TaskStatus:
     release_issue_gate: str = "not_applicable"  # not_applicable | clear | blocked | unavailable
     release_issue_blockers: list[dict[str, Any]] = field(default_factory=list)
     release_issue_unavailable_repos: list[str] = field(default_factory=list)
+    unobserved_repos: list[str] = field(default_factory=list)   # heads not observed this tick
 
 
 def _current_head(heads: dict[str, str], repo: str) -> str | None:
@@ -98,10 +102,12 @@ def condition_status(
     kind = cond["kind"]
     if not check_repo:
         raise ValueError(f"condition {cond['id']}: check {cond.get('check')!r} names no repository")
-    # The writer's reading (record_observation.py): a check that declares no participants declares
-    # its own repository, so a single-app demo names exactly {repo}; automated rows name nothing.
-    declares_participants = "participants" in check
-    declared_participants = set(check["participants"]) if declares_participants else {check_repo}
+    # One definition of the declared set (catalogue.declared_participants); the writer uses the same.
+    declared = declared_participants(check)
+    declared_set = set(declared)
+    declares_participants = participants_required(check)
+    # No revision relation can be asserted unless every declared repository's head was observed.
+    head_observed = all(repo in heads for repo in declared)
     want_platform = cond.get("platform") or check.get("platform")
     expected_check_fingerprint = check_fingerprint(check)
     expected_condition_fingerprint = condition_fingerprint(cond)
@@ -121,7 +127,7 @@ def condition_status(
         # A row that names a subset, a superset, or participants for a check that declares none
         # was not produced by this configuration; it is history (config_changed), never proof.
         named = set(r.participants)
-        complete = named == declared_participants or (not named and not declares_participants)
+        complete = named == declared_set or (not named and not declares_participants)
         return (
             resolve_check_fingerprint(record_check_fingerprint(r)) == expected_check_fingerprint
             and record_condition_fingerprint(r, cond["id"]) == expected_condition_fingerprint
@@ -159,9 +165,12 @@ def condition_status(
             cond, "inconclusive", current=latest(current, same_revision=True) if current else None, platform=plat
         )
 
-    current = [r for r in evid if _matches_current(r, heads, check_repo)]
     proven = [r for r in evid if r.verdict in PROVING_VERDICT]
     last_proven = latest(proven) if proven else None
+    if evid and not head_observed:
+        # Every state below compares revisions; without the head none of them can be truthful.
+        return ConditionStatus(cond, "head_unobserved", last_proven=last_proven, last_result=latest(evid), platform=plat)
+    current = [r for r in evid if _matches_current(r, heads, check_repo)]
     if current:
         best = latest(current, same_revision=True)
         if best.verdict in PROVING_VERDICT:
@@ -175,12 +184,8 @@ def condition_status(
     if evid:
         # records exist, but none at the current revision and none ever passed
         last = latest(evid)
-        # "an earlier revision" can only be claimed when the current one was observed this tick
-        head_known = (
-            all(repo in heads for repo in last.participants) if last.participants else check_repo in heads
-        )
-        if last.verdict == "fail" and head_known:
-            # the check failed and has not run since: nothing was skipped
+        if last.verdict == "fail":
+            # the head was observed (above) and moved: the check failed and has not run since
             return ConditionStatus(cond, "stale_failure", last_result=last, platform=plat)
         return ConditionStatus(cond, "not_checked", current=None, last_proven=None, platform=plat)
     if superseded_passes:
@@ -201,6 +206,16 @@ def task_status(
         chk = checks.get(c["check"], {})
         repo = chk.get("repo", "")
         conds.append(condition_status(c, records, heads, repo, chk))
+
+    unobserved_repos = sorted({
+        checks[c.condition["check"]]["repo"] for c in conds if c.state == "head_unobserved"
+    })
+
+    def proven_somewhere(c: ConditionStatus) -> bool:
+        # a pass exists; its currentness is either older (changed_since) or unknown (head_unobserved)
+        return c.state in ("satisfied", "changed_since") or (
+            c.state == "head_unobserved" and c.last_proven is not None
+        )
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
     demos = [c for c in conds if c.condition["kind"] == "installed_demo"]
@@ -247,9 +262,9 @@ def task_status(
         maturity = "demonstrated"
     elif sat(automated):
         maturity = "built"
-    elif any(c.state in ("satisfied", "changed_since") for c in automated):
+    elif any(proven_somewhere(c) for c in automated):
         maturity = "partly built"
-    elif any(c.state == "changed_since" for c in demos) and any(c.state in ("satisfied", "changed_since") for c in automated):
+    elif any(c.state == "changed_since" for c in demos) and any(proven_somewhere(c) for c in automated):
         maturity = "partly built"
     else:
         maturity = "planned"
@@ -265,6 +280,8 @@ def task_status(
         freshness = "no_evidence"   # nothing checkable was defined; "current" would be a lie
     elif any(s == "check_failed" for s in states):
         freshness = "check_failed"
+    elif any(s == "head_unobserved" for s in states):
+        freshness = "head_unobserved"
     elif any(s in ("changed_since", "config_changed") for s in states):
         freshness = "changed_since_verification"
     elif any(s == "not_checked" for s in states):
@@ -275,6 +292,9 @@ def task_status(
         freshness = "current"
 
     notes: list[str] = []
+    if unobserved_repos:
+        notes.append("The current revision of " + ", ".join(unobserved_repos)
+                     + " was not observed this tick; nothing here claims a revision relation until it is.")
     if any(c.state == "changed_since" for c in demos):
         notes.append("Last demonstration was at an earlier revision; shown, not current.")
     if issue_gate == "blocked":
@@ -284,7 +304,7 @@ def task_status(
 
     return TaskStatus(
         task, maturity, freshness, conds, _platform_states(conds, release), notes,
-        issue_gate, issue_blockers, issue_unavailable,
+        issue_gate, issue_blockers, issue_unavailable, unobserved_repos,
     )
 
 
@@ -298,6 +318,8 @@ def _platform_states(conds: list[ConditionStatus], release: dict[str, Any]) -> d
             out[p] = "satisfied"
         elif any(c.state == "check_failed" for c in on_p):
             out[p] = "check_failed"
+        elif any(c.state == "head_unobserved" for c in on_p):
+            out[p] = "head_unobserved"
         elif any(c.state in ("changed_since", "config_changed") for c in on_p):
             out[p] = "changed_since"
         elif any(c.state in ("not_checked", "stale_failure") for c in on_p):
