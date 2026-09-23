@@ -22,7 +22,7 @@ TINY_CATALOGUE = {
     "apps": {"ghost-app": {"name": "Ghost", "repo": "ghost"}},
     "checks": {
         "g.ci": {"runner": "ci_job", "repo": "ghost", "workflow": "CI", "job": "test", "platform": "linux"},
-        "g.rel": {"runner": "github_release", "repo": "*", "platform": "n/a"},
+        "g.rel": {"runner": "github_release", "repo": "ghost", "platform": "n/a"},
     },
     "tasks": [{
         "id": "g.task", "app": "ghost-app", "layer": "standalone", "title": "Ghost works", "promise": "p",
@@ -193,7 +193,8 @@ def test_release_dispatch_is_scoped_to_the_configured_repository():
         "ip": Revision("ip", "b" * 40, "2026-09-11T00:00:00Z", "invoice"),
     }
     assert [repo for repo, _ in release_targets({"repo": "ip"}, revisions)] == ["ip"]
-    assert {repo for repo, _ in release_targets({"repo": "*"}, revisions)} == {"ew", "ip"}
+    assert release_targets({"repo": "*"}, revisions) == []          # no fan-out: a repo must be named
+    assert release_targets({"repo": "zz"}, revisions) == []
 
 
 def test_unavailable_results_from_any_runner_are_run_failures(tmp_path: Path):

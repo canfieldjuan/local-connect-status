@@ -20,7 +20,7 @@ CAT = {
         "t.pytest": {"runner": "pytest", "repo": "ip", "platform": "linux"},
         "t.ci.win": {"runner": "ci_job", "repo": "ip", "platform": "windows"},
         "t.demo": {"runner": "manual_observation", "repo": "ip", "participants": ["ip", "ew"]},
-        "t.rel": {"runner": "github_release", "repo": "*"},
+        "t.rel": {"runner": "github_release", "repo": "ip"},
         "t.inspect": {"runner": "manual_observation", "repo": "ew"},
     },
 }
@@ -591,18 +591,19 @@ def test_current_release_failure_beats_old_pass_with_inflated_publication_time()
 
 
 def test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure():
+    # t.demo declares two participants; a demo record must name exactly those (contract 04 B1).
     newer_failure = rec(
-        "installed_demo", "fail", cond="d1", repo="ip",
+        "installed_demo", "fail", cond="d1", repo="ip", participants={"ip": NEW, "ew": NEW},
         recorded_at="2026-09-11T16:00:00+00:00",
     )
     backfilled_pass = rec(
-        "installed_demo", "pass", cond="d1", repo="ip",
+        "installed_demo", "pass", cond="d1", repo="ip", participants={"ip": NEW, "ew": NEW},
         recorded_at="2026-09-11T15:00:00+00:00",
     )
     status = condition_status(
         {"id": "d1", "kind": "installed_demo", "check": "t.demo"},
         [newer_failure, backfilled_pass],
-        {"ip": NEW},
+        {"ip": NEW, "ew": NEW},
         "ip",
     )
     assert status.state == "check_failed"

@@ -39,7 +39,9 @@ Three things are kept apart on purpose:
 A condition is **verified** only when passing evidence *of its own kind* exists at the
 *current* revision (every participant's revision, for cross-app checks). Older passing
 evidence stays visible as **changed since verification**. A failing check at the current
-revision is **check failed**. A record that exists but carries no result (the check was
+revision is **check failed**. A failure at an earlier revision that has not been re-run since is
+**failed at an earlier revision, not re-run** — nothing is known about the current code until the
+check runs. A record that exists but carries no result (the check was
 skipped, unavailable, pending or unknown) is **check skipped or unavailable**. When no record
 of the right kind exists at all the condition, platform or task reads **no evidence** — it
 never reads as if something had been checked. Source inspection is **needs verification** —
@@ -81,7 +83,10 @@ A changed configuration or claim stays visible: when nothing has been admitted u
 one, an earlier pass reads **configuration changed since verification** until the check runs
 again under the current configuration. That state is history, not proof — it never verifies,
 never counts toward maturity and never clears a release gate. Fingerprint-free rows outside the
-authenticated prefix are not admitted through the compatibility path.
+authenticated prefix are not admitted through the compatibility path. A cross-app record is admitted
+only when it names exactly the check's declared participants; every check names one repository, and
+the rules never substitute another. The store refuses to write a row whose instants are not
+timezone-aware; the collector records that refusal as a source failure and continues.
 
 The exact pytest verdict rule: a nonzero exit is `fail` whatever the output said; zero
 executed tests is `skip`; counts come from JUnit XML, not from the summary line.
