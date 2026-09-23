@@ -6,8 +6,11 @@ review of the implementation, gates B3 on an observed head, guards every collect
 rejected row's files, and validates declared participants; rev 5 moves two rules to their root after the
 operator asked for the defects introduced in this slice to be fixed at the root: the declared participant
 set is defined once and read by every layer (B6), and "the head was observed this tick" is one predicate
-applied before any revision relation is asserted, replacing rev 4's precondition on B3 alone (B7); no
-accepted behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
+applied before any revision relation is asserted, replacing rev 4's precondition on B3 alone (B7); rev 6, after review of that code, completes both
+enforcement points: the cross-app runners and the collector also read the declared set from the catalogue,
+the validator requires the key for cross-app runners, the gate precedes every kind including source
+inspection, and the named repositories are the ones actually missing from `heads`; no accepted behaviour
+is withdrawn). Slice 4 of the 2026-09-18 fix plan.
 Scope: `lcstatus/rules.py` (currentness, admission, one new condition state), `lcstatus/catalogue.py`
 (repository grammar), `lcstatus/collect.py` (release targets), `lcstatus/evidence.py` (write-time instant
 validation), `lcstatus/render.py` (one label, one next action), tests, README "Status rules". No runner
@@ -105,19 +108,25 @@ the failure row's `log_path`: the log is the one artifact that still says what t
 B6. **The declared participant set is defined once.** `lcstatus.catalogue.declared_participants(check)`
 returns `check["participants"]` when the key is present and `[check["repo"]]` otherwise, and
 `participants_required(check)` says whether the key is present. The observation script, the rules and the
-catalogue validator all call these; none re-derives the rule. Behaviour is exactly rev 3's B1; the change
-is that it can no longer drift, which is how rev 3 became necessary.
+catalogue validator all call these, and so do the two cross-app runners and the collector's dispatch;
+none re-derives the rule, and a test walks the syntax tree of every module outside `catalogue.py` to prove
+no private copy exists. `catalogue.load` requires the `participants` key for the cross-app runners
+(`accept_ew_ip`, `accept_ew_ds`), so a check those runners would fail on cannot load. Behaviour is exactly
+rev 3's B1; the change is that it can no longer drift, which is how rev 3 became necessary.
 
 B7. **No revision relation without an observed head.** One predicate, evaluated before any state that
-compares revisions: the check's head was observed this tick when every repository in
+compares revisions — for every condition kind, source inspection included (an inspection's `current` is
+a revision comparison too): the check's head was observed this tick when every repository in
 `declared_participants(check)` is in `heads`. When it was not, and admitted evidence exists, the
 condition reads `head_unobserved` ("current revision not observed this tick"): `current` is `None`,
 `last_proven` is the latest pass if any, `last_result` is the latest admitted record, and the evidence
 column shows it. It is never proving. A pass in that history counts toward `partly built` exactly as
 `changed_since` does (a pass exists; only its currentness is unknown), and never higher. Task freshness
 reads `head_unobserved` ("current revision not observed"), ranked directly after `check_failed`; platform
-rows read the same; the task carries a note naming the repositories; the next action is "Restore
-repository visibility for: <repos>", ahead of every per-condition action. `changed_since`,
+rows read the same; the task carries a note naming the repositories **that were not observed** (the
+declared set minus `heads`, never the check's own repository by default) and serialises them as
+`unobserved_repos`; the next action is "Restore repository visibility for: <repos>", ahead of every
+per-condition action; the page's summary banners count such tasks as "current revision not observed". `changed_since`,
 `stale_failure` and `not_checked` are therefore asserted only under an observed head, which retires
 rev 4's separate precondition on B3. When no admitted evidence exists the states are unchanged
 (`config_changed`, `no_evidence`): neither claims a revision relation.
