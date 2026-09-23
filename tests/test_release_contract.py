@@ -199,7 +199,7 @@ def test_github_issue_runner_records_only_the_exact_milestone_and_fails_loud(tmp
                           {"title": "Later", "number": 2, "state": "open", "open_issues": 1}],
             "owner/clear": [{"title": "First Public Release", "number": 1, "state": "open", "open_issues": 0},
                             {"title": "Later", "number": 2, "state": "open", "open_issues": 1}],
-            "broken/repo": Failure("gh", "timed out"),
+            "broken/repo": [{"title": "First Public Release", "number": 1, "state": "open", "open_issues": 0}],
         }
 
         def milestones(self, repo: str):

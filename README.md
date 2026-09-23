@@ -52,8 +52,8 @@ never reads as if something had been checked. Source inspection is **needs verif
 a string in the code is a hint, not proof, and a missing string is not proof of absence.
 
 The release issue gate reads clear only after its milestone was found in the repository and the open-issue
-listing agreed with the milestone's own count; a missing or renamed milestone, a failed lookup, or a
-disagreeing count is **unavailable**, never clear.
+listing was read; a missing or renamed milestone or a failed lookup is **unavailable**, never clear. The
+listing decides; GitHub's milestone counter is recorded when it disagrees and never changes the verdict.
 
 Maturity never exceeds the evidence: `planned` → `partly built` → `built` (all test/CI
 conditions verified) → `demonstrated` (plus installed-app observations) → `ready for
