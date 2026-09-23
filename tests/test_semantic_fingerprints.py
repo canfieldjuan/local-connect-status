@@ -18,7 +18,7 @@ NEW, OLD = "b" * 40, "a" * 40
 CHECK = {"runner": "pytest", "repo": "ip", "platform": "linux", "args": ["-k", "x"], "note": "why"}
 CAT = {"release": {"required_platforms": ["linux"]}, "checks": {"t.pytest": CHECK}}
 COND = {"id": "c1", "kind": "automated_test", "check": "t.pytest", "proves": "it works"}
-TASK = {"id": "t", "layer": "connect", "app": "x", "app_repo": "ip", "conditions": [COND], "depends_on": []}
+TASK = {"id": "t", "layer": "connect", "app": "x", "conditions": [COND], "depends_on": []}
 HEADS = {"ip": NEW}
 
 
