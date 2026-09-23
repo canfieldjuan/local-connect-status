@@ -1,8 +1,9 @@
 # Contract 04 — The rules say only what the evidence says
 
 Status: **accepted 2026-09-23** (rev 2 adds the collector's handling of a rejected row to B4; rev 3 corrects
-B1 for single-app checks after the live proof showed six installer demos flipping; no accepted behaviour is
-withdrawn). Slice 4 of the 2026-09-18 fix plan.
+B1 for single-app checks after the live proof showed six installer demos flipping; rev 4, after independent
+review of the implementation, gates B3 on an observed head, guards every collector write under B4, keeps a
+rejected row's files, and validates declared participants; no accepted behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
 Scope: `lcstatus/rules.py` (currentness, admission, one new condition state), `lcstatus/catalogue.py`
 (repository grammar), `lcstatus/collect.py` (release targets), `lcstatus/evidence.py` (write-time instant
 validation), `lcstatus/render.py` (one label, one next action), tests, README "Status rules". No runner
@@ -67,7 +68,9 @@ B2. **Every check names one repository.** `catalogue.load` rejects a check whose
 and never fans out. `task_status` passes `check["repo"]` to `condition_status`; `condition_status` requires
 a non-empty `check_repo` and raises `ValueError` otherwise (a programming error, not a data state). The
 repository filter therefore always applies; the `if check_repo:` guard is gone. `catalogue.load` stops
-attaching `app_repo` to tasks; nothing reads it.
+attaching `app_repo` to tasks; nothing reads it. When a check carries a `participants` key, `catalogue.load`
+requires a non-empty list of distinct catalogue repositories that includes the check's own repository
+(the shape every writer assumes); anything else fails loudly.
 
 B3. **`stale_failure`.** A condition whose admitted records exist, none at the current revision, none ever
 passing, and whose latest admitted record (ordered as `latest()` orders) has verdict `fail`, is in state
@@ -76,7 +79,10 @@ passing, and whose latest admitted record (ordered as `latest()` orders) has ver
 must run; nothing is known about the current revision) and platform rows read `not_checked`. Next action
 "Re-run at current code (<check>): <proves>", ranked after `changed_since` and before `config_changed`. It
 is never proving. The same branch with a latest record of skip / unavailable / pending / unknown stays
-`not_checked`, as today.
+`not_checked`, as today. **Precondition: the head is known.** `stale_failure` is asserted only when the
+check's repository head — every declared participant's head, for a cross-app record — was observed this
+tick. When a head is unknown, nothing is known about revision order, so the branch stays `not_checked`
+as today rather than claiming "an earlier revision" the evidence cannot place.
 
 B4. **Write-time instant validation.** `Store.add` raises `ValueError` and appends nothing when the
 record's `recorded_at` is not an aware ISO-8601 instant, or when `revision_time` is present and is not
@@ -87,7 +93,10 @@ The collector's `store_result` turns that `ValueError` into a `collection_failur
 repository (kind `collection_failure`, verdict `unavailable`, `revision_time` omitted, summary naming the
 field and value) and continues the run, so one bad source timestamp is shown as a source failure on the
 page rather than aborting the tick and leaving the dashboard silently stale. The rejected row itself is
-never written.
+never written. Every store write in the collector — runner rows, revision rows, change rows and the
+collector's own failure rows — goes through that one guarded helper, so the promise holds for all of them,
+not only for runner rows. A rejected row's execution files, when it has any, are kept and referenced from
+the failure row's `log_path`: the log is the one artifact that still says what the run did.
 
 B5. **README "Status rules"** states each of the above in one sentence: a cross-app record must name
 exactly the declared participants; every check names one repository; an old failure that has not been
@@ -118,7 +127,11 @@ I5. The catalogue is the only place a check's repository is decided; the rules n
 | exact declared set, one participant behind its head | admitted, `changed_since` (as today) |
 | catalogue check with `"repo": "*"` or an unlisted repo | `catalogue.load` fails loudly, listing the check |
 | `condition_status` called with an empty `check_repo` | `ValueError` |
-| only a `fail` at an earlier revision, never re-run | `stale_failure`; next action "Re-run at current code" |
+| only a `fail` at an earlier revision, never re-run, head observed | `stale_failure`; next action "Re-run at current code" |
+| only a `fail`, and the repository's (or a participant's) head was not observed this tick | `not_checked`, as today |
+| `stale_failure` on an issue gate or release lookup | gate `unavailable` / release not met; readiness fails closed; never "ready for release" |
+| check declares `participants: []`, a non-list, a duplicate, an unlisted repo, or omits its own | `catalogue.load` fails loudly |
+| revision or change row with a naive `committed_at` | reported as a `collection_failure` for that repository; the tick continues |
 | only a `skip`/`unavailable` at an earlier revision | `not_checked`, as today |
 | a `fail` at an earlier revision and a `pass` at an even earlier one | `changed_since` (a pass exists), as today |
 | runner row with naive `recorded_at`, or naive `revision_time` | `Store.add` raises; nothing appended; the collector records a `collection_failure` for that repository and continues |
@@ -145,14 +158,24 @@ Unit:
 4. `test_old_failure_never_rerun_reads_stale_failure`: fail-only history at an older revision →
    `stale_failure`, label, next action, task freshness `not_checked`, platform `not_checked`, maturity
    `planned`; a skip-only history stays `not_checked`; a pass anywhere in history stays `changed_since`;
-   a fail at the current revision stays `check_failed`.
+   a fail at the current revision stays `check_failed`. `test_stale_failure_needs_a_known_head`: the same
+   fail with the repository (or one participant) absent from heads stays `not_checked`.
+   `test_stale_failure_gate_and_release_fail_closed`: an issue gate and a release lookup in
+   `stale_failure` leave the gate `unavailable`, maturity below "ready for release", next action the
+   re-run. `test_report_and_dashboard_show_the_stale_failure_record`: the markdown report's evidence
+   column and the dashboard script fall back to `last_result`.
 5. `test_store_rejects_non_aware_instants_at_write`: naive `recorded_at`, naive `revision_time`, and an
    unparseable string each raise and append nothing (file bytes unchanged); an aware `+02:00` instant is
-   stored and ordered correctly against a `Z` instant; `test_collector_records_a_rejected_row_as_a_source_failure`:
-   `store_result` with such a row appends one `collection_failure` and no evidence row, and the run continues.
-6. `test_every_live_row_passes_write_time_validation` (read-only over `data/records.jsonl`).
-7. `test_admitted_sets_are_identical_before_and_after_participant_completeness` on the repository's
-   checked-in store snapshot. **Known limit**: that snapshot is the 151-row legacy prefix from PR #1 and
+   stored and ordered by the rules as later than a `Z` instant that precedes it;
+   `test_collector_records_a_rejected_row_as_a_source_failure`: `store_result` with such a row appends one
+   `collection_failure` carrying the row's `log_path`, keeps the files, and appends no evidence row;
+   `test_collector_guards_every_store_write`: every `store.add` in `collect.py` goes through the guarded
+   helper (asserted on the source), and a revision row with a naive `committed_at` becomes a
+   `collection_failure`. `test_catalogue_validates_declared_participants` (B2).
+6. `test_every_snapshot_row_passes_write_time_validation` (read-only over the repository's
+   `data/records.jsonl`).
+7. `test_snapshot_admission_is_unchanged_by_participant_completeness` on the repository's checked-in
+   store snapshot. **Known limit**: that snapshot is the 151-row legacy prefix from PR #1 and
    holds one installed demo, so it cannot see the single-app demo shape; the live proof below is the gate
    that can, and it is run against the live store, not the snapshot.
 
