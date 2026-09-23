@@ -460,7 +460,8 @@ def test_without_a_current_head_stored_evidence_is_history_not_current():
     must read "changed since", never "verified at current code"."""
     r = rec("automated_test", "pass", executed=5, failed=0)
     s = condition_status({"id": "c1", "kind": "automated_test", "check": "t.pytest"}, [r], {}, "ip")
-    assert s.state == "changed_since" and s.current is None and s.last_proven is r
+    # contract 04 B7: with no observed head, stored evidence is history but not "changed since"
+    assert s.state == "head_unobserved" and s.current is None and s.last_proven is r
 
 
 def test_release_of_older_code_is_changed_since_once_main_moves_on():
@@ -627,7 +628,8 @@ def test_last_proven_uses_absolute_instant_across_offsets():
         {},
         "ip",
     )
-    assert status.state == "changed_since"
+    # contract 04 B7: no head in `heads`, so no revision relation; last_proven still picked by absolute instant
+    assert status.state == "head_unobserved"
     assert status.last_proven is lexically_earlier_but_newer
 
 

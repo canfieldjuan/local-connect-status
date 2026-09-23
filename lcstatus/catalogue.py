@@ -30,6 +30,22 @@ KIND_RUNNERS = {
 }
 
 
+def declared_participants(check: dict[str, Any]) -> list[str]:
+    """The repositories a record for this check must name.  Defined here, read everywhere.
+
+    A check that declares `participants` names them all; a check that does not declares its own
+    repository.  The observation script writes this set, the rules admit only this set, and the
+    validator below checks its shape.  No other module may re-derive it.
+    """
+    return list(check["participants"]) if "participants" in check else [check["repo"]]
+
+
+def participants_required(check: dict[str, Any]) -> bool:
+    """True for a cross-app check: every record must name the declared set (automated rows may
+    name nothing only for a check that declares none)."""
+    return "participants" in check
+
+
 def load(path: Path) -> dict[str, Any]:
     cat = json.loads(Path(path).read_text(encoding="utf-8"))
     problems: list[str] = []
@@ -48,7 +64,7 @@ def load(path: Path) -> dict[str, Any]:
             problems.append(f"check {cid}: repo must name one catalogue repository, got {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
-        if "participants" in chk:
+        if participants_required(chk):
             parts = chk["participants"]
             if (
                 not isinstance(parts, list) or not parts or len(set(parts)) != len(parts)

@@ -109,7 +109,7 @@ def main() -> int:
     if not chk or chk["runner"] != "manual_observation":
         print(f"{a.check} is not a manual_observation check", file=sys.stderr)
         return 2
-    expected_repos = chk.get("participants", [chk["repo"]])
+    expected_repos = catmod.declared_participants(chk)
     try:
         parts = parse_participants(a.participant, expected_repos)
     except ValueError as exc:

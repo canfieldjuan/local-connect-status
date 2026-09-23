@@ -41,7 +41,11 @@ A condition is **verified** only when passing evidence *of its own kind* exists 
 evidence stays visible as **changed since verification**. A failing check at the current
 revision is **check failed**. A failure at an earlier revision that has not been re-run since is
 **failed at an earlier revision, not re-run** — nothing is known about the current code until the
-check runs. A record that exists but carries no result (the check was
+check runs. Every one of those states compares revisions, so none of them is asserted unless the
+repository's current revision (every participant's, for cross-app checks) was observed this tick; when
+a head lookup failed, the condition reads **current revision not observed this tick**, the task reads
+**current revision not observed**, the last result stays visible, and the next action is to restore
+repository visibility. A record that exists but carries no result (the check was
 skipped, unavailable, pending or unknown) is **check skipped or unavailable**. When no record
 of the right kind exists at all the condition, platform or task reads **no evidence** — it
 never reads as if something had been checked. Source inspection is **needs verification** —
