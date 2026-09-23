@@ -64,6 +64,8 @@ def load(path: Path) -> dict[str, Any]:
             problems.append(f"check {cid}: repo must name one catalogue repository, got {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
+        if chk.get("runner") in ("accept_ew_ip", "accept_ew_ds") and not participants_required(chk):
+            problems.append(f"check {cid}: a cross-app runner must declare participants")
         if participants_required(chk):
             parts = chk["participants"]
             if (

@@ -457,7 +457,7 @@ def test_no_record_at_all_is_no_evidence_not_not_checked():
 
 def test_without_a_current_head_stored_evidence_is_history_not_current():
     """A head lookup failure leaves the head unknown; passing evidence at the last known SHA
-    must read "changed since", never "verified at current code"."""
+    must read "current revision not observed", never "verified at current code"."""
     r = rec("automated_test", "pass", executed=5, failed=0)
     s = condition_status({"id": "c1", "kind": "automated_test", "check": "t.pytest"}, [r], {}, "ip")
     # contract 04 B7: with no observed head, stored evidence is history but not "changed since"
