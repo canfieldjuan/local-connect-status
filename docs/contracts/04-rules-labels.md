@@ -1,7 +1,8 @@
 # Contract 04 — The rules say only what the evidence says
 
-Status: **accepted 2026-09-23** (rev 2 adds the collector's handling of a rejected row to B4; no accepted
-behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
+Status: **accepted 2026-09-23** (rev 2 adds the collector's handling of a rejected row to B4; rev 3 corrects
+B1 for single-app checks after the live proof showed six installer demos flipping; no accepted behaviour is
+withdrawn). Slice 4 of the 2026-09-18 fix plan.
 Scope: `lcstatus/rules.py` (currentness, admission, one new condition state), `lcstatus/catalogue.py`
 (repository grammar), `lcstatus/collect.py` (release targets), `lcstatus/evidence.py` (write-time instant
 validation), `lcstatus/render.py` (one label, one next action), tests, README "Status rules". No runner
@@ -19,7 +20,12 @@ store; every one is a rule the code does not enforce and a later row could explo
   catalogue set (`test_participant_parser_accepts_exact_catalogue_set_at_sha_boundary`); a *different*
   declared set changes the check fingerprint. The rules layer is the one that does not check. Live store
   (1,164 rows): 10 rows name a participant set other than their check's declared one — all from the
-  two-participant era of `xapp.accept_ew_to_ip`, all already excluded by fingerprint.
+  two-participant era of `xapp.accept_ew_to_ip`, all already excluded by fingerprint. **What "declared"
+  means is fixed by the writer**: `record_observation.py:112` takes the declared set as
+  `check["participants"]` when present and otherwise `[check["repo"]]`, so a single-app manual demo row
+  names exactly its own repository (9 live rows across the six `manual.*_install` checks do), and automated
+  runner rows name nothing. A rule that read "declares none" as "must name none" would orphan those nine
+  rows; rev 1 of this contract did, and the live proof caught it.
 - **P2 — a wildcard repository can skip the repository filter.** `catalogue.py:47` accepts `"repo": "*"`
   for every runner except the issue gate; `collect.py:56-61` fans such a release check out to every
   repository; `rules.py:179` substitutes the task's `app_repo` for `"*"`, which the catalogue sets to `""`
@@ -45,13 +51,16 @@ store; every one is a rule the code does not enforce and a later row could explo
 
 ## Observable behaviour
 
-B1. **Participant-set completeness.** A record is admitted for a condition only if the set of repositories
-it names in `participants` equals the check's declared `participants` (order-free; both empty when the
-check declares none). A record that names a subset, a superset, or participants for a check that
-declares none, is not admitted. Because it carries an attributable fingerprint, a passing one is history
-under contract 03 and reads `config_changed`; it is never current and never `changed_since`. Currentness
-of an admitted cross-app record is unchanged: every declared participant's recorded revision must equal
-that repository's head.
+B1. **Participant-set completeness.** The declared participant set of a check is `participants` when
+the key is present, otherwise `{repo}` — the same reading the observation script enforces at write. A
+record is admitted for a condition only if the set of repositories it names in `participants` is (a)
+exactly the declared set, or (b) empty, and (b) is allowed only for a check that declares no
+`participants` key (automated runner rows never name participants; their revision is the check's
+repository head). A record that names a subset, a superset, another repository, or nothing for a check
+that declares `participants`, is not admitted. Because it carries an attributable fingerprint, a passing
+one is history under contract 03 and reads `config_changed`; it is never current and never
+`changed_since`. Currentness is unchanged: a record with participants is current when every one of them
+is at its head; a record without is current when the check's repository is at the record's revision.
 
 B2. **Every check names one repository.** `catalogue.load` rejects a check whose `repo` is not a key of
 `repos`; the `"*"` exception is removed for every runner. `release_targets` reads the check's one repository
@@ -102,7 +111,10 @@ I5. The catalogue is the only place a check's repository is decided; the rules n
 |---|---|
 | cross-app record names a subset of the declared participants, all at head | not admitted; if it passed, `config_changed` history |
 | cross-app record names an extra repository | not admitted; same |
-| record names participants for a check that declares none | not admitted |
+| cross-app record names no participants at all | not admitted (a demo of one app cannot prove two) |
+| single-app manual demo names exactly its own repository | admitted (the writer's declared set) |
+| single-app check, record names another repository | not admitted |
+| automated runner row, no participants | admitted, as today |
 | exact declared set, one participant behind its head | admitted, `changed_since` (as today) |
 | catalogue check with `"repo": "*"` or an unlisted repo | `catalogue.load` fails loudly, listing the check |
 | `condition_status` called with an empty `check_repo` | `ValueError` |
@@ -121,9 +133,11 @@ append, under the collector's existing lock.
 ## Settling test evidence
 
 Unit:
-1. `test_participant_set_must_equal_the_declared_set`: subset, superset, extra-repo and participants-on-a-
-   participantless-check rows are never admitted and never current; the exact set at head is `satisfied`;
-   a passing subset row alone reads `config_changed`.
+1. `test_participant_set_must_equal_the_declared_set`: for a check that declares participants, subset,
+   superset, extra-repo and empty-set rows are never admitted and never current, the exact set at head is
+   `satisfied`, and a passing subset row alone reads `config_changed`; for a check that declares none, a
+   row naming exactly its own repository and a row naming nothing are both admitted, a row naming another
+   repository is not.
 2. `test_catalogue_rejects_wildcard_and_unlisted_repositories` and
    `test_release_targets_read_the_one_named_repository`; the three `"*"` test fixtures move to named
    repositories and the tests that used them still assert the same behaviour.
@@ -137,7 +151,10 @@ Unit:
    stored and ordered correctly against a `Z` instant; `test_collector_records_a_rejected_row_as_a_source_failure`:
    `store_result` with such a row appends one `collection_failure` and no evidence row, and the run continues.
 6. `test_every_live_row_passes_write_time_validation` (read-only over `data/records.jsonl`).
-7. `test_admitted_sets_are_identical_before_and_after_participant_completeness` on the live store.
+7. `test_admitted_sets_are_identical_before_and_after_participant_completeness` on the repository's
+   checked-in store snapshot. **Known limit**: that snapshot is the 151-row legacy prefix from PR #1 and
+   holds one installed demo, so it cannot see the single-app demo shape; the live proof below is the gate
+   that can, and it is run against the live store, not the snapshot.
 
 Live (branch code against the live store, read-only, before merge): per-condition state, label and
 platform, and per-task maturity, freshness, platforms and issue gate are identical to the served page
