@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from .catalogue import declared_participants
 from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
 
@@ -712,7 +713,7 @@ class Runner:
     # ---- cross-app acceptance (Email Watcher -> Invoice Processor) --------------------
 
     def accept_ew_ip(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
-        participants = {repo: revs[repo].sha for repo in check["participants"]}
+        participants = {repo: revs[repo].sha for repo in declared_participants(check)}
         ip, ew = revs["invoice-processor"], revs["eom-email-watcher"]
         base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha,
                     revision_time=ip.committed_at, platform="linux", condition_ids=condition_ids,
@@ -731,7 +732,7 @@ class Runner:
             return Record(verdict="unavailable", summary=licence.why, **base)
         licence_bytes, entitlement = licence
         trees: dict[str, Path] = {}
-        for repo in check["participants"]:
+        for repo in declared_participants(check):
             tree = self.tree(repo, revs[repo].sha)
             if isinstance(tree, Failure):
                 return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)
@@ -854,7 +855,7 @@ class Runner:
     # ---- cross-app acceptance (Email Watcher -> Document Summarizer) -----------------
 
     def accept_ew_ds(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
-        participants = {repo: revs[repo].sha for repo in check["participants"]}
+        participants = {repo: revs[repo].sha for repo in declared_participants(check)}
         ew, ds = revs["eom-email-watcher"], revs["document-summarizer"]
         base = dict(kind="automated_test", repo="eom-email-watcher", revision=ew.sha,
                     revision_time=ew.committed_at, platform="linux", condition_ids=condition_ids,
@@ -863,7 +864,7 @@ class Runner:
                         "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
                     ))
         trees: dict[str, Path] = {}
-        for repo in check["participants"]:
+        for repo in declared_participants(check):
             tree = self.tree(repo, revs[repo].sha)
             if isinstance(tree, Failure):
                 return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)

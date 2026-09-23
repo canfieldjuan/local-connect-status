@@ -158,19 +158,18 @@ def condition_status(
 
         return max(enumerate(items), key=order)[1]
 
-    if kind == "source_inspection":
-        # An inspection can point at code; it cannot prove behaviour, and a miss cannot prove absence.
-        current = [r for r in evid if _matches_current(r, heads, check_repo)]
-        return ConditionStatus(
-            cond, "inconclusive", current=latest(current, same_revision=True) if current else None, platform=plat
-        )
-
     proven = [r for r in evid if r.verdict in PROVING_VERDICT]
     last_proven = latest(proven) if proven else None
     if evid and not head_observed:
-        # Every state below compares revisions; without the head none of them can be truthful.
+        # Every state below compares revisions (an inspection's "current" included); without the
+        # head none of them can be truthful.
         return ConditionStatus(cond, "head_unobserved", last_proven=last_proven, last_result=latest(evid), platform=plat)
     current = [r for r in evid if _matches_current(r, heads, check_repo)]
+    if kind == "source_inspection":
+        # An inspection can point at code; it cannot prove behaviour, and a miss cannot prove absence.
+        return ConditionStatus(
+            cond, "inconclusive", current=latest(current, same_revision=True) if current else None, platform=plat
+        )
     if current:
         best = latest(current, same_revision=True)
         if best.verdict in PROVING_VERDICT:
@@ -207,8 +206,12 @@ def task_status(
         repo = chk.get("repo", "")
         conds.append(condition_status(c, records, heads, repo, chk))
 
+    # The repositories whose heads were missing: the predicate's own inputs, not the check's repo.
     unobserved_repos = sorted({
-        checks[c.condition["check"]]["repo"] for c in conds if c.state == "head_unobserved"
+        repo
+        for c in conds if c.state == "head_unobserved"
+        for repo in declared_participants(checks[c.condition["check"]])
+        if repo not in heads
     })
 
     def proven_somewhere(c: ConditionStatus) -> bool:

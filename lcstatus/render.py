@@ -144,6 +144,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
                 "release_issue_gate": s.release_issue_gate,
                 "release_issue_blockers": s.release_issue_blockers,
                 "release_issue_unavailable_repos": s.release_issue_unavailable_repos,
+                "unobserved_repos": s.unobserved_repos,
                 "conditions": [condition_payload(c) for c in s.conditions],
                 "depends_on": s.task.get("depends_on", []),
             }
@@ -310,8 +311,9 @@ function render(view){
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.view===view));
   let h='';
   if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
-  const stale = p.tasks.filter(t=>t.freshness==='changed_since_verification').length, failed=p.tasks.filter(t=>t.freshness==='check_failed').length;
+  const stale = p.tasks.filter(t=>t.freshness==='changed_since_verification').length, failed=p.tasks.filter(t=>t.freshness==='check_failed').length, unobserved=p.tasks.filter(t=>t.freshness==='head_unobserved').length;
   if(failed) h+=`<div class="banner bad"><b>${failed} task(s) have a failing check</b> at the current code.</div>`;
+  if(unobserved) h+=`<div class="banner warn"><b>${unobserved} task(s): current revision not observed</b> this tick. Nothing there claims a revision relation until the head is read again.</div>`;
   if(stale) h+=`<div class="banner warn"><b>${stale} task(s) changed since they were last verified.</b> The last proven result stays visible; it is not a current result.</div>`;
   const sc=p.release.automate_scope; h+=`<div class="banner"><b>First-release automation scope:</b> <b>${esc(sc.decision)}</b>. ${esc(sc.note)}</div>`;
   const apps={'email-watcher':'Email Watcher','document-summarizer':'Document Summarizer','invoice-processor':'Invoice Processor'};

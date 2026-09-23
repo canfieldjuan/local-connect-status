@@ -153,15 +153,30 @@ def test_old_failure_never_rerun_reads_stale_failure():
 
 
 def test_declared_participants_is_defined_once():
+    import ast
     assert catmod.declared_participants({"repo": "ip"}) == ["ip"]
     assert catmod.declared_participants({"repo": "ip", "participants": ["ip", "ew"]}) == ["ip", "ew"]
     assert catmod.participants_required({"repo": "ip"}) is False
     assert catmod.participants_required({"repo": "ip", "participants": ["ip"]}) is True
+    # No module outside catalogue.py may read the "participants" key of a check: not by subscript,
+    # not by .get, not by `in`.  (Attribute access `record.participants` is record data, not the rule.)
     root = Path(__file__).resolve().parent.parent
-    writer = (root / "scripts" / "record_observation.py").read_text()
-    rules = (root / "lcstatus" / "rules.py").read_text()
-    assert "declared_participants(" in writer and 'get("participants"' not in writer
-    assert "declared_participants(" in rules and '"participants" in check' not in rules
+    offenders = []
+    for path in sorted(list((root / "lcstatus").glob("*.py")) + list((root / "scripts").glob("*.py"))):
+        if path.name == "catalogue.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            hit = False
+            if isinstance(node, ast.Subscript):
+                hit = isinstance(node.slice, ast.Constant) and node.slice.value == "participants"
+            elif isinstance(node, ast.Compare):
+                hit = isinstance(node.left, ast.Constant) and node.left.value == "participants" and any(
+                    isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":
+                hit = bool(node.args) and isinstance(node.args[0], ast.Constant) and node.args[0].value == "participants"
+            if hit:
+                offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert offenders == [], offenders
 
 
 def test_unobserved_head_never_claims_a_revision_relation():
@@ -181,11 +196,26 @@ def test_unobserved_head_never_claims_a_revision_relation():
         # with the head observed, the ordinary states return
         expected = {"pass": "satisfied", "fail": "check_failed", "skip": "not_checked"}[verdict]
         assert condition_status(COND, [row], HEADS, "ip", CHECK).state == expected
-    # a cross-app row with one participant head missing is the same, whatever its revision
+    # a cross-app row with one participant head missing is the same, whatever its revision,
+    # and the task names the head that was missing, not the check's own repository
     xfail = rec("fail", cond=XCOND, check=XCHECK, revision=OLD, participants={"ip": OLD, "ew": OLD},
                 recorded_at="2026-09-01T11:00:00+00:00")
     assert condition_status(XCOND, [xfail], {"ip": NEW}, "ip", XCHECK).state == "head_unobserved"
     assert condition_status(XCOND, [xfail], HEADS, "ip", XCHECK).state == "stale_failure"
+    xtask = {**TASK, "conditions": [XCOND]}
+    ts = task_status(xtask, [xfail], {"ip": NEW}, CAT, CAT["release"])
+    assert ts.unobserved_repos == ["ew"]
+    assert next_action(ts) == "Restore repository visibility for: ew"
+    # a source inspection is gated too: its "current" is a revision comparison
+    inspect_check = {"runner": "source_inspection", "repo": "ip", "paths": ["x.py"], "markers": ["m"]}
+    inspect = {"id": "i1", "kind": "source_inspection", "check": "t.inspect", "proves": "points at code"}
+    hint = Record(kind="source_inspection", repo="ip", revision=NEW, verdict="inconclusive", condition_ids=["i1"],
+                  revision_time=T_NEW, recorded_at="2026-09-09T10:01:00+00:00",
+                  source={"check": "t.inspect", "check_fingerprint": check_fingerprint(inspect_check),
+                          "condition_fingerprints": {"i1": condition_fingerprint(inspect)}})
+    s = condition_status(inspect, [hint], {}, "ip", inspect_check)
+    assert s.state == "head_unobserved" and s.last_result is hint
+    assert condition_status(inspect, [hint], HEADS, "ip", inspect_check).state == "inconclusive"
     # never proving, never "changed since": an old pass under an unobserved head
     old_pass = rec("pass", revision=OLD)
     s = condition_status(COND, [old_pass], {}, "ip", CHECK)
@@ -233,6 +263,11 @@ def test_report_and_dashboard_show_the_stale_failure_record():
 
 
 def test_catalogue_validates_declared_participants(tmp_path: Path):
+    # a cross-app runner cannot load without the key its runner and the rules will read
+    with pytest.raises(Exception) as excinfo:
+        catmod.load(_catalogue(tmp_path, {"t.xapp": {"runner": "accept_ew_ip", "repo": "ip", "platform": "linux"}},
+                               repos=("ip", "ew")))
+    assert "a cross-app runner must declare participants" in str(excinfo.value)
     base = {"runner": "manual_observation", "repo": "ip", "platform": "linux"}
     for bad in ([], "ip", ["ip", "ip"], ["ip", "zz"], ["ew"]):
         with pytest.raises(Exception) as excinfo:

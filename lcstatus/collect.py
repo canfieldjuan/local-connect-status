@@ -315,13 +315,13 @@ def main(argv: list[str] | None = None) -> int:
                 store_result(store, failures, r)
                 print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "accept_ew_ip":
-                if all(p in revs for p in chk["participants"]):
+                if all(p in revs for p in catmod.declared_participants(chk)):
                     print(f"running {cid} ...", flush=True)
                     r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
                     store_result(store, failures, r)
                     print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "accept_ew_ds":
-                if all(p in revs for p in chk["participants"]):
+                if all(p in revs for p in catmod.declared_participants(chk)):
                     print(f"running {cid} (heavy) ...", flush=True)
                     r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
                     store_result(store, failures, r)
