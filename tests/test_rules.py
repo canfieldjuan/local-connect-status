@@ -10,7 +10,7 @@ import pytest
 from lcstatus.change import assess
 from lcstatus.evidence import (
     LEGACY_EVIDENCE_PREFIX_ROWS, Record, Store, check_fingerprint, condition_fingerprint,
-    record_check_fingerprint, record_condition_fingerprint,
+    record_check_fingerprint, record_condition_fingerprint, resolve_check_fingerprint,
 )
 from lcstatus.rules import condition_status as _condition_status, task_status
 
@@ -136,7 +136,10 @@ def test_condition_evidence_must_match_the_current_check_configuration():
     rejected = task_status(current_task, [stale], {"ip": NEW}, CAT, CAT["release"])
     accepted = task_status(current_task, [stale, current], {"ip": NEW}, CAT, CAT["release"])
 
-    assert rejected.conditions[0].state == "no_evidence"
+    # a pass under the former configuration is shown as history, never as proof
+    assert rejected.conditions[0].state == "config_changed"
+    assert rejected.conditions[0].last_proven is stale
+    assert rejected.maturity == "planned"
     assert accepted.conditions[0].state == "satisfied"
 
 
@@ -160,9 +163,10 @@ def test_condition_evidence_must_match_the_current_claim_semantics():
         },
     )
 
+    # a pass under the former claim is shown as history, never as proof
     assert _condition_status(
         current, [stale], {"ip": NEW}, "ip", CAT["checks"]["t.pytest"],
-    ).state == "no_evidence"
+    ).state == "config_changed"
     assert _condition_status(
         current, [stale, fresh], {"ip": NEW}, "ip", CAT["checks"]["t.pytest"],
     ).state == "satisfied"
@@ -185,7 +189,9 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
         historical = record_check_fingerprint(record)
         current = check_fingerprint(catalogue["checks"][record.source["check"]])
         assert historical is not None
-        assert (historical == current) is (record.source["check"] != "xapp.accept_ew_to_ip")
+        assert (resolve_check_fingerprint(historical) == current) is (
+            record.source["check"] != "xapp.accept_ew_to_ip"
+        )
 
     conditions = {
         condition["id"]: condition
@@ -209,10 +215,10 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
 
     installed = next(r for r in migrated if r.source.get("check") == "manual.ip_removal_test")
     cross_app = next(r for r in migrated if r.source.get("check") == "xapp.accept_ew_to_ip")
-    assert record_check_fingerprint(installed) == check_fingerprint(
+    assert resolve_check_fingerprint(record_check_fingerprint(installed)) == check_fingerprint(
         catalogue["checks"]["manual.ip_removal_test"]
     )
-    assert record_check_fingerprint(cross_app) != check_fingerprint(
+    assert resolve_check_fingerprint(record_check_fingerprint(cross_app)) != check_fingerprint(
         catalogue["checks"]["xapp.accept_ew_to_ip"]
     )
 
@@ -222,10 +228,13 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
         installed_condition, [installed], dict(installed.participants), installed.repo,
         catalogue["checks"]["manual.ip_removal_test"],
     ).state == "satisfied"
-    assert _condition_status(
+    # the legacy pass was gathered under the two-participant configuration: history, not proof
+    superseded = _condition_status(
         cross_app_condition, [cross_app], dict(cross_app.participants), cross_app.repo,
         catalogue["checks"]["xapp.accept_ew_to_ip"],
-    ).state == "no_evidence"
+    )
+    assert superseded.state == "config_changed"
+    assert superseded.last_proven is cross_app and superseded.current is None
 
     appended = Record(
         kind=installed.kind, repo=installed.repo, revision=installed.revision,

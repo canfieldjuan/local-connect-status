@@ -59,10 +59,29 @@ def instant_key(value: str | None) -> tuple[int, float, str]:
     return (1, parsed.timestamp(), "")
 
 
-def check_fingerprint(check: dict[str, Any]) -> str:
-    """Stable identity for the complete catalogue configuration that produced evidence."""
-    blob = json.dumps(check, sort_keys=True, separators=(",", ":")).encode()
+# Free-text keys of a catalogue check.  They explain a check to a reader; they do not change
+# what the check runs, where, or against what, so they are not part of evidence identity.
+CHECK_PROSE_KEYS = ("note",)
+
+
+def _fingerprint(payload: Any) -> str:
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(blob).hexdigest()[:24]
+
+
+def whole_check_fingerprint(check: dict[str, Any]) -> str:
+    """The pre-slice-3 identity: every key of the check, prose included."""
+    return _fingerprint(check)
+
+
+def check_fingerprint(check: dict[str, Any]) -> str:
+    """Stable identity for the catalogue configuration that produced evidence.
+
+    Every configuration key participates (runner, repo, platform, args, paths, markers,
+    participants, job, workflow, milestone, required_assets, desktop_deps, heavy, ...).  Only
+    CHECK_PROSE_KEYS are left out: editing a note must not orphan the evidence it describes.
+    """
+    return _fingerprint({key: value for key, value in check.items() if key not in CHECK_PROSE_KEYS})
 
 
 def condition_fingerprint(condition: dict[str, Any]) -> str:
@@ -148,6 +167,65 @@ LEGACY_CONDITION_FINGERPRINTS = {
     "rel.published_ew": "2591a9cb8fdd5088344e5700",
     "rel.published_ip": "84b64b92c2f103104d9f153b",
 }
+
+
+# Records written before slice 3 carry whole-dict fingerprints.  This table, generated once from
+# the catalogue as it stood at that commit (before any note was edited), maps each of those
+# values to the semantic fingerprint of the same configuration.  It is frozen data: never
+# regenerate it from a later catalogue, or old evidence would re-bind to edited configurations.
+CHECK_FINGERPRINT_ALIASES = {
+    "0d1d9d4a0948ea9d35e7ca36": "b1b68b4843506fce8c382115",
+    "137581c260a4001a9291204b": "137581c260a4001a9291204b",
+    "1a0851093ac33e8909a6169c": "c8936dae47fb4431bf00364d",
+    "1eca072653a5db9e196760c2": "1eca072653a5db9e196760c2",
+    "27756a5feb3d06f6171c9eac": "89876287a67d1ad891e095a2",
+    "2ec5ac88e37a3c4d14f0757e": "2ec5ac88e37a3c4d14f0757e",
+    "33bb78a149dbdd42b9ee2c70": "33bb78a149dbdd42b9ee2c70",
+    "3b25686fe5eb2b5591bb8cb7": "56ffee3d6e394d94868c23bb",
+    "3bc6cdd95fae94bb9f98f3c5": "e6c473d97dacb4180b126cc3",
+    "414e04b54e053df156643fd3": "414e04b54e053df156643fd3",
+    "50024b9286837c3221f5f1dc": "1c0d3b0474d190c8d1f0d3bc",
+    "53ad3323e89b847ea05f2d01": "53ad3323e89b847ea05f2d01",
+    "56d5119ade2e46ee16aa3418": "56d5119ade2e46ee16aa3418",
+    "658ede0d7a0e6a834fef5e2b": "200ee4479003d0b389db13b1",
+    "6b977a25d43c24c44509a87e": "541614cfb88bb1da194bf3f3",
+    "6c2b84abb387abf7a61d7187": "bf081e8cac089245b856fde0",
+    "76fdb4d07bdbfdb4f0d92d9f": "76fdb4d07bdbfdb4f0d92d9f",
+    "7d47203ad1e0d1688cf771df": "2f6fe0e80bffc13c6c880ead",
+    "822aa20e9cb398ccc79c170d": "ddcc0262449c2de779fd0bb7",
+    "8c99c5d3e8cf1ab99f465dbd": "786300b91a795f9dba15abf9",
+    "8da5e0f0a285b06967108fcb": "594b0fd6464a1cf12433cb39",
+    "900f885f739ccd8706c2e055": "ba7c70b13c7d1f074b9e94b6",
+    "92cb5b7ec9832d2137bbca3d": "73778373957ae4813b2001d0",
+    "9d49967f5c9de4033b242500": "3faf59294609179735437181",
+    "a01b0d2da85c49c8d6efa62e": "857444940db52591e4df8bf9",
+    "a464c2b9ca53e451f5f9788a": "884ccadc616f59f20c3239c3",
+    "a51153f9bf8acfd9a2501af4": "a51153f9bf8acfd9a2501af4",
+    "a9d59cf99a9a0cdaff558fd5": "bf081e8cac089245b856fde0",
+    "adccaebb3ee7c6347a8096b7": "939a3c2c2eeafaf6089c605c",
+    "b8c2b5e323a3db727335e516": "b8c2b5e323a3db727335e516",
+    "ba862d249e32fcbc64fd24ab": "b6551f3a449d33e20917f772",
+    "bf983c0691d198f40bf8bdb5": "bf983c0691d198f40bf8bdb5",
+    "ca1e4b25405fff9b8d5b246a": "b6a631462b1402fdab610d9f",
+    "d12118d0e23e36ed324db75a": "d1a0aced96c8df8677218dcb",
+    "d64e6aa995e224789f23f2fe": "830a9866f9f4054b9b3dc572",
+    "d8cf91e8b462adf4f824b6ff": "d8cf91e8b462adf4f824b6ff",
+    "db09bb11e064c5d91d587952": "4867d41ae88485e94d6b50fe",
+    "db60e79047fb756a51d9e02d": "db60e79047fb756a51d9e02d",
+    "ddfd39174dc90c040a92f150": "3725fb856de0092eceaa8015",
+    "e1dc2a223c7a1005b9ba95b1": "c80dff3996cd73d0630a66a1",
+    "e279743963e8a9c91ab52403": "9b90c42d31bf65a1d11b25e7",
+    "f36793d1236a2ee3deec74c4": "f36793d1236a2ee3deec74c4",
+    "fb54af050265c5c455cae2c7": "fb54af050265c5c455cae2c7",
+    "fdb699ce6590f2962dd03199": "fdb699ce6590f2962dd03199",
+}
+
+
+def resolve_check_fingerprint(value: str | None) -> str | None:
+    """Map a stored whole-dict fingerprint to its semantic twin; anything else is itself."""
+    if value is None:
+        return None
+    return CHECK_FINGERPRINT_ALIASES.get(value, value)
 
 
 def record_check_fingerprint(record: Any) -> str | None:
