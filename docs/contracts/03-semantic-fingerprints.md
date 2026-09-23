@@ -1,8 +1,10 @@
 # Contract 03 — Prose is not configuration; a changed configuration stays visible
 
-Status: **proposed** (review before any code). Slice 3 of the 2026-09-18 fix plan.
-Scope: `lcstatus/evidence.py` (check fingerprint, a frozen alias table, resolution), `lcstatus/rules.py`
-(admission split, one new condition state), `lcstatus/render.py` (its label, next action, report),
+Status: **accepted 2026-09-23** (rev 3 amends B3/B5, adds B9/I6 after independent review of the first
+implementation; no accepted behaviour is withdrawn). Slice 3 of the 2026-09-18 fix plan.
+Scope: `lcstatus/evidence.py` (check fingerprint, a frozen alias table, resolution, store observation
+identity), `lcstatus/rules.py` (admission split, one new condition state), `lcstatus/render.py` (its label,
+next action, report),
 tests, README "Status rules", and — only once the above has landed — the `note` of
 `xapp.accept_ew_to_ip` in `catalogue.json`. No runner changes: runners already record whatever
 `check_fingerprint` returns. No product repository.
@@ -45,8 +47,11 @@ in the same change, and is committed as data — the same shape as `LEGACY_CHECK
 B3. **Legacy prefix composition is unchanged.** The 151-row authenticated prefix keeps receiving
 `LEGACY_CHECK_FINGERPRINTS` values in memory exactly as today; those values then pass through the same
 resolution. A prefix row whose check is byte-identical to the catalogue at the freeze therefore stays
-admitted; one whose check changed since c482727 stays excluded, as today. Fingerprint-free rows outside
-the prefix (91 rows at positions 153–261) stay excluded: they cannot be attributed to any configuration.
+admitted; one whose check changed since c482727 stays **un-admitted**, as today — but because it carries
+an attributable (in-memory) fingerprint, a passing one is history under B4 and may read `config_changed`
+when nothing is admitted (the c482727 `xapp.accept_ew_to_ip` row is exactly this case). Fingerprint-free
+rows outside the prefix (91 rows at positions 153–261) stay excluded: they cannot be attributed to any
+configuration and never read `config_changed`.
 
 B4. **A changed configuration or claim stays visible.** When a condition has **no admitted evidence**,
 records that match its id, kind and check but fail fingerprint resolution (a different configuration
@@ -60,6 +65,11 @@ verification"; task freshness treats it as `changed_since_verification`; next ac
 `not_checked`; the report shows the historical pass with its revision and date. It is **not** a proving
 state: it never satisfies, never counts toward `partly built` (a pass under a different configuration
 or claim proves nothing about this one), never counts as current, and never clears a release gate.
+An issue-gate condition in this state leaves the gate `unavailable` (fails closed, as for `no_evidence`);
+the task's next action then names the re-verification, and the "restore GitHub issue visibility" action
+is reserved for gates with no readable result at all (`no_evidence` / `not_checked`). A `config_changed`
+condition that declares no platform inherits the historical pass's platform, exactly as `changed_since`
+does, so platform rows read "changed since" rather than "no evidence".
 
 B6. **Runners and the observation script are unchanged** and start writing semantic fingerprints
 automatically (`Runner._source` and `record_observation.py` both call `check_fingerprint`).
@@ -67,6 +77,15 @@ automatically (`Runner._source` and `record_observation.py` both call `check_fin
 B7. **README "Status rules"** states: prose notes are not configuration; a changed configuration or
 claim reads "configuration changed since verification" until re-verified under the current one;
 fingerprint-free rows outside the authenticated prefix stay excluded.
+
+B9. **Store observation identity resolves fingerprints.** The store's duplicate rule ("consecutive
+deliveries of the same result are stored once") compares observations with the stored check fingerprint
+resolved through the alias table, for both the series key and the identity comparison. The first
+semantic-fingerprint delivery of an unchanged result therefore collapses onto its whole-dict predecessor:
+no new row, and the execution's files are discarded as for any repeat. `record_id` derivation is
+unchanged, so no stored id moves and the store stays append-only. `resolve_check_fingerprint` is total:
+`None` and non-string values pass through unchanged and never raise, so one malformed row cannot abort
+status derivation.
 
 B8. **Demonstration edit.** In a separate commit after the code, the `note` of `xapp.accept_ew_to_ip` is
 rewritten to describe slice 1's mechanism. Under B1+B2 this changes no fingerprint that any record is
@@ -82,6 +101,8 @@ I3. Every non-prose edit still invalidates exactly as today; only `note` edits b
 I4. `config_changed` is visible but never proving (B5).
 I5. The alias table is frozen data, generated once; it is never recomputed from a later catalogue
 (that would re-bind old fingerprints to edited configurations).
+I6. The first collection after this slice writes no new row, and keeps no new execution files, for any
+check whose result is unchanged (B9).
 
 ## Failure cases
 
@@ -91,7 +112,11 @@ I5. The alias table is frozen data, generated once; it is never recomputed from 
 | note edited on a check with semantic-fingerprinted records | semantic fingerprint unchanged → still admitted |
 | `args`/`paths`/`participants`/… edited | old records fail resolution → `config_changed` if any passed and nothing is admitted, else `no_evidence`; next tick re-verifies automated checks; manual demos stay `config_changed` until re-recorded |
 | `proves` reworded | same as above (claim changed) |
-| a record with an unknown fingerprint (neither alias key nor current) | fails resolution, as today |
+| a record with an unknown fingerprint (neither alias key nor current) | fails resolution, as today; a passing one is `config_changed` history |
+| legacy-prefix row whose check changed since c482727 | un-admitted, as today; a passing one is `config_changed` history (B3) |
+| a stored fingerprint that is not a string | passes through resolution unchanged; never admitted; never raises |
+| unchanged result re-delivered with the semantic fingerprint | collapses onto the stored whole-dict row: no new record, files discarded (B9) |
+| issue gate whose `milestone` changed, old pass only | gate `unavailable` (fails closed); next action is the re-verification, not "restore visibility" |
 | fingerprint-free row outside the prefix | excluded, as today (never `config_changed`) |
 | condition with admitted evidence and also mismatched passes | admitted evidence decides; mismatched passes are ignored, as today |
 
@@ -103,9 +128,10 @@ process writes (collector under `data/.lock`, observation script).
 ## Settling test evidence
 
 Unit:
-1. `test_note_edit_keeps_whole_dict_and_semantic_evidence_admitted`: a record written with the
-   whole-dict fingerprint (alias key) and one with the semantic fingerprint both stay `satisfied` after
-   the note changes.
+1. `test_note_edit_keeps_whole_dict_and_semantic_evidence_admitted`: for a real catalogue check that
+   carries a note, a record written with the shipped whole-dict fingerprint (a key of the frozen table)
+   and one with the semantic fingerprint both stay `satisfied` after the note changes. The frozen table
+   is used as shipped, never mutated by the test.
 2. `test_semantic_edit_still_invalidates_and_stays_visible`: editing `args` turns a lone pass into
    `config_changed` with `last_proven` set; editing `proves` does the same; a later pass under the new
    configuration returns the condition to `satisfied`.
@@ -115,18 +141,31 @@ Unit:
 4. `test_admitted_evidence_takes_precedence_over_configuration_history`: one admitted `fail` plus
    older mismatched passes → `check_failed`, not `config_changed`.
 5. `test_fingerprint_free_rows_outside_the_prefix_stay_excluded` and the existing
-   `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence` (unchanged, still green).
+   `test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence`, whose whole-dict
+   comparisons now go through resolution and whose c482727 `xapp.accept_ew_to_ip` assertion changes from
+   `no_evidence` to `config_changed` with `last_proven` set (B3).
 6. `test_alias_table_resolves_only_known_whole_dict_fingerprints`: known key → semantic twin; unknown →
-   itself; every value is a 24-hex fingerprint; keys distinct.
+   itself; `None` and non-string values pass through; every key and value is a 24-hex fingerprint; and
+   `test_frozen_alias_table_covers_every_check_in_the_catalogue`: for every check except the one whose
+   note B8 edits, the whole-dict fingerprint **is a key** of the table mapping to that check's semantic
+   fingerprint; the edited check's semantic fingerprint is a value of the table.
+8. `test_config_changed_issue_gate_fails_closed_with_the_right_next_action` and
+   `test_config_changed_inherits_the_historical_platform` (B5 clauses).
+9. `test_semantic_redelivery_of_an_unchanged_result_collapses_onto_its_whole_dict_row` (B9): on a copy
+   of the authenticated legacy prefix plus a whole-dict row, re-delivering the same result with the
+   semantic fingerprint returns `False` from `Store.add`, appends nothing, and a *changed* result still
+   appends.
 7. `test_admitted_sets_are_identical_before_and_after` on a store mixing legacy-prefix, whole-dict,
    semantic and fingerprint-free rows, comparing admission under the old and new rule.
 
 Live (branch code against the live store, read-only, before merge): per-condition admitted record-id
 sets are **identical** under the old and new rule (I2), and `status.json` re-derived with the new code
 equals the served one except for the new state (which today applies to no condition, per the census).
-After merge and fast-forward: the tick after the B8 note edit keeps `bill.cross_app_acceptance` and
-`rel.bundle_invoice_contract` **verified** with no new record (the note edit changed nothing that any
-record is compared against), and `ls data/logs | wc -l` is unchanged.
+Store simulation (pre-merge, on a copy of the live store): re-delivering the latest pass of every
+automated note-carrying check with the semantic fingerprint returns `False` from `Store.add` for every
+one (I6). After merge and fast-forward: the first tick keeps `bill.cross_app_acceptance` and
+`rel.bundle_invoice_contract` **verified** with no new record for any unchanged result, and
+`ls data/logs | wc -l` is unchanged (B9 makes this true on the first tick, not the second).
 
 ## Decisions
 
@@ -141,7 +180,12 @@ would let a routine result stand in for a heavy one after a flag flip.
 D4. **The note edit ships in the same PR, as its own commit after the code**, because it is the
 slice's live proof: a prose edit that visibly changes nothing.
 
+D5. **The store resolves fingerprints in its identity comparison (B9)** rather than documenting a one-off
+duplicate row per check on the first tick. The store's own rule is that a repeated result is stored once;
+a fingerprint spelling change is not a new result. Resolving at the comparison, not at write time, keeps
+every stored id and byte unchanged.
+
 ## Estimated diff
 
-~45 lines in `evidence.py` (fingerprint, alias table, resolver), ~35 in `rules.py`, ~15 in
-`render.py`, ~220 lines of tests, README paragraph, one catalogue note.
+~60 lines in `evidence.py` (fingerprint, alias table, resolver, store identity), ~35 in `rules.py`,
+~20 in `render.py`, ~300 lines of tests, README paragraph, one catalogue note.
