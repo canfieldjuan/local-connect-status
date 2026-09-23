@@ -121,7 +121,10 @@ def condition_status(
         r for r in same_check
         if not admitted(r) and record_check_fingerprint(r) is not None
     ]
-    plat = want_platform or (evid[0].platform if evid else "n/a")
+    superseded_passes = [r for r in superseded if r.verdict in PROVING_VERDICT]
+    # A condition that names no platform takes it from its evidence; history counts for that.
+    attributed = evid or superseded_passes
+    plat = want_platform or (attributed[0].platform if attributed else "n/a")
 
     def latest(items: list[Record], *, same_revision: bool = False) -> Record:
         # Current candidates already match the same exact head/participants. Their revision
@@ -157,7 +160,6 @@ def condition_status(
     if evid:
         # records exist, but none at the current revision and none ever passed
         return ConditionStatus(cond, "not_checked", current=None, last_proven=None, platform=plat)
-    superseded_passes = [r for r in superseded if r.verdict in PROVING_VERDICT]
     if superseded_passes:
         return ConditionStatus(cond, "config_changed", last_proven=latest(superseded_passes), platform=plat)
     return ConditionStatus(cond, "no_evidence", platform=plat)

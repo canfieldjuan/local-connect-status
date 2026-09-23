@@ -221,10 +221,14 @@ CHECK_FINGERPRINT_ALIASES = {
 }
 
 
-def resolve_check_fingerprint(value: str | None) -> str | None:
-    """Map a stored whole-dict fingerprint to its semantic twin; anything else is itself."""
-    if value is None:
-        return None
+def resolve_check_fingerprint(value: Any) -> Any:
+    """Map a stored whole-dict fingerprint to its semantic twin; anything else is itself.
+
+    Total: None and non-string values pass through unchanged, so one malformed row can never
+    abort status derivation.  Such a value is never equal to a current fingerprint.
+    """
+    if not isinstance(value, str):
+        return value
     return CHECK_FINGERPRINT_ALIASES.get(value, value)
 
 
@@ -312,6 +316,20 @@ class Record:
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(blob).hexdigest()[:24]
 
+    def observation_identity(self) -> str:
+        """identity(), with the check fingerprint resolved through the alias table.
+
+        Used only to decide whether a delivery repeats the stored observation before it; a
+        fingerprint spelling change is not a new result.  record_id keeps using identity().
+        """
+        return self.__class__(**{**asdict(self), "source": self._resolved_source()}).identity()
+
+    def _resolved_source(self) -> dict[str, Any]:
+        source = dict(self.source)
+        if "check_fingerprint" in source:
+            source["check_fingerprint"] = resolve_check_fingerprint(source["check_fingerprint"])
+        return source
+
     def series_identity(self) -> str:
         """Identity of the check stream, excluding the outcome that can change over time."""
         stable_source = {
@@ -319,7 +337,7 @@ class Record:
             for name in ("type", "check")
             if name in self.source
         }
-        fingerprint = record_check_fingerprint(self)
+        fingerprint = resolve_check_fingerprint(record_check_fingerprint(self))
         if fingerprint is not None:
             stable_source["check_fingerprint"] = fingerprint
         condition_fingerprints = record_condition_fingerprints(self)
@@ -388,15 +406,19 @@ class Store:
         return list(self._records)
 
     def add(self, rec: Record) -> bool:
-        """Store a record, collapsing only consecutive identical observations."""
+        """Store a record, collapsing only consecutive identical observations.
+
+        "Identical" is judged with check fingerprints resolved, so a result re-delivered under
+        the semantic fingerprint collapses onto the same result stored under the whole-dict one.
+        """
+        series = rec.series_identity()
+        previous = next(
+            (item for item in reversed(self._records) if item.series_identity() == series),
+            None,
+        )
+        if previous is not None and previous.observation_identity() == rec.observation_identity():
+            return False
         if rec.record_id in self._ids:
-            series = rec.series_identity()
-            previous = next(
-                (item for item in reversed(self._records) if item.series_identity() == series),
-                None,
-            )
-            if previous is not None and previous.identity() == rec.identity():
-                return False
             counter = len(self._records)
             while rec.record_id in self._ids:
                 seed = f"{rec.identity()}:{rec.recorded_at}:{counter}".encode()
