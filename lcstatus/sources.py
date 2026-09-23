@@ -249,7 +249,15 @@ class GitHub:
         """kind: 'issues' returns issues without PRs; 'pulls' returns PRs. Paginated to completion."""
         if kind == "pulls":
             return self.api(f"repos/{gh_repo}/pulls?state=open&per_page=100", paginate=True)
-        items = self.api(f"repos/{gh_repo}/issues?state=open&per_page=100", paginate=True)
+        items = self.open_issues_and_pulls(gh_repo)
         if isinstance(items, Failure):
             return items
         return [i for i in items if "pull_request" not in i]
+
+    def open_issues_and_pulls(self, gh_repo: str) -> Failure | list[dict[str, Any]]:
+        """Every open item of the issues listing, pull requests included. Paginated to completion."""
+        return self.api(f"repos/{gh_repo}/issues?state=open&per_page=100", paginate=True)
+
+    def milestones(self, gh_repo: str) -> Failure | list[dict[str, Any]]:
+        """Every milestone of the repository, open and closed. Paginated to completion."""
+        return self.api(f"repos/{gh_repo}/milestones?state=all&per_page=100", paginate=True)
