@@ -3,7 +3,11 @@
 Status: **accepted 2026-09-23** (rev 2 adds the collector's handling of a rejected row to B4; rev 3 corrects
 B1 for single-app checks after the live proof showed six installer demos flipping; rev 4, after independent
 review of the implementation, gates B3 on an observed head, guards every collector write under B4, keeps a
-rejected row's files, and validates declared participants; no accepted behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
+rejected row's files, and validates declared participants; rev 5 moves two rules to their root after the
+operator asked for the defects introduced in this slice to be fixed at the root: the declared participant
+set is defined once and read by every layer (B6), and "the head was observed this tick" is one predicate
+applied before any revision relation is asserted, replacing rev 4's precondition on B3 alone (B7); no
+accepted behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
 Scope: `lcstatus/rules.py` (currentness, admission, one new condition state), `lcstatus/catalogue.py`
 (repository grammar), `lcstatus/collect.py` (release targets), `lcstatus/evidence.py` (write-time instant
 validation), `lcstatus/render.py` (one label, one next action), tests, README "Status rules". No runner
@@ -98,6 +102,26 @@ collector's own failure rows — goes through that one guarded helper, so the pr
 not only for runner rows. A rejected row's execution files, when it has any, are kept and referenced from
 the failure row's `log_path`: the log is the one artifact that still says what the run did.
 
+B6. **The declared participant set is defined once.** `lcstatus.catalogue.declared_participants(check)`
+returns `check["participants"]` when the key is present and `[check["repo"]]` otherwise, and
+`participants_required(check)` says whether the key is present. The observation script, the rules and the
+catalogue validator all call these; none re-derives the rule. Behaviour is exactly rev 3's B1; the change
+is that it can no longer drift, which is how rev 3 became necessary.
+
+B7. **No revision relation without an observed head.** One predicate, evaluated before any state that
+compares revisions: the check's head was observed this tick when every repository in
+`declared_participants(check)` is in `heads`. When it was not, and admitted evidence exists, the
+condition reads `head_unobserved` ("current revision not observed this tick"): `current` is `None`,
+`last_proven` is the latest pass if any, `last_result` is the latest admitted record, and the evidence
+column shows it. It is never proving. A pass in that history counts toward `partly built` exactly as
+`changed_since` does (a pass exists; only its currentness is unknown), and never higher. Task freshness
+reads `head_unobserved` ("current revision not observed"), ranked directly after `check_failed`; platform
+rows read the same; the task carries a note naming the repositories; the next action is "Restore
+repository visibility for: <repos>", ahead of every per-condition action. `changed_since`,
+`stale_failure` and `not_checked` are therefore asserted only under an observed head, which retires
+rev 4's separate precondition on B3. When no admitted evidence exists the states are unchanged
+(`config_changed`, `no_evidence`): neither claims a revision relation.
+
 B5. **README "Status rules"** states each of the above in one sentence: a cross-app record must name
 exactly the declared participants; every check names one repository; an old failure that has not been
 re-run reads "failed at an earlier revision, not re-run"; the store refuses a row whose instants are not
@@ -128,7 +152,8 @@ I5. The catalogue is the only place a check's repository is decided; the rules n
 | catalogue check with `"repo": "*"` or an unlisted repo | `catalogue.load` fails loudly, listing the check |
 | `condition_status` called with an empty `check_repo` | `ValueError` |
 | only a `fail` at an earlier revision, never re-run, head observed | `stale_failure`; next action "Re-run at current code" |
-| only a `fail`, and the repository's (or a participant's) head was not observed this tick | `not_checked`, as today |
+| any admitted evidence, and the repository's (or a participant's) head was not observed this tick | `head_unobserved`; last result shown; task "current revision not observed"; next action "Restore repository visibility for: <repos>" (B7) |
+| a pass at the true head, head not observed | `head_unobserved`, never "changed since verification" (rev 4 and earlier said "changed since") |
 | `stale_failure` on an issue gate or release lookup | gate `unavailable` / release not met; readiness fails closed; never "ready for release" |
 | check declares `participants: []`, a non-list, a duplicate, an unlisted repo, or omits its own | `catalogue.load` fails loudly |
 | revision or change row with a naive `committed_at` | reported as a `collection_failure` for that repository; the tick continues |
@@ -155,11 +180,18 @@ Unit:
    `test_release_targets_read_the_one_named_repository`; the three `"*"` test fixtures move to named
    repositories and the tests that used them still assert the same behaviour.
 3. `test_condition_status_requires_a_repository`: empty `check_repo` raises `ValueError`.
+0. `test_declared_participants_is_defined_once` (B6): the function's two shapes, and the observation script
+   and the rules contain no private copy of the rule (asserted on their source).
+0b. `test_unobserved_head_never_claims_a_revision_relation` (B7): pass, fail and skip at the true head with
+   the repository absent from `heads` all read `head_unobserved` with the record as `last_result`; the pass
+   keeps `last_proven` and the task reads `partly built`, the fail reads `planned`; freshness and platform
+   `head_unobserved`; next action names the repository; a cross-app row with one participant head missing
+   reads the same; with every head present the ordinary states return.
 4. `test_old_failure_never_rerun_reads_stale_failure`: fail-only history at an older revision →
    `stale_failure`, label, next action, task freshness `not_checked`, platform `not_checked`, maturity
    `planned`; a skip-only history stays `not_checked`; a pass anywhere in history stays `changed_since`;
-   a fail at the current revision stays `check_failed`. `test_stale_failure_needs_a_known_head`: the same
-   fail with the repository (or one participant) absent from heads stays `not_checked`.
+   a fail at the current revision stays `check_failed`. (rev 4's `test_stale_failure_needs_a_known_head`
+   is subsumed by 0b.)
    `test_stale_failure_gate_and_release_fail_closed`: an issue gate and a release lookup in
    `stale_failure` leave the gate `unavailable`, maturity below "ready for release", next action the
    re-run. `test_report_and_dashboard_show_the_stale_failure_record`: the markdown report's evidence
@@ -200,6 +232,13 @@ D4. **Validate at the write boundary, tolerate at load.** The store is append-on
 rows; refusing to load would take the dashboard down for a row this code never wrote. Refusing to write is
 what keeps the ordering fallback from ever being exercised by this collector. A raise, not a silent
 normalisation, because a naive instant from a source is a source bug worth seeing.
+
+D6. **One predicate for "was the head observed", evaluated first.** Rev 4 guarded only the new state, so
+`changed_since` kept claiming the code changed when the head merely could not be read (six live head-lookup
+timeouts). Guarding each state separately is the pattern that does not converge; a state that cannot be
+reached without an observed head needs no guard of its own.
+D7. **One definition of the declared set.** Three copies (writer, rules, validator) produced rev 3. The
+catalogue module owns check shape, so it owns this function.
 
 ## Estimated diff
 
