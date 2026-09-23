@@ -37,20 +37,42 @@ def status(records, *, check=CHECK, cond=COND, heads=HEADS):
     return condition_status(cond, records, heads, "ip", check)
 
 
+def _real_noted_check():
+    root = Path(__file__).resolve().parent.parent
+    catalogue = json.loads((root / "catalogue.json").read_text())
+    conditions = {c["id"]: c for t in catalogue["tasks"] for c in t["conditions"]}
+    condition = next(
+        c for c in conditions.values()
+        if c["kind"] == "automated_test" and catalogue["checks"][c["check"]].get("note")
+        and catalogue["checks"][c["check"]].get("repo") == "invoice-processor"
+        and c["check"] != "xapp.accept_ew_to_ip"
+    )
+    return catalogue, condition, catalogue["checks"][condition["check"]]
+
+
+def _real_rec(condition, check, verdict, fingerprint, revision=NEW):
+    return Record(
+        kind="automated_test", repo=check["repo"], revision=revision, verdict=verdict,
+        platform=check.get("platform", "n/a"), condition_ids=[condition["id"]],
+        revision_time="2026-09-09T10:00:00+00:00" if revision == NEW else "2026-09-01T10:00:00+00:00",
+        source={"check": condition["check"], "check_fingerprint": fingerprint,
+                "condition_fingerprints": {condition["id"]: condition_fingerprint(condition)}},
+    )
+
+
 def test_note_edit_keeps_whole_dict_and_semantic_evidence_admitted():
-    edited = {**CHECK, "note": "rewritten after slice 1"}
-    assert check_fingerprint(edited) == check_fingerprint(CHECK)
-    assert whole_check_fingerprint(edited) != whole_check_fingerprint(CHECK)
-    whole = rec("pass", fingerprint=whole_check_fingerprint(CHECK))
-    semantic = rec("pass")
-    aliases = dict(CHECK_FINGERPRINT_ALIASES)
-    aliases[whole_check_fingerprint(CHECK)] = check_fingerprint(CHECK)
-    try:
-        CHECK_FINGERPRINT_ALIASES.update(aliases)
-        assert status([whole], check=edited).state == "satisfied"
-        assert status([semantic], check=edited).state == "satisfied"
-    finally:
-        CHECK_FINGERPRINT_ALIASES.pop(whole_check_fingerprint(CHECK), None)
+    _, condition, check = _real_noted_check()
+    shipped_whole = whole_check_fingerprint(check)
+    assert shipped_whole in CHECK_FINGERPRINT_ALIASES            # the frozen table, as shipped
+    assert CHECK_FINGERPRINT_ALIASES[shipped_whole] == check_fingerprint(check)
+    edited = {**check, "note": "rewritten after the mechanism changed"}
+    assert check_fingerprint(edited) == check_fingerprint(check)
+    assert whole_check_fingerprint(edited) != shipped_whole
+    whole = _real_rec(condition, check, "pass", shipped_whole)
+    semantic = _real_rec(condition, check, "pass", check_fingerprint(check))
+    heads = {check["repo"]: NEW}
+    assert condition_status(condition, [whole], heads, check["repo"], edited).state == "satisfied"
+    assert condition_status(condition, [semantic], heads, check["repo"], edited).state == "satisfied"
 
 
 def test_semantic_edit_still_invalidates_and_stays_visible():
@@ -119,23 +141,92 @@ def test_fingerprint_free_rows_outside_the_prefix_stay_excluded():
 def test_alias_table_resolves_only_known_whole_dict_fingerprints():
     assert CHECK_PROSE_KEYS == ("note",)
     assert len(CHECK_FINGERPRINT_ALIASES) == 44
-    assert len(set(CHECK_FINGERPRINT_ALIASES)) == 44
     hexes = re.compile(r"^[0-9a-f]{24}$")
     for key, value in CHECK_FINGERPRINT_ALIASES.items():
         assert hexes.match(key) and hexes.match(value)
         assert resolve_check_fingerprint(key) == value
     assert resolve_check_fingerprint("0" * 24) == "0" * 24
     assert resolve_check_fingerprint(None) is None
+    assert resolve_check_fingerprint(["not", "a", "fingerprint"]) == ["not", "a", "fingerprint"]
+    assert resolve_check_fingerprint({"x": 1}) == {"x": 1}
     assert sum(1 for k, v in CHECK_FINGERPRINT_ALIASES.items() if k == v) == 16
 
 
 def test_frozen_alias_table_covers_every_check_in_the_catalogue():
     root = Path(__file__).resolve().parent.parent
     catalogue = json.loads((root / "catalogue.json").read_text())
-    for check in catalogue["checks"].values():
+    edited_by_b8 = {"xapp.accept_ew_to_ip"}
+    values = set(CHECK_FINGERPRINT_ALIASES.values())
+    for check_id, check in catalogue["checks"].items():
         semantic = check_fingerprint(check)
-        assert CHECK_FINGERPRINT_ALIASES.get(whole_check_fingerprint(check), semantic) == semantic
-        assert semantic in CHECK_FINGERPRINT_ALIASES.values()
+        assert semantic in values, check_id
+        if check_id in edited_by_b8:
+            # its whole-dict value moved with the note; the frozen key is the pre-edit one
+            assert whole_check_fingerprint(check) not in CHECK_FINGERPRINT_ALIASES
+        else:
+            assert CHECK_FINGERPRINT_ALIASES[whole_check_fingerprint(check)] == semantic, check_id
+
+
+def test_malformed_fingerprint_row_is_ignored_without_raising():
+    bad = rec("pass", fingerprint=None)
+    bad.source["check_fingerprint"] = ["not", "a", "fingerprint"]
+    assert status([bad]).state != "satisfied"
+    assert status([bad], check={**CHECK, "args": ["-k", "y"]}).state != "satisfied"
+    good = rec("pass")
+    assert status([bad, good]).state == "satisfied"
+
+
+def test_config_changed_issue_gate_fails_closed_with_the_right_next_action():
+    gate_check = {"runner": "github_issues", "repo": "ip", "milestone": "First Public Release"}
+    former_gate = {**gate_check, "milestone": "Beta"}
+    cat = {"release": {"required_platforms": ["linux"]}, "checks": {"t.pytest": CHECK, "t.gate": gate_check}}
+    gate = {"id": "g1", "kind": "issue_gate", "check": "t.gate", "proves": "no open first-release issues"}
+    task = {**TASK, "layer": "release", "conditions": [COND, gate]}
+    old_clear = Record(kind="issue_gate", repo="ip", revision=OLD, verdict="pass", condition_ids=["g1"],
+                       revision_time="2026-09-01T10:00:00+00:00",
+                       source={"check": "t.gate", "check_fingerprint": check_fingerprint(former_gate),
+                               "condition_fingerprints": {"g1": condition_fingerprint(gate)}})
+    ts = task_status(task, [rec("pass"), old_clear], HEADS, cat, cat["release"])
+    assert [c.state for c in ts.conditions] == ["satisfied", "config_changed"]
+    assert ts.release_issue_gate == "unavailable"
+    assert ts.maturity == "built"          # never "ready for release"
+    assert next_action(ts) == "Re-verify under the current configuration (t.gate): no open first-release issues"
+    # a gate with no readable result at all still asks for visibility
+    ts = task_status(task, [rec("pass")], HEADS, cat, cat["release"])
+    assert ts.conditions[1].state == "no_evidence"
+    assert next_action(ts) == "Restore GitHub issue visibility for: ip"
+
+
+def test_config_changed_inherits_the_historical_platform():
+    bare_check = {"runner": "pytest", "repo": "ip", "args": ["-k", "x"]}
+    cat = {"release": {"required_platforms": ["linux"]}, "checks": {"t.pytest": {**bare_check, "args": ["-k", "y"]}}}
+    old_pass = rec("pass", revision=OLD, check=bare_check, platform="linux")
+    ts = task_status(TASK, [old_pass], HEADS, cat, cat["release"])
+    assert ts.conditions[0].state == "config_changed"
+    assert ts.conditions[0].platform == "linux"
+    assert ts.platforms == {"linux": "changed_since"}
+
+
+def test_semantic_redelivery_of_an_unchanged_result_collapses_onto_its_whole_dict_row(tmp_path: Path):
+    root = Path(__file__).resolve().parent.parent
+    stored = (root / "data" / "records.jsonl").read_bytes()
+    prefix = b"".join(stored.splitlines(keepends=True)[:LEGACY_EVIDENCE_PREFIX_ROWS])
+    _, condition, check = _real_noted_check()
+    whole = _real_rec(condition, check, "pass", whole_check_fingerprint(check))
+    path = tmp_path / "records.jsonl"
+    path.write_bytes(prefix + whole.to_json().encode() + b"\n")
+    store = Store(path)
+    before_bytes = path.read_bytes()
+    before_len = len(store)
+    again = _real_rec(condition, check, "pass", check_fingerprint(check))
+    assert again.record_id != whole.record_id            # ids never move
+    assert store.add(again) is False                     # same observation, new spelling
+    assert path.read_bytes() == before_bytes and len(store) == before_len
+    changed = _real_rec(condition, check, "fail", check_fingerprint(check))
+    assert store.add(changed) is True                    # a changed result is still appended
+    assert len(store) == before_len + 1
+    # and the ordinary rule is intact: the same semantic delivery twice is stored once
+    assert store.add(_real_rec(condition, check, "fail", check_fingerprint(check))) is False
 
 
 def _legacy_admission(record, cond, check):

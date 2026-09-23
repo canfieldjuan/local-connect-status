@@ -41,7 +41,11 @@ LAYER_BLURB = {
 
 
 def next_action(status: TaskStatus) -> str | None:
-    if status.release_issue_gate == "unavailable":
+    unreadable_gate = any(
+        c.condition["kind"] == "issue_gate" and c.state in ("no_evidence", "not_checked")
+        for c in status.conditions
+    )
+    if status.release_issue_gate == "unavailable" and unreadable_gate:
         return "Restore GitHub issue visibility for: " + ", ".join(status.release_issue_unavailable_repos)
     if status.release_issue_blockers:
         issue = status.release_issue_blockers[0]
