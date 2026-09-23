@@ -55,14 +55,26 @@ def render_heads(state: dict[str, Any]) -> dict[str, str]:
 
 def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tuple[str, Revision]]:
     repo = check["repo"]
-    if repo == "*":
-        return list(revs.items())
     rev = revs.get(repo)
     return [(repo, rev)] if rev is not None else []
 
 
 def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
-    if not store.add(rec):
+    try:
+        stored = store.add(rec)
+    except ValueError as exc:
+        # The row could not be ordered truthfully (contract 04 B4). Show it as a source failure
+        # for this repository and keep the tick going; the rejected row is never written.
+        discard_execution_files(rec)
+        source_type = rec.source.get("type") or rec.kind
+        why = f"rejected evidence row: {exc}"
+        store.add(Record(kind="collection_failure", repo=rec.repo, revision=rec.revision, verdict="unavailable",
+                         summary=why, source={"type": source_type, "check": rec.source.get("check")}))
+        failure = {"repo": rec.repo, "what": source_type, "why": why}
+        if failure not in failures:
+            failures.append(failure)
+        return
+    if not stored:
         # An identical consecutive observation: the stored record's own files are the evidence,
         # so this execution's files would only duplicate them, tick after tick.
         discard_execution_files(rec)

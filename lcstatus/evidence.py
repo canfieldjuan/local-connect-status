@@ -363,6 +363,18 @@ class Record:
         return cls(**d)
 
 
+def validate_record_instants(record: Any) -> None:
+    """Refuse to write a row whose instants could not be ordered truthfully.
+
+    instant_key orders a naive or unparseable value before every real instant.  That fallback
+    exists so an older store still loads; this collector must never produce a row that needs it.
+    """
+    if instant_key(record.recorded_at)[0] == 0:
+        raise ValueError(f"recorded_at is not an aware ISO-8601 instant: {record.recorded_at!r}")
+    if record.revision_time is not None and instant_key(record.revision_time)[0] == 0:
+        raise ValueError(f"revision_time is not an aware ISO-8601 instant: {record.revision_time!r}")
+
+
 class Store:
     """Append-only JSONL with an in-memory index. Writes are atomic per record."""
 
@@ -410,7 +422,9 @@ class Store:
 
         "Identical" is judged with check fingerprints resolved, so a result re-delivered under
         the semantic fingerprint collapses onto the same result stored under the whole-dict one.
+        A row whose instants are not timezone-aware is refused (ValueError) and never written.
         """
+        validate_record_instants(rec)
         series = rec.series_identity()
         previous = next(
             (item for item in reversed(self._records) if item.series_identity() == series),

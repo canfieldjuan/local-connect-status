@@ -848,7 +848,7 @@ def test_release_record_uses_target_commit_time_not_publication_time(tmp_path: P
         {"repos": {"app": {"github": "example/app"}}},
     )
     record = runner.releases(
-        "app.release", {"runner": "github_release", "repo": "*"}, "app",
+        "app.release", {"runner": "github_release", "repo": "app"}, "app",
         Revision("app", target, commit_time, "release"), ["condition"], ["task"]
     )
     assert record.verdict == "pass"
@@ -881,7 +881,7 @@ def test_release_checksum_download_failure_is_unavailable(tmp_path: Path):
                     {"repos": {"app": {"github": "example/app"}}})
     record = runner.releases(
         "app.release", {
-            "runner": "github_release", "repo": "*",
+            "runner": "github_release", "repo": "app",
             "required_assets": {
                 "windows": r"\.exe$", "linux": r"\.deb$", "checksums": r"SHA256SUMS$",
             },

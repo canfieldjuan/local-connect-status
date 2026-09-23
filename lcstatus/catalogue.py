@@ -44,13 +44,11 @@ def load(path: Path) -> dict[str, Any]:
     for cid, chk in checks.items():
         if chk.get("runner") not in RUNNERS:
             problems.append(f"check {cid}: unknown runner {chk.get('runner')!r}")
-        if chk.get("repo") not in cat.get("repos", {}) and chk.get("repo") != "*":
-            problems.append(f"check {cid}: unknown repo {chk.get('repo')!r}")
+        if chk.get("repo") not in cat.get("repos", {}):
+            problems.append(f"check {cid}: repo must name one catalogue repository, got {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
         if chk.get("runner") == "github_issues":
-            if chk.get("repo") == "*":
-                problems.append(f"check {cid}: GitHub issue gate must name one repository")
             if not isinstance(chk.get("milestone"), str) or not chk["milestone"].strip():
                 problems.append(f"check {cid}: GitHub issue gate needs a milestone")
             elif isinstance(issue_gate, dict) and chk["milestone"] != issue_gate.get("milestone"):
@@ -71,7 +69,6 @@ def load(path: Path) -> dict[str, Any]:
         app = t.get("app")
         if app != "bundle" and app not in cat.get("apps", {}):
             problems.append(f"task {t['id']}: unknown app {app!r}")
-        t["app_repo"] = cat["apps"].get(app, {}).get("repo", "") if app != "bundle" else ""
         if issue_gate is not None and t.get("layer") == "release":
             if not any(c.get("kind") == "issue_gate" for c in t.get("conditions", [])):
                 problems.append(f"task {t['id']}: release task needs an issue_gate condition")

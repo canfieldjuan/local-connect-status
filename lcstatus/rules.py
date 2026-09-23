@@ -9,6 +9,8 @@ For every condition of every task, the rules find the best evidence and classify
                          check produced no result (skipped, unavailable, pending, unknown)
     config_changed       nothing admitted under the current configuration or claim, but the
                          condition once passed under an earlier one — kept visible, never proof
+    stale_failure        the latest evidence is a failure at an earlier revision and nothing has
+                         run since — kept visible, never proof, nothing known about current code
     no_evidence          no record of the right kind exists for this condition at all
     inconclusive         source inspection only, which can hint but not prove
 
@@ -43,9 +45,10 @@ PROVING_VERDICT = ("pass",)
 @dataclass
 class ConditionStatus:
     condition: dict[str, Any]
-    state: str                      # satisfied | changed_since | check_failed | not_checked | config_changed | no_evidence | inconclusive
+    state: str                      # satisfied | changed_since | check_failed | not_checked | stale_failure | config_changed | no_evidence | inconclusive
     current: Record | None = None   # best record at the current revision, if any
     last_proven: Record | None = None
+    last_result: Record | None = None   # stale_failure only: the failing record that was never re-run
     platform: str = "n/a"
 
     def as_dict(self) -> dict[str, Any]:
@@ -59,7 +62,8 @@ class ConditionStatus:
                     "detail": r.detail}
         return {"id": self.condition["id"], "kind": self.condition["kind"], "proves": self.condition.get("proves"),
                 "check": self.condition.get("check"), "state": self.state, "platform": self.platform,
-                "current": rec(self.current), "last_proven": rec(self.last_proven)}
+                "current": rec(self.current), "last_proven": rec(self.last_proven),
+                "last_result": rec(self.last_result)}
 
 
 @dataclass
@@ -80,10 +84,11 @@ def _current_head(heads: dict[str, str], repo: str) -> str | None:
 
 
 def _matches_current(rec: Record, heads: dict[str, str], repo: str) -> bool:
+    # Admission already required the record's participant set to equal the check's declared
+    # set, so "every named participant at its head" is "every declared participant at its head".
     if rec.participants:
         return all(heads.get(r) == s for r, s in rec.participants.items())
-    # A wildcard check ("*", e.g. releases) is recorded per repository at that repository's head.
-    return heads.get(repo or rec.repo) == rec.revision
+    return heads.get(repo) == rec.revision
 
 
 def condition_status(
@@ -91,6 +96,12 @@ def condition_status(
     check: dict[str, Any],
 ) -> ConditionStatus:
     kind = cond["kind"]
+    if not check_repo:
+        raise ValueError(f"condition {cond['id']}: check {cond.get('check')!r} names no repository")
+    # The writer's reading (record_observation.py): a check that declares no participants declares
+    # its own repository, so a single-app demo names exactly {repo}; automated rows name nothing.
+    declares_participants = "participants" in check
+    declared_participants = set(check["participants"]) if declares_participants else {check_repo}
     want_platform = cond.get("platform") or check.get("platform")
     expected_check_fingerprint = check_fingerprint(check)
     expected_condition_fingerprint = condition_fingerprint(cond)
@@ -100,17 +111,21 @@ def condition_status(
         and r.kind == kind
         and r.source.get("check") == cond["check"]
     ]
-    if check_repo:
-        # Older collectors wrote app-specific release ids onto every repository. Keep those
-        # append-only records from crossing product boundaries during status derivation.
-        same_check = [r for r in same_check if r.repo == check_repo]
+    # Older collectors wrote app-specific release ids onto every repository. Keep those
+    # append-only records from crossing product boundaries during status derivation.
+    same_check = [r for r in same_check if r.repo == check_repo]
     if want_platform:
         same_check = [r for r in same_check if r.platform == want_platform]
 
     def admitted(r: Record) -> bool:
+        # A row that names a subset, a superset, or participants for a check that declares none
+        # was not produced by this configuration; it is history (config_changed), never proof.
+        named = set(r.participants)
+        complete = named == declared_participants or (not named and not declares_participants)
         return (
             resolve_check_fingerprint(record_check_fingerprint(r)) == expected_check_fingerprint
             and record_condition_fingerprint(r, cond["id"]) == expected_condition_fingerprint
+            and complete
         )
 
     evid = [r for r in same_check if admitted(r)]
@@ -159,6 +174,10 @@ def condition_status(
         return ConditionStatus(cond, "changed_since", last_proven=last_proven, platform=plat)
     if evid:
         # records exist, but none at the current revision and none ever passed
+        last = latest(evid)
+        if last.verdict == "fail":
+            # the check failed and has not run since: nothing was skipped
+            return ConditionStatus(cond, "stale_failure", last_result=last, platform=plat)
         return ConditionStatus(cond, "not_checked", current=None, last_proven=None, platform=plat)
     if superseded_passes:
         return ConditionStatus(cond, "config_changed", last_proven=latest(superseded_passes), platform=plat)
@@ -176,7 +195,7 @@ def task_status(
     conds: list[ConditionStatus] = []
     for c in task["conditions"]:
         chk = checks.get(c["check"], {})
-        repo = chk.get("repo") if chk.get("repo") not in (None, "*") else task.get("app_repo", "")
+        repo = chk.get("repo", "")
         conds.append(condition_status(c, records, heads, repo, chk))
 
     automated = [c for c in conds if c.condition["kind"] in AUTOMATED]
@@ -236,6 +255,8 @@ def task_status(
     # failing check, so release lookups do not count toward "check failed".
     states = [c.state if c.condition["kind"] != "release_artifact" or c.state != "check_failed" else "not_checked"
               for c in conds if c.condition["kind"] != "source_inspection"]
+    # An old failure never re-run says nothing about the current revision: a check must run.
+    states = ["not_checked" if s == "stale_failure" else s for s in states]
     if not states:
         freshness = "no_evidence"   # nothing checkable was defined; "current" would be a lie
     elif any(s == "check_failed" for s in states):
@@ -275,7 +296,7 @@ def _platform_states(conds: list[ConditionStatus], release: dict[str, Any]) -> d
             out[p] = "check_failed"
         elif any(c.state in ("changed_since", "config_changed") for c in on_p):
             out[p] = "changed_since"
-        elif any(c.state == "not_checked" for c in on_p):
+        elif any(c.state in ("not_checked", "stale_failure") for c in on_p):
             out[p] = "not_checked"
         else:
             out[p] = "no_evidence"
