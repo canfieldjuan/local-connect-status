@@ -7,6 +7,8 @@ For every condition of every task, the rules find the best evidence and classify
     check_failed         the latest evidence at the current revision failed
     not_checked          a record of the right kind exists at the current revision but the
                          check produced no result (skipped, unavailable, pending, unknown)
+    config_changed       nothing admitted under the current configuration or claim, but the
+                         condition once passed under an earlier one — kept visible, never proof
     no_evidence          no record of the right kind exists for this condition at all
     inconclusive         source inspection only, which can hint but not prove
 
@@ -31,7 +33,7 @@ from typing import Any
 
 from .evidence import (
     Record, check_fingerprint, condition_fingerprint, instant_key,
-    record_check_fingerprint, record_condition_fingerprint,
+    record_check_fingerprint, record_condition_fingerprint, resolve_check_fingerprint,
 )
 
 AUTOMATED = ("automated_test", "ci_run")
@@ -41,7 +43,7 @@ PROVING_VERDICT = ("pass",)
 @dataclass
 class ConditionStatus:
     condition: dict[str, Any]
-    state: str                      # satisfied | changed_since | check_failed | not_checked | no_evidence | inconclusive
+    state: str                      # satisfied | changed_since | check_failed | not_checked | config_changed | no_evidence | inconclusive
     current: Record | None = None   # best record at the current revision, if any
     last_proven: Record | None = None
     platform: str = "n/a"
@@ -92,20 +94,33 @@ def condition_status(
     want_platform = cond.get("platform") or check.get("platform")
     expected_check_fingerprint = check_fingerprint(check)
     expected_condition_fingerprint = condition_fingerprint(cond)
-    evid = [
+    same_check = [
         r for r in records
         if cond["id"] in r.condition_ids
         and r.kind == kind
         and r.source.get("check") == cond["check"]
-        and record_check_fingerprint(r) == expected_check_fingerprint
-        and record_condition_fingerprint(r, cond["id"]) == expected_condition_fingerprint
     ]
     if check_repo:
         # Older collectors wrote app-specific release ids onto every repository. Keep those
         # append-only records from crossing product boundaries during status derivation.
-        evid = [r for r in evid if r.repo == check_repo]
+        same_check = [r for r in same_check if r.repo == check_repo]
     if want_platform:
-        evid = [r for r in evid if r.platform == want_platform]
+        same_check = [r for r in same_check if r.platform == want_platform]
+
+    def admitted(r: Record) -> bool:
+        return (
+            resolve_check_fingerprint(record_check_fingerprint(r)) == expected_check_fingerprint
+            and record_condition_fingerprint(r, cond["id"]) == expected_condition_fingerprint
+        )
+
+    evid = [r for r in same_check if admitted(r)]
+    # Evidence gathered under a different configuration or claim.  It cannot prove anything
+    # about this one, but a pass under it is history worth showing when nothing else exists.
+    # Rows that carry no fingerprint at all are not attributable to any configuration.
+    superseded = [
+        r for r in same_check
+        if not admitted(r) and record_check_fingerprint(r) is not None
+    ]
     plat = want_platform or (evid[0].platform if evid else "n/a")
 
     def latest(items: list[Record], *, same_revision: bool = False) -> Record:
@@ -142,6 +157,9 @@ def condition_status(
     if evid:
         # records exist, but none at the current revision and none ever passed
         return ConditionStatus(cond, "not_checked", current=None, last_proven=None, platform=plat)
+    superseded_passes = [r for r in superseded if r.verdict in PROVING_VERDICT]
+    if superseded_passes:
+        return ConditionStatus(cond, "config_changed", last_proven=latest(superseded_passes), platform=plat)
     return ConditionStatus(cond, "no_evidence", platform=plat)
 
 
@@ -220,7 +238,7 @@ def task_status(
         freshness = "no_evidence"   # nothing checkable was defined; "current" would be a lie
     elif any(s == "check_failed" for s in states):
         freshness = "check_failed"
-    elif any(s == "changed_since" for s in states):
+    elif any(s in ("changed_since", "config_changed") for s in states):
         freshness = "changed_since_verification"
     elif any(s == "not_checked" for s in states):
         freshness = "not_checked"
@@ -253,7 +271,7 @@ def _platform_states(conds: list[ConditionStatus], release: dict[str, Any]) -> d
             out[p] = "satisfied"
         elif any(c.state == "check_failed" for c in on_p):
             out[p] = "check_failed"
-        elif any(c.state == "changed_since" for c in on_p):
+        elif any(c.state in ("changed_since", "config_changed") for c in on_p):
             out[p] = "changed_since"
         elif any(c.state == "not_checked" for c in on_p):
             out[p] = "not_checked"

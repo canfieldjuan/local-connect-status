@@ -74,8 +74,14 @@ displace a newer observation.
 Evidence carries fingerprints of both the complete catalogue check configuration and the condition
 claim it was meant to prove. The original pre-fingerprint JSONL prefix is supported without
 rewriting evidence: the store first authenticates that exact byte prefix, then attaches its
-historical check and condition fingerprints only in memory. A changed configuration or claim
-remains stale, and later fingerprint-free rows are not admitted through the compatibility path.
+historical check and condition fingerprints only in memory. Prose is not configuration: a
+check's `note` is left out of its fingerprint, and fingerprints written before that rule are
+mapped through a frozen alias table, so editing a note never orphans the evidence it describes.
+A changed configuration or claim stays visible: when nothing has been admitted under the current
+one, an earlier pass reads **configuration changed since verification** until the check runs
+again under the current configuration. That state is history, not proof — it never verifies,
+never counts toward maturity and never clears a release gate. Fingerprint-free rows outside the
+authenticated prefix are not admitted through the compatibility path.
 
 The exact pytest verdict rule: a nonzero exit is `fail` whatever the output said; zero
 executed tests is `skip`; counts come from JUnit XML, not from the summary line.
