@@ -245,7 +245,7 @@
         "invoice-processor",
         "connect-contracts"
       ],
-      "note": "The acceptance script drives exact extracted Email Watcher and Invoice Processor trees over loopback, with the exact contracts keyring and a stand-in model. All three revisions are recorded. No GPU."
+      "note": "The acceptance script drives exact extracted Email Watcher and Invoice Processor trees over loopback, with the exact contracts keyring and a stand-in model, inside an isolated HOME with its own XDG roots. The collector's installed Connect entitlement is pre-checked (structure and validity window only) and staged into that HOME for the run, then removed on every exit path. All three revisions are recorded. No GPU."
     },
     "xapp.accept_ew_to_ds": {
       "runner": "accept_ew_ds",
