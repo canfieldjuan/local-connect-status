@@ -1,6 +1,8 @@
 # Contract 05 — A gate that cannot find its milestone is unavailable, not clear
 
-Status: **accepted 2026-09-23** (operator: "go"). Slice 5 of the 2026-09-18 fix plan.
+Status: **accepted 2026-09-23** (operator: "go"; rev 2 after independent review of the implementation withdraws
+B3's verdict effect: GitHub's milestone counter is recorded, never decisive — see D3). Slice 5 of the
+2026-09-18 fix plan.
 Scope: `lcstatus/sources.py` (one milestone-listing helper, one raw open-items helper), `lcstatus/verify.py`
 (`Runner.release_issues`), tests, one README sentence. No rules change, no render change, no catalogue edit,
 no product repository.
@@ -32,16 +34,18 @@ milestone listing fails, or is not a list, or contains an item without a string 
 with a summary naming the failure. Two milestones with the same title cannot exist in one repository;
 should the API ever return two, the record is `unavailable`.
 
-B2. **The found milestone is recorded.** `detail` carries `milestone_number`, `milestone_state` and
-`milestone_open_issues` from the milestone object, beside today's `milestone` and `issues`. A **closed**
-milestone is still a found milestone: its state is recorded and the verdict still comes from the open
-issues listed under it (closing a milestone does not close its issues).
+B2. **The found milestone is recorded.** `detail` carries `milestone_number` and `milestone_state` from
+the milestone object, beside today's `milestone` and `issues`. A **closed** milestone is still a found
+milestone: its state is recorded and the verdict still comes from the open issues listed under it
+(closing a milestone does not close its issues). The milestone's `open_issues` counter is not recorded
+as such: it is GitHub's denormalised value and would churn the row's identity every time a pull request
+enters or leaves the milestone.
 
-B3. **The listing must agree with the milestone.** The runner counts every open item (issues **and** pull
-requests, i.e. the raw `/issues` listing before the pull-request filter) whose milestone title matches,
-and compares that count with the milestone object's `open_issues` (which GitHub maintains over issues and
-pull requests alike). When they differ, the record is `unavailable` with summary
-`issue listing disagrees with milestone count (<listed> listed, <reported> reported)`. Blockers remain
+B3. **A disagreeing counter is recorded, never decisive.** The runner counts every open item (issues
+**and** pull requests, i.e. the raw `/issues` listing before the pull-request filter) whose milestone
+title matches, and compares that count with the milestone object's `open_issues`. When they differ,
+`detail.count_disagreement = {"listed": <n>, "reported": <m>}` is recorded and the verdict is still taken
+from the listing. The listing is the authoritative source; the counter is a hint (D3). Blockers remain
 the open **issues** only, as today: a pull request in the milestone is not a blocker and is not listed.
 
 B4. **What the rules do with it is unchanged.** An `unavailable` gate row reads `not_checked`, the task's
@@ -59,8 +63,8 @@ I2. **No label changes at merge.** Verified live before merge: the branch's runn
 the four live repositories, returns four `pass` rows whose verdict and summary equal the live rows, with
 the new detail fields populated and the counts in agreement; the derived page is identical to the served
 one.
-I3. The gate can read clear only after (a) the milestone was seen, (b) the listing succeeded, and (c) the
-listing's count agreed with the milestone's. Every other outcome is `unavailable`.
+I3. The gate can read clear only after (a) the milestone was seen and (b) the listing succeeded. Every
+other outcome is `unavailable`. A counter disagreement is visible in `detail`, never a verdict.
 I4. An unexpected response shape is `unavailable`, never `pass` and never `fail`: a `fail` would name
 blockers that may not exist; a `pass` would clear a gate nothing confirmed.
 
@@ -72,17 +76,17 @@ blockers that may not exist; a `pass` would clear a gate nothing confirmed.
 | milestone listing API fails | `unavailable`, "<what>: <why>" |
 | milestone listing malformed (not a list; item without title/number/state/open_issues) | `unavailable` |
 | milestone found, listing fails | `unavailable`, as today |
-| milestone found, 0 open issues, count 0 | `pass`, "0 open issues in <title>" (as today) with the new detail fields |
-| milestone found, N open issues, count N | `fail`, blockers listed (as today) |
+| milestone found, 0 open issues | `pass`, "0 open issues in <title>" (as today) with number and state recorded |
+| milestone found, N open issues | `fail`, blockers listed (as today) |
 | milestone found, closed, 0 open | `pass`, `milestone_state: closed` |
-| a pull request in the milestone, no issues | `pass`, count 1 == 1; the pull request is not a blocker |
-| listing shows 1 issue, milestone reports 2 (short listing or race) | `unavailable`, "issue listing disagrees with milestone count (1 listed, 2 reported)"; the next tick re-reads |
+| a pull request in the milestone, no issues | `pass`; the pull request is not a blocker |
+| listing shows 1 issue, milestone reports 2 (stale counter) | verdict from the listing (`fail`, 1 blocker); `count_disagreement: {listed: 1, reported: 2}` recorded |
 | milestone renamed on GitHub | `unavailable` until the catalogue's `milestone` and the release's `issue_gate.milestone` are updated together (`catalogue.load` already requires them to match) |
 
 ## Concurrency model
 
 Two GitHub reads per repository per tick instead of one; both read-only. A change on GitHub between the
-two reads shows as a count disagreement for that tick (`unavailable`), never as a wrong verdict.
+two reads can show as a recorded count disagreement for that tick; the verdict always follows the listing.
 
 ## Settling test evidence
 
@@ -95,8 +99,8 @@ Unit (runner with a fake GitHub client, as the existing gate tests do):
    detail fields present.
 4. `test_open_issues_block_and_pull_requests_do_not`: two issues and one pull request in the milestone,
    `open_issues: 3` → `fail` with the two issues as blockers.
-5. `test_listing_count_must_match_the_milestone_count`: 1 listed vs 2 reported → `unavailable` with the
-   exact summary; 2 vs 2 → verdict from the issues.
+5. `test_count_disagreement_is_recorded_never_decisive`: 1 listed vs 2 reported → `fail` with one blocker
+   and `count_disagreement` recorded; 2 vs 2 → no such key.
 6. `test_closed_milestone_is_still_found`: closed, 0 open → `pass`, `milestone_state: closed`.
 7. The existing gate tests stay green with the fake extended to serve a milestone list.
 
@@ -111,8 +115,16 @@ is a legitimate clear; an absent one is not. Only the milestones listing disting
 D2. **A closed milestone still counts as found.** Closing is an operator act that says the milestone is
 done; the gate's job is the open issues, which closing does not touch. The state is recorded so the
 page can say so.
-D3. **The count cross-check includes pull requests** because GitHub's `open_issues` does; comparing the
-filtered listing with it would disagree whenever a pull request sits in the milestone.
+D3. **The counter never decides (rev 2).** Rev 1 made a listing/counter disagreement `unavailable`, on
+the premise that the counter tracks the listing and a disagreement is a transient race. Independent
+review measured otherwise on real data: on a large public repository the milestone reported 110 open
+while the listing held 106 (102 issues, 4 pull requests), stable across runs and confirmed by the search
+API — GitHub's counter is denormalised and can stay wrong indefinitely. Under rev 1 such a repository
+would read `unavailable` on every tick with a next action ("restore visibility") that is false. The
+review also established that `gh api --paginate` exits non-zero on any non-2xx page, so a short listing
+without a `Failure` is not a path this client has; the cross-check guarded nothing real. The listing is
+the authority; the counter is recorded when it disagrees so an operator can see it, and it still counts
+pull requests, because GitHub's does.
 D4. **Every "cannot confirm" outcome is `unavailable`, never `fail`.** A `fail` would show blockers the
 evidence does not contain; `unavailable` fails readiness closed and names the reason.
 
