@@ -1,6 +1,6 @@
 # Contract 05 — A gate that cannot find its milestone is unavailable, not clear
 
-Status: **proposed** (review before any code). Slice 5 of the 2026-09-18 fix plan.
+Status: **accepted 2026-09-23** (operator: "go"). Slice 5 of the 2026-09-18 fix plan.
 Scope: `lcstatus/sources.py` (one milestone-listing helper, one raw open-items helper), `lcstatus/verify.py`
 (`Runner.release_issues`), tests, one README sentence. No rules change, no render change, no catalogue edit,
 no product repository.
