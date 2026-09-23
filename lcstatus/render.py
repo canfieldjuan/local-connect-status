@@ -27,6 +27,7 @@ COND_LABEL = {
     "changed_since": "changed since verification",
     "check_failed": "check failed",
     "not_checked": "check skipped or unavailable",
+    "config_changed": "configuration changed since verification",
     "no_evidence": "no evidence",
     "inconclusive": "needs verification",
 }
@@ -40,7 +41,11 @@ LAYER_BLURB = {
 
 
 def next_action(status: TaskStatus) -> str | None:
-    if status.release_issue_gate == "unavailable":
+    unreadable_gate = any(
+        c.condition["kind"] == "issue_gate" and c.state in ("no_evidence", "not_checked")
+        for c in status.conditions
+    )
+    if status.release_issue_gate == "unavailable" and unreadable_gate:
         return "Restore GitHub issue visibility for: " + ", ".join(status.release_issue_unavailable_repos)
     if status.release_issue_blockers:
         issue = status.release_issue_blockers[0]
@@ -48,6 +53,7 @@ def next_action(status: TaskStatus) -> str | None:
     prefixes = {
         "check_failed": "Investigate",
         "changed_since": "Re-run at current code",
+        "config_changed": "Re-verify under the current configuration",
         "not_checked": "Complete the check",
         "no_evidence": "Collect evidence",
         "inconclusive": "Add behavioral proof beyond source inspection",
@@ -261,10 +267,10 @@ a{color:var(--accent)}.hidden{display:none}footer{margin-top:40px;color:var(--mu
 
 JS = """
 const DATA = __DATA__;
-const pillFor = (s)=>({satisfied:'p-ok',verified:'p-ok',current:'p-ok',clear:'p-ok',blocked:'p-bad',unavailable:'p-bad',changed_since:'p-warn',changed_since_verification:'p-warn',check_failed:'p-bad',not_checked:'p-mute',no_evidence:'p-mute',inconclusive:'p-info',pending:'p-mute'}[s]||'p-mute');
+const pillFor = (s)=>({satisfied:'p-ok',verified:'p-ok',current:'p-ok',clear:'p-ok',blocked:'p-bad',unavailable:'p-bad',changed_since:'p-warn',config_changed:'p-warn',changed_since_verification:'p-warn',check_failed:'p-bad',not_checked:'p-mute',no_evidence:'p-mute',inconclusive:'p-info',pending:'p-mute'}[s]||'p-mute');
 const matPill = (m)=>({'released':'p-ok','ready for release':'p-ok','demonstrated':'p-ok','built':'p-info','partly built':'p-warn','planned':'p-mute'}[m]||'p-mute');
 const FRESH = {current:'verified at current code',changed_since_verification:'changed since verification',check_failed:'check failed',not_checked:'a check ran but gave no result',no_evidence:'no evidence'};
-const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',no_evidence:'no evidence',inconclusive:'needs verification'};
+const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',config_changed:'configuration changed since verification',no_evidence:'no evidence',inconclusive:'needs verification'};
 const condLabel = (c)=>c.label || COND[c.state];
 const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function evLine(e){ if(!e) return '—'; let s=`${esc(e.kind)} <code>${esc(e.revision)}</code> ${esc(e.verdict)} ${esc(String(e.recorded_at).slice(0,10))}`;
@@ -276,7 +282,7 @@ function evLine(e){ if(!e) return '—'; let s=`${esc(e.kind)} <code>${esc(e.rev
   if(e.log_path){const name=String(e.log_path).split('/').pop(); s+=` · <span class="meta" title="${esc(e.log_path)}">log: ${esc(name)}</span>`;} return s; }
 function taskCard(t){
   const plats = Object.entries(t.platforms).map(([p,s])=>`<span class="plat"><b>${esc(p)}</b>: ${esc(COND[s]||s)}</span>`).join('');
-  const conds = t.conditions.map(c=>{const ev=c.current||c.last_proven; return `<tr><td>${esc(c.proves)}<div class="meta">${esc(c.kind)} · check <code>${esc(c.check)}</code>${c.platform&&c.platform!=='n/a'?' · '+esc(c.platform):''}</div></td><td><span class="pill ${pillFor(c.state)}">${esc(condLabel(c))}</span>${c.state==='changed_since'&&c.last_proven?`<div class="meta">last proven at <code>${esc(c.last_proven.revision)}</code></div>`:''}</td><td>${evLine(ev)}</td></tr>`}).join('');
+  const conds = t.conditions.map(c=>{const ev=c.current||c.last_proven; return `<tr><td>${esc(c.proves)}<div class="meta">${esc(c.kind)} · check <code>${esc(c.check)}</code>${c.platform&&c.platform!=='n/a'?' · '+esc(c.platform):''}</div></td><td><span class="pill ${pillFor(c.state)}">${esc(condLabel(c))}</span>${(c.state==='changed_since'||c.state==='config_changed')&&c.last_proven?`<div class="meta">last proven at <code>${esc(c.last_proven.revision)}</code>${c.state==='config_changed'?' under an earlier configuration':''}</div>`:''}</td><td>${evLine(ev)}</td></tr>`}).join('');
   const deps = (t.depends_on||[]).map(d=>`<li><code>${esc(d.repo)}</code>: ${d.paths.map(p=>'<code>'+esc(p)+'</code>').join(', ')}</li>`).join('');
   const issueBlockers = (t.release_issue_blockers||[]).map(issue=>`<li><a href="${esc(issue.url)}" target="_blank" rel="noopener">${esc(issue.repo)}#${esc(issue.number)}</a> — ${esc(issue.title)}</li>`).join('');
   return `<div class="card" id="task-${esc(t.id)}"><h3>${esc(t.title)}</h3>

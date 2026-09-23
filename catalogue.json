@@ -245,7 +245,7 @@
         "invoice-processor",
         "connect-contracts"
       ],
-      "note": "The acceptance script drives the exact extracted Email Watcher engine API and Invoice Processor provider over loopback, with the exact contracts keyring and a stand-in model. A zero exit passes only with the complete machine-readable nine-check proof. All three revisions are recorded. No GPU."
+      "note": "The acceptance script drives the exact extracted Email Watcher engine API and Invoice Processor provider over loopback, with the exact contracts keyring and a stand-in model, inside an isolated HOME with its own XDG roots. The collector's installed Connect entitlement is pre-checked (structure and validity window only), staged into that HOME, and removed on every exit path. A zero exit passes only with the complete machine-readable nine-check proof. All three revisions are recorded. No GPU."
     },
     "xapp.accept_ew_to_ds": {
       "runner": "accept_ew_ds",
