@@ -57,8 +57,11 @@ def test_missing_milestone_is_unavailable_not_clear(tmp_path: Path):
 
 
 def test_milestone_listing_failure_or_malformed_response_is_unavailable(tmp_path: Path):
-    assert run(tmp_path, FakeGitHub(Failure("gh", "timed out"), [])).summary == "gh: timed out"
-    assert run(tmp_path, FakeGitHub({"not": "a list"}, [])).summary == "GitHub milestones response was not a list"
+    for gh, summary in ((FakeGitHub(Failure("gh", "timed out"), []), "gh: timed out"),
+                        (FakeGitHub({"not": "a list"}, []), "GitHub milestones response was not a list")):
+        record = run(tmp_path, gh)
+        assert record.verdict == "unavailable" and record.summary == summary
+        assert gh.calls == ["milestones"]                  # the issues were never asked for
     good = milestone()
     for bad in (
         "text",
@@ -80,8 +83,7 @@ def test_found_milestone_with_no_open_issues_is_clear_and_recorded(tmp_path: Pat
     record = run(tmp_path, FakeGitHub([milestone(number=3)], [issue(9, milestone="Later")]))
     assert record.verdict == "pass"
     assert record.summary == f"0 open issues in {TITLE}"
-    assert record.detail == {"milestone": TITLE, "milestone_number": 3, "milestone_state": "open",
-                             "milestone_open_issues": 0, "issues": []}
+    assert record.detail == {"milestone": TITLE, "milestone_number": 3, "milestone_state": "open", "issues": []}
 
 
 def test_open_issues_block_and_pull_requests_do_not(tmp_path: Path):
@@ -90,22 +92,23 @@ def test_open_issues_block_and_pull_requests_do_not(tmp_path: Path):
     assert record.verdict == "fail"
     assert record.summary == f"2 open issues in {TITLE}"
     assert [b["number"] for b in record.detail["issues"]] == [1, 2]
-    assert record.detail["milestone_open_issues"] == 3
+    assert "count_disagreement" not in record.detail
     # a pull request alone: the count agrees, nothing blocks
     only_pull = run(tmp_path, FakeGitHub([milestone(open_issues=1)], [issue(3, pull=True)]))
     assert only_pull.verdict == "pass" and only_pull.detail["issues"] == []
 
 
-def test_listing_count_must_match_the_milestone_count(tmp_path: Path):
-    short = run(tmp_path, FakeGitHub([milestone(open_issues=2)], [issue(1)]))
-    assert short.verdict == "unavailable"
-    assert short.summary == "issue listing disagrees with milestone count (1 listed, 2 reported)"
-    assert short.detail["milestone_open_issues"] == 2 and "issues" not in short.detail
-    long = run(tmp_path, FakeGitHub([milestone(open_issues=0)], [issue(1)]))
-    assert long.verdict == "unavailable"
-    assert long.summary == "issue listing disagrees with milestone count (1 listed, 0 reported)"
+def test_count_disagreement_is_recorded_never_decisive(tmp_path: Path):
+    # GitHub's counter can stay stale; the listing decides, the disagreement is shown
+    stale_high = run(tmp_path, FakeGitHub([milestone(open_issues=2)], [issue(1)]))
+    assert stale_high.verdict == "fail" and [b["number"] for b in stale_high.detail["issues"]] == [1]
+    assert stale_high.detail["count_disagreement"] == {"listed": 1, "reported": 2}
+    stale_low = run(tmp_path, FakeGitHub([milestone(open_issues=0)], [issue(1)]))
+    assert stale_low.verdict == "fail" and stale_low.detail["count_disagreement"] == {"listed": 1, "reported": 0}
+    stale_clear = run(tmp_path, FakeGitHub([milestone(open_issues=3)], []))
+    assert stale_clear.verdict == "pass" and stale_clear.detail["count_disagreement"] == {"listed": 0, "reported": 3}
     agreed = run(tmp_path, FakeGitHub([milestone(open_issues=2)], [issue(1), issue(2)]))
-    assert agreed.verdict == "fail" and len(agreed.detail["issues"]) == 2
+    assert agreed.verdict == "fail" and "count_disagreement" not in agreed.detail
 
 
 def test_closed_milestone_is_still_found(tmp_path: Path):

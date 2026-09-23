@@ -978,10 +978,11 @@ class Runner:
     ) -> Record:
         """Record the exact open-issue gate for one repository and release milestone.
 
-        Contract 05: the gate can read clear only after the milestone was found in the repository,
-        the listing succeeded, and the listing agreed with the milestone's own open count.  Every
-        other outcome is unavailable, never pass (nothing confirmed the gate) and never fail (a fail
-        would name blockers the evidence does not contain).
+        Contract 05: the gate can read clear only after the milestone was found in the repository
+        and the listing succeeded.  Every other outcome is unavailable, never pass (nothing confirmed
+        the gate) and never fail (a fail would name blockers the evidence does not contain).  The
+        milestone's own open counter is GitHub's denormalised value and can stay wrong; it is
+        recorded when it disagrees with the listing and never decides the verdict.
         """
         repo = check["repo"]
         milestone = check["milestone"]
@@ -1019,8 +1020,7 @@ class Runner:
         if len(matches) > 1:
             return unavailable(f"GitHub returned {len(matches)} milestones titled {milestone}")
         found = matches[0]
-        detail.update(milestone_number=found["number"], milestone_state=found["state"],
-                      milestone_open_issues=found["open_issues"])
+        detail.update(milestone_number=found["number"], milestone_state=found["state"])
 
         items = self.gh.open_issues_and_pulls(gh_repo)
         if isinstance(items, Failure):
@@ -1063,9 +1063,8 @@ class Runner:
                 ),
             })
         if in_milestone != found["open_issues"]:
-            return unavailable(
-                f"issue listing disagrees with milestone count ({in_milestone} listed, {found['open_issues']} reported)"
-            )
+            # GitHub's counter is denormalised and can stay stale; the listing decides, this is shown
+            detail["count_disagreement"] = {"listed": in_milestone, "reported": found["open_issues"]}
         blockers.sort(key=lambda issue: issue["number"])
         count = len(blockers)
         return Record(
