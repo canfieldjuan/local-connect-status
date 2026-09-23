@@ -47,6 +47,28 @@ MAX_ENTITLEMENT_BYTES = 16 * 1024
 UTC_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 # The acceptance script prints the watcher's own entitlement verdict on this line.
 WATCHER_DECISION_PREFIX = "watcher entitlement decision"
+INVOICE_ACCEPTANCE_CHECKS = frozenset({
+    "consumer_import_pinned", "entitlement_active", "provider_discovered",
+    "invoice_job_completed", "declared_outputs_present", "ledger_one_entry",
+    "replay_no_duplicate", "second_provider_refused", "registration_removed",
+})
+
+
+def invoice_acceptance_proof(stdout: str) -> dict[str, Any] | None:
+    """Accept only the complete, machine-readable final proof line."""
+    try:
+        proof = json.loads((stdout.strip().splitlines() or [""])[-1])
+    except (ValueError, TypeError):
+        return None
+    if (not isinstance(proof, dict) or type(proof.get("schema_version")) is not int
+            or proof["schema_version"] != 1):
+        return None
+    checks = proof.get("checks")
+    if (proof.get("all_checks") is not True or not isinstance(checks, dict)
+            or set(checks) != INVOICE_ACCEPTANCE_CHECKS
+            or any(value is not True for value in checks.values())):
+        return None
+    return proof
 
 
 def _pyproject_has_dev_group(tree: Path) -> bool:
@@ -575,6 +597,14 @@ class Runner:
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
+        for argument in check.get("args", []):
+            target = argument.split("::", 1)[0]
+            if not target.startswith("-") and target.endswith(".py") and not (tree / target).is_file():
+                return Record(
+                    verdict="unavailable",
+                    summary=f"configured pytest target absent at this revision: {target}",
+                    **base,
+                )
         venv = self._venv(repo, tree, rev.sha)
         if isinstance(venv, Failure):
             return Record(verdict="unavailable", summary=f"{venv.what}: {venv.why}", **base)
@@ -787,17 +817,22 @@ class Runner:
                 return Record(verdict="unavailable", summary="isolation failure: fixtures from outside the extracted tree",
                               command="accept_against_email_watcher.py (isolated)", exit_code=97,
                               log_path=str(log), **base)
-            verdict = "pass" if r.returncode == 0 else "fail"
+            proof = invoice_acceptance_proof(r.stdout)
+            verdict = "pass" if r.returncode == 0 and proof is not None else "fail"
             decision = watcher_decision(r.stdout)
             return Record(verdict=verdict,
                           command="accept_against_email_watcher.py (isolated, stand-in model)",
-                          exit_code=r.returncode, summary=last[:200], log_path=str(log),
+                          exit_code=r.returncode,
+                          summary=(last[:200] if proof is not None or r.returncode != 0
+                                   else "acceptance process exited zero without complete proof"),
+                          log_path=str(log),
                           duration_s=round(time.time() - t0, 1),
                           detail={"fixtures_pinned_to": str(ip_tree),
                                   "watcher_tree": str(ew_tree),
                                   "contracts_tree": str(contracts_tree),
                                   "isolated_home": str(compat_home),
                                   **entitlement,
+                                  **({"acceptance_proof": proof} if proof is not None else {}),
                                   **({"watcher_decision": decision} if decision else {})}, **base)
         finally:
             if staged is not None:

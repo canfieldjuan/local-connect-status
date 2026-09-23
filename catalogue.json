@@ -245,7 +245,7 @@
         "invoice-processor",
         "connect-contracts"
       ],
-      "note": "The acceptance script drives exact extracted Email Watcher and Invoice Processor trees over loopback, with the exact contracts keyring and a stand-in model. All three revisions are recorded. No GPU."
+      "note": "The acceptance script drives the exact extracted Email Watcher engine API and Invoice Processor provider over loopback, with the exact contracts keyring and a stand-in model. A zero exit passes only with the complete machine-readable nine-check proof. All three revisions are recorded. No GPU."
     },
     "xapp.accept_ew_to_ds": {
       "runner": "accept_ew_ds",
@@ -411,9 +411,11 @@
       "repo": "eom-email-watcher",
       "platform": "linux",
       "args": [
-        "tests/test_entitlement.py"
+        "tests/test_connect_entitlement_runtime.py",
+        "tests/test_systemd_deployment.py::test_installer_places_release_authority_where_the_runtime_reads_it",
+        "tests/test_connect_v2_engine_api.py::test_unentitled_invoke_stops_before_discovery_gmail_or_persistence"
       ],
-      "note": "Exact-revision Email Watcher tests for the shared feature id, local signature verification, time bounds, private activation, and fail-closed discovery."
+      "note": "Exact-revision Email Watcher tests for the pinned shared verifier, signed private activation, time bounds, installed release authority, and fail-closed consumer invocation."
     },
     "release.issues.ew": {
       "runner": "github_issues",

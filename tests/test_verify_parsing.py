@@ -301,6 +301,45 @@ def _accept(runner, trees, revisions):
     )
 
 
+def _complete_invoice_proof():
+    from lcstatus.verify import INVOICE_ACCEPTANCE_CHECKS
+    return json.dumps({"schema_version": 1, "checks": {key: True for key in INVOICE_ACCEPTANCE_CHECKS},
+                       "all_checks": True})
+
+
+def test_invoice_acceptance_proof_requires_exact_boolean_checks():
+    from lcstatus.verify import invoice_acceptance_proof
+
+    good = json.loads(_complete_invoice_proof())
+    assert invoice_acceptance_proof("progress\n" + json.dumps(good)) == good
+    for corrupt in (
+        {**good, "schema_version": True},
+        {**good, "all_checks": False},
+        {**good, "checks": {**good["checks"], "ledger_one_entry": 1}},
+        {**good, "checks": {key: value for key, value in good["checks"].items()
+                            if key != "ledger_one_entry"}},
+        {**good, "checks": {**good["checks"], "unverified": True}},
+    ):
+        assert invoice_acceptance_proof(json.dumps(corrupt)) is None
+    assert invoice_acceptance_proof("accepted") is None
+
+
+def test_cross_app_runner_rejects_zero_exit_without_complete_proof(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees, revisions = _cross_app_runner(tmp_path, monkeypatch)
+    _install_host_entitlement(monkeypatch, tmp_path / "host-home")
+    monkeypatch.setattr(
+        verify.subprocess, "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr=""),
+    )
+    record = _accept(runner, trees, revisions)
+
+    assert record.verdict == "fail"
+    assert record.summary == "acceptance process exited zero without complete proof"
+    assert "acceptance_proof" not in record.detail
+
+
 def _never_run(*args, **kwargs):
     raise AssertionError("the acceptance script must not be launched")
 
@@ -324,7 +363,8 @@ def test_cross_app_runner_uses_all_exact_trees_and_isolated_home(tmp_path: Path,
                     staged_bytes=staged.read_bytes(), staged_mode=stat.S_IMODE(staged.stat().st_mode),
                     config_mode=stat.S_IMODE(staged.parent.parent.stat().st_mode))
         return subprocess.CompletedProcess(
-            cmd, 0, stdout="watcher entitlement decision                active\naccepted\n", stderr="")
+            cmd, 0, stdout="watcher entitlement decision                active\n"
+                           + _complete_invoice_proof() + "\n", stderr="")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
     record = _accept(runner, trees, revisions)
@@ -450,7 +490,7 @@ def test_cross_app_runner_inherited_xdg_config_home_does_not_leak(tmp_path: Path
     def completed(cmd, **kwargs):
         env = kwargs["env"]
         seen.update(config=env["XDG_CONFIG_HOME"], home=env["HOME"], staged_bytes=_staged_licence(env).read_bytes())
-        return subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout=_complete_invoice_proof() + "\n", stderr="")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
     record = _accept(runner, trees, revisions)
@@ -558,7 +598,8 @@ def test_cross_app_runner_removes_staged_entitlement_on_every_exit(tmp_path: Pat
             raise subprocess.TimeoutExpired(cmd, 1800)
         if outcome == "oserror":
             raise PermissionError()
-        return subprocess.CompletedProcess(cmd, {"pass": 0, "fail": 1, "isolation": 97}[outcome], stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, {"pass": 0, "fail": 1, "isolation": 97}[outcome],
+                                           stdout=_complete_invoice_proof() if outcome == "pass" else "", stderr="")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
     record = _accept(runner, trees, revisions)
@@ -586,7 +627,7 @@ def test_cross_app_runner_records_watcher_decision_line(tmp_path: Path, monkeypa
     assert record.summary.startswith("STOP")
 
     monkeypatch.setattr(verify.subprocess, "run",
-                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="accepted\n", stderr=""))
+                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout=_complete_invoice_proof(), stderr=""))
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "pass"
@@ -1040,6 +1081,71 @@ def test_pytest_clears_inherited_python_paths_and_records_startup_error(tmp_path
     assert record.summary == "could not start: FileNotFoundError"
     assert "PYTHONPATH" not in captured and "PYTHONHOME" not in captured
     assert captured["PYTHONNOUSERSITE"] == "1"
+
+
+def test_pytest_missing_configured_file_is_unavailable_before_environment(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", object(),
+                    {"repos": {"ew": {}}})
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("environment must not be built for a missing target")
+    ))
+    revision = Revision("ew", "a" * 40, "2026-09-23T00:00:00+00:00", "head")
+
+    record = runner.pytest(
+        "ew.entitlement", {"repo": "ew", "args": ["tests/test_removed.py::test_old"]},
+        revision, ["condition"], ["task"],
+    )
+
+    assert record.verdict == "unavailable"
+    assert record.summary == "configured pytest target absent at this revision: tests/test_removed.py"
+
+
+def test_pytest_existing_node_selector_runs_in_exact_tree(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "tree"
+    target = tree / "tests/test_present.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("def test_ok(): pass\n")
+    venv = tree / ".venv"
+    (venv / "bin").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", object(),
+                    {"repos": {"ew": {}}})
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+
+    def completed(cmd, **kwargs):
+        if "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="Python 3.13.11\n", stderr="")
+        junit = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--junitxml="))
+        Path(junit).write_text('<testsuite tests="1" failures="0" errors="0" skipped="0"/>')
+        assert kwargs["cwd"] == tree
+        return subprocess.CompletedProcess(cmd, 0, stdout="1 passed in 0.01s\n", stderr="")
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", completed)
+    revision = Revision("ew", "a" * 40, "2026-09-23T00:00:00+00:00", "head")
+    record = runner.pytest(
+        "ew.entitlement", {"repo": "ew", "args": ["tests/test_present.py::test_ok"]},
+        revision, ["condition"], ["task"],
+    )
+
+    assert record.verdict == "pass"
+    assert record.executed == 1
 
 
 def test_cargo_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
