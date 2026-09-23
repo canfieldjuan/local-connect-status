@@ -1,6 +1,7 @@
 # Contract 04 — The rules say only what the evidence says
 
-Status: **proposed** (review before any code). Slice 4 of the 2026-09-18 fix plan.
+Status: **accepted 2026-09-23** (rev 2 adds the collector's handling of a rejected row to B4; no accepted
+behaviour is withdrawn). Slice 4 of the 2026-09-18 fix plan.
 Scope: `lcstatus/rules.py` (currentness, admission, one new condition state), `lcstatus/catalogue.py`
 (repository grammar), `lcstatus/collect.py` (release targets), `lcstatus/evidence.py` (write-time instant
 validation), `lcstatus/render.py` (one label, one next action), tests, README "Status rules". No runner
@@ -73,6 +74,11 @@ record's `recorded_at` is not an aware ISO-8601 instant, or when `revision_time`
 one. Aware instants with any offset are accepted. Loading an existing store stays tolerant (`instant_key`'s
 ordered fallback is unchanged), so a store written by an older collector still renders; the invariant is
 that this collector never writes such a row. `record_observation.py` keeps its own earlier validation.
+The collector's `store_result` turns that `ValueError` into a `collection_failure` record for the same
+repository (kind `collection_failure`, verdict `unavailable`, `revision_time` omitted, summary naming the
+field and value) and continues the run, so one bad source timestamp is shown as a source failure on the
+page rather than aborting the tick and leaving the dashboard silently stale. The rejected row itself is
+never written.
 
 B5. **README "Status rules"** states each of the above in one sentence: a cross-app record must name
 exactly the declared participants; every check names one repository; an old failure that has not been
@@ -103,7 +109,7 @@ I5. The catalogue is the only place a check's repository is decided; the rules n
 | only a `fail` at an earlier revision, never re-run | `stale_failure`; next action "Re-run at current code" |
 | only a `skip`/`unavailable` at an earlier revision | `not_checked`, as today |
 | a `fail` at an earlier revision and a `pass` at an even earlier one | `changed_since` (a pass exists), as today |
-| runner row with naive `recorded_at`, or naive `revision_time` | `Store.add` raises; nothing appended |
+| runner row with naive `recorded_at`, or naive `revision_time` | `Store.add` raises; nothing appended; the collector records a `collection_failure` for that repository and continues |
 | runner row with `recorded_at` in another offset (`+02:00`) | stored |
 | store file already containing a naive instant (older collector) | loads and renders; ordered by the existing fallback |
 
@@ -128,7 +134,8 @@ Unit:
    a fail at the current revision stays `check_failed`.
 5. `test_store_rejects_non_aware_instants_at_write`: naive `recorded_at`, naive `revision_time`, and an
    unparseable string each raise and append nothing (file bytes unchanged); an aware `+02:00` instant is
-   stored and ordered correctly against a `Z` instant.
+   stored and ordered correctly against a `Z` instant; `test_collector_records_a_rejected_row_as_a_source_failure`:
+   `store_result` with such a row appends one `collection_failure` and no evidence row, and the run continues.
 6. `test_every_live_row_passes_write_time_validation` (read-only over `data/records.jsonl`).
 7. `test_admitted_sets_are_identical_before_and_after_participant_completeness` on the live store.
 
