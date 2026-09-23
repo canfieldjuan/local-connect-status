@@ -156,9 +156,16 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
     root = Path(__file__).resolve().parent.parent
     catalogue = json.loads((root / "catalogue.json").read_text())
     edited_by_b8 = {"xapp.accept_ew_to_ip"}
+    reconfigured = {"ew.pytest.entitlement"}
     values = set(CHECK_FINGERPRINT_ALIASES.values())
     for check_id, check in catalogue["checks"].items():
         semantic = check_fingerprint(check)
+        if check_id in reconfigured:
+            old = {**check, "args": ["tests/test_entitlement.py"]}
+            assert check_fingerprint(old) in values
+            assert semantic not in values
+            assert whole_check_fingerprint(check) not in CHECK_FINGERPRINT_ALIASES
+            continue
         assert semantic in values, check_id
         if check_id in edited_by_b8:
             # its whole-dict value moved with the note; the frozen key is the pre-edit one
