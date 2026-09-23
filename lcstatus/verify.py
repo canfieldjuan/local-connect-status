@@ -976,7 +976,13 @@ class Runner:
         self, check_id: str, check: dict[str, Any], rev: Revision,
         condition_ids: list[str], task_ids: list[str],
     ) -> Record:
-        """Record the exact open-issue gate for one repository and release milestone."""
+        """Record the exact open-issue gate for one repository and release milestone.
+
+        Contract 05: the gate can read clear only after the milestone was found in the repository,
+        the listing succeeded, and the listing agreed with the milestone's own open count.  Every
+        other outcome is unavailable, never pass (nothing confirmed the gate) and never fail (a fail
+        would name blockers the evidence does not contain).
+        """
         repo = check["repo"]
         milestone = check["milestone"]
         gh_repo = self.cat["repos"][repo]["github"]
@@ -986,35 +992,57 @@ class Runner:
             condition_ids=condition_ids, task_ids=task_ids,
             source=self._source("github_issues", check_id, check, condition_ids),
         )
-        items = self.gh.open_items(gh_repo, "issues")
+        detail: dict[str, Any] = {"milestone": milestone}
+
+        def unavailable(summary: str, **extra: Any) -> Record:
+            return Record(verdict="unavailable", summary=summary, detail={**detail, **extra}, **base)
+
+        listed = self.gh.milestones(gh_repo)
+        if isinstance(listed, Failure):
+            return unavailable(f"{listed.what}: {listed.why}")
+        if not isinstance(listed, list):
+            return unavailable("GitHub milestones response was not a list")
+        seen: list[str] = []
+        matches: list[dict[str, Any]] = []
+        for item in listed:
+            if (
+                not isinstance(item, dict) or not isinstance(item.get("title"), str)
+                or type(item.get("number")) is not int or item.get("state") not in ("open", "closed")
+                or type(item.get("open_issues")) is not int
+            ):
+                return unavailable("GitHub milestones response contained a malformed milestone")
+            seen.append(item["title"])
+            if item["title"] == milestone:
+                matches.append(item)
+        if not matches:
+            return unavailable(f"milestone not found: {milestone}", milestones_seen=sorted(seen))
+        if len(matches) > 1:
+            return unavailable(f"GitHub returned {len(matches)} milestones titled {milestone}")
+        found = matches[0]
+        detail.update(milestone_number=found["number"], milestone_state=found["state"],
+                      milestone_open_issues=found["open_issues"])
+
+        items = self.gh.open_issues_and_pulls(gh_repo)
         if isinstance(items, Failure):
-            return Record(
-                verdict="unavailable", summary=f"{items.what}: {items.why}",
-                detail={"milestone": milestone}, **base,
-            )
+            return unavailable(f"{items.what}: {items.why}")
         if not isinstance(items, list):
-            return Record(
-                verdict="unavailable", summary="GitHub issues response was not a list",
-                detail={"milestone": milestone}, **base,
-            )
+            return unavailable("GitHub issues response was not a list")
 
         blockers: list[dict[str, Any]] = []
+        in_milestone = 0
         for item in items:
             if not isinstance(item, dict):
-                return Record(
-                    verdict="unavailable", summary="GitHub issues response contained a malformed issue",
-                    detail={"milestone": milestone}, **base,
-                )
+                return unavailable("GitHub issues response contained a malformed issue")
             item_milestone = item.get("milestone")
             if item_milestone is None:
                 continue
             if not isinstance(item_milestone, dict) or not isinstance(item_milestone.get("title"), str):
-                return Record(
-                    verdict="unavailable", summary="GitHub issues response contained a malformed milestone",
-                    detail={"milestone": milestone}, **base,
-                )
+                return unavailable("GitHub issues response contained a malformed milestone")
             if item_milestone["title"] != milestone:
                 continue
+            in_milestone += 1                      # GitHub's open_issues counts pull requests too
+            if "pull_request" in item:
+                continue                           # a pull request is not a blocker
             number, title = item.get("number"), item.get("title")
             raw_labels = item.get("labels", [])
             if (
@@ -1023,10 +1051,7 @@ class Runner:
                 or not isinstance(raw_labels, list)
                 or any(not isinstance(label, dict) for label in raw_labels)
             ):
-                return Record(
-                    verdict="unavailable", summary="GitHub issues response contained a malformed release issue",
-                    detail={"milestone": milestone}, **base,
-                )
+                return unavailable("GitHub issues response contained a malformed release issue")
             blockers.append({
                 "repo": repo,
                 "number": number,
@@ -1037,12 +1062,16 @@ class Runner:
                     if isinstance(label.get("name"), str) and label["name"]
                 ),
             })
+        if in_milestone != found["open_issues"]:
+            return unavailable(
+                f"issue listing disagrees with milestone count ({in_milestone} listed, {found['open_issues']} reported)"
+            )
         blockers.sort(key=lambda issue: issue["number"])
         count = len(blockers)
         return Record(
             verdict="fail" if blockers else "pass",
             summary=f"{count} open issue{'s' if count != 1 else ''} in {milestone}",
-            detail={"milestone": milestone, "issues": blockers},
+            detail={**detail, "issues": blockers},
             **base,
         )
 

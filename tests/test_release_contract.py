@@ -194,9 +194,18 @@ def test_github_issue_runner_records_only_the_exact_milestone_and_fails_loud(tmp
             "owner/clear": [later],
             "broken/repo": Failure("gh", "timed out"),
         }
+        found = {
+            "owner/app": [{"title": "First Public Release", "number": 1, "state": "open", "open_issues": 1},
+                          {"title": "Later", "number": 2, "state": "open", "open_issues": 1}],
+            "owner/clear": [{"title": "First Public Release", "number": 1, "state": "open", "open_issues": 0},
+                            {"title": "Later", "number": 2, "state": "open", "open_issues": 1}],
+            "broken/repo": Failure("gh", "timed out"),
+        }
 
-        def open_items(self, repo: str, kind: str):
-            assert kind == "issues"
+        def milestones(self, repo: str):
+            return self.found[repo]
+
+        def open_issues_and_pulls(self, repo: str):
             return self.responses[repo]
 
     catalogue = {

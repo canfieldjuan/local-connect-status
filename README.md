@@ -51,6 +51,10 @@ of the right kind exists at all the condition, platform or task reads **no evide
 never reads as if something had been checked. Source inspection is **needs verification** —
 a string in the code is a hint, not proof, and a missing string is not proof of absence.
 
+The release issue gate reads clear only after its milestone was found in the repository and the open-issue
+listing agreed with the milestone's own count; a missing or renamed milestone, a failed lookup, or a
+disagreeing count is **unavailable**, never clear.
+
 Maturity never exceeds the evidence: `planned` → `partly built` → `built` (all test/CI
 conditions verified) → `demonstrated` (plus installed-app observations) → `ready for
 release` (plus every required platform and a clear issue gate) → `released` (a published
