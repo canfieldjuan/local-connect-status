@@ -175,7 +175,11 @@ def condition_status(
     if evid:
         # records exist, but none at the current revision and none ever passed
         last = latest(evid)
-        if last.verdict == "fail":
+        # "an earlier revision" can only be claimed when the current one was observed this tick
+        head_known = (
+            all(repo in heads for repo in last.participants) if last.participants else check_repo in heads
+        )
+        if last.verdict == "fail" and head_known:
             # the check failed and has not run since: nothing was skipped
             return ConditionStatus(cond, "stale_failure", last_result=last, platform=plat)
         return ConditionStatus(cond, "not_checked", current=None, last_proven=None, platform=plat)

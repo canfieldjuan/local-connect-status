@@ -34,7 +34,6 @@ def _release_fixture() -> tuple[dict, dict, list[Record]]:
     task = {
         "id": "release.app",
         "app": "app",
-        "app_repo": "app",
         "layer": "release",
         "conditions": [
             {"id": "linux", "kind": "ci_run", "check": "linux", "platform": "linux"},

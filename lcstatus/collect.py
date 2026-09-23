@@ -59,20 +59,31 @@ def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tu
     return [(repo, rev)] if rev is not None else []
 
 
-def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
+def add_record(store: Store, failures: list[dict[str, Any]], rec: Record) -> bool | None:
+    """Every collector write goes through here (contract 04 B4).
+
+    Returns the store's answer (True stored, False collapsed), or None when the row was refused
+    because its instants could not be ordered truthfully.  A refused row is shown as a source
+    failure for its repository and the tick continues; its execution files, if any, are kept and
+    referenced from the failure row, because the log is what still says what the run did.
+    """
     try:
-        stored = store.add(rec)
+        return store.add(rec)
     except ValueError as exc:
-        # The row could not be ordered truthfully (contract 04 B4). Show it as a source failure
-        # for this repository and keep the tick going; the rejected row is never written.
-        discard_execution_files(rec)
         source_type = rec.source.get("type") or rec.kind
         why = f"rejected evidence row: {exc}"
         store.add(Record(kind="collection_failure", repo=rec.repo, revision=rec.revision, verdict="unavailable",
-                         summary=why, source={"type": source_type, "check": rec.source.get("check")}))
+                         summary=why, source={"type": source_type, "check": rec.source.get("check")},
+                         log_path=rec.log_path))
         failure = {"repo": rec.repo, "what": source_type, "why": why}
         if failure not in failures:
             failures.append(failure)
+        return None
+
+
+def store_result(store: Store, failures: list[dict[str, Any]], rec: Record) -> None:
+    stored = add_record(store, failures, rec)
+    if stored is None:
         return
     if not stored:
         # An identical consecutive observation: the stored record's own files are the evidence,
@@ -170,14 +181,14 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(f, Failure):
                     failures.append({"repo": repo, "what": f.what, "why": f.why})
                     stale_note = f"fetch failed: {f.why}"
-                    store.add(Record(kind="collection_failure", repo=repo, revision=state["heads"].get(repo, ""),
+                    add_record(store, failures, Record(kind="collection_failure", repo=repo, revision=state["heads"].get(repo, ""),
                                      verdict="unavailable", summary=stale_note, source={"type": "git_fetch"}))
                 else:
                     fetch_confirmed = True
             head = mirrors.head(repo)
             if isinstance(head, Failure):
                 failures.append({"repo": repo, "what": head.what, "why": head.why})
-                store.add(Record(kind="collection_failure", repo=repo, revision="", verdict="unavailable",
+                add_record(store, failures, Record(kind="collection_failure", repo=repo, revision="", verdict="unavailable",
                                  summary=f"{head.what}: {head.why}", source={"type": "git_head"}))
                 # The current head is unknown. It must stay unknown: supplying the last known
                 # SHA would let stored passing evidence read "verified at current code" for a
@@ -192,14 +203,14 @@ def main(argv: list[str] | None = None) -> int:
                               {"repo": repo})
             if isinstance(api, Failure):
                 failures.append({"repo": repo, "what": "github_head", "why": api.why})
-                store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="unavailable",
+                add_record(store, failures, Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="unavailable",
                                  summary=f"GitHub head lookup failed: {api.why}", source={"type": "github_api"}))
                 if not fetch_confirmed:
                     continue
             elif api.get("sha") and api["sha"] != head.sha:
                 why = f"mirror {head.sha[:12]} != GitHub {api['sha'][:12]}; mirror may lag"
                 failures.append({"repo": repo, "what": "github_head_mismatch", "why": why})
-                store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="partial",
+                add_record(store, failures, Record(kind="collection_failure", repo=repo, revision=head.sha, verdict="partial",
                                  summary=why, source={"type": "github_api"},
                                  detail={"github_sha": api["sha"]}))
                 continue
@@ -208,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             rec = Record(kind="revision", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
                          summary=head.subject, source={"type": "mirror", "stale": stale_note},
                          detail={"branch": "main"})
-            store.add(rec)
+            add_record(store, failures, rec)
             prev = change_baselines.get(repo)
             if not prev:
                 change_baselines[repo] = head.sha
@@ -218,7 +229,7 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(files, Failure):
                     # A diff we could not compute is a failure to observe, never "no changes".
                     failures.append({"repo": repo, "what": "diff", "why": files.why})
-                    store.add(Record(kind="collection_failure", repo=repo, revision=head.sha, revision_time=head.committed_at,
+                    add_record(store, failures, Record(kind="collection_failure", repo=repo, revision=head.sha, revision_time=head.committed_at,
                                      verdict="unavailable", summary=f"diff {prev[:12]}..{head.sha[:12]} failed: {files.why}",
                                      source={"type": "mirror_diff"}, detail={"old": prev}))
                 else:
@@ -226,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
                     commits = mirrors.commits_between(repo, prev, head.sha)
                     if isinstance(commits, Failure):
                         failures.append({"repo": repo, "what": commits.what, "why": commits.why})
-                        store.add(Record(
+                        add_record(store, failures, Record(
                             kind="collection_failure", repo=repo, revision=head.sha,
                             revision_time=head.committed_at, verdict="unavailable",
                             summary=f"commit log {prev[:12]}..{head.sha[:12]} failed: {commits.why}",
@@ -238,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                         commit_summaries = commits[:50]
                         commits_complete = True
                         change_baselines[repo] = head.sha
-                    store.add(Record(kind="change", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
+                    add_record(store, failures, Record(kind="change", repo=repo, revision=head.sha, revision_time=head.committed_at, verdict="pass",
                                      task_ids=sorted(a.affected_tasks), summary=f"{prev[:12]} -> {head.sha[:12]}: {len(files)} files",
                                      source={"type": "mirror_diff"},
                                      detail=dict(a.as_detail(), old=prev, commits=commit_summaries,

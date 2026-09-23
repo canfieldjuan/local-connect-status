@@ -36,7 +36,7 @@ CHECK_FOR_CONDITION = {
 
 
 def task(conds, layer="connect"):
-    return {"id": "t", "layer": layer, "app": "x", "app_repo": "ip", "conditions": conds, "depends_on": []}
+    return {"id": "t", "layer": layer, "app": "x", "conditions": conds, "depends_on": []}
 
 
 def condition_status(condition, records, heads, check_repo):

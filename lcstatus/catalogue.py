@@ -48,6 +48,16 @@ def load(path: Path) -> dict[str, Any]:
             problems.append(f"check {cid}: repo must name one catalogue repository, got {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
+        if "participants" in chk:
+            parts = chk["participants"]
+            if (
+                not isinstance(parts, list) or not parts or len(set(parts)) != len(parts)
+                or any(part not in cat.get("repos", {}) for part in parts) or chk.get("repo") not in parts
+            ):
+                problems.append(
+                    f"check {cid}: participants must be a non-empty list of distinct catalogue "
+                    "repositories that includes the check's own repository"
+                )
         if chk.get("runner") == "github_issues":
             if not isinstance(chk.get("milestone"), str) or not chk["milestone"].strip():
                 problems.append(f"check {cid}: GitHub issue gate needs a milestone")

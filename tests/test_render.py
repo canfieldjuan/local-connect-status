@@ -21,7 +21,7 @@ def payload_with_summary(summary: str) -> dict:
     )
     task = TaskStatus(
         {
-            "id": "task", "app": "email-watcher", "app_repo": "ew",
+            "id": "task", "app": "email-watcher",
             "layer": "automate", "title": "Automation", "promise": "Starts from a rule.",
             "human_involvement": "Review the result.", "next_action": "stale catalogue copy",
             "depends_on": [],
@@ -111,7 +111,7 @@ def release_failure_payload(detail: dict) -> dict:
     )
     task = TaskStatus(
         {
-            "id": "release-task", "app": "invoice-processor", "app_repo": "ip",
+            "id": "release-task", "app": "invoice-processor",
             "layer": "release", "title": "Release", "promise": "Downloadable installers.",
             "depends_on": [],
         },
