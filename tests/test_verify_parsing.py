@@ -748,6 +748,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
+    monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: completed(cmd, **kwargs))
     revisions = {
         repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
         for repo, char in zip(trees, "abc")
@@ -805,6 +806,7 @@ def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, mon
         return subprocess.CompletedProcess(cmd, 17, stdout="", stderr="proof broke\n")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
+    monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: completed(cmd, **kwargs))
     revisions = {
         repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo)
         for repo, char in zip(trees, "abc")
@@ -1218,7 +1220,9 @@ def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, mo
 
 # --- contract 06: heavy runner environments ------------------------------------------------------
 
-def test_rust_suite_shares_one_build_cache_per_repository(tmp_path: Path, monkeypatch):
+def test_rust_suite_builds_in_its_own_tree(tmp_path: Path, monkeypatch):
+    """Contract 06 rev 3 D5: no shared CARGO_TARGET_DIR.  Cargo hashes a workspace member by its path
+    relative to the workspace root, so a shared target would let a previous revision's binary pass."""
     from lcstatus.sources import Revision
     from lcstatus.verify import Runner
 
@@ -1234,20 +1238,17 @@ def test_rust_suite_shares_one_build_cache_per_repository(tmp_path: Path, monkey
     calls = []
 
     def completed(cmd, **kwargs):
-        calls.append((cmd, kwargs.get("env")))
+        calls.append((cmd, kwargs))
         stdout = "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n" if cmd[0] == "cargo" else ""
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr("lcstatus.verify.subprocess.run", completed)
-    for sha in ("b" * 40, "c" * 40):                           # two revisions, one cache
-        record = runner.cargo_lib("ds.cargo", {"repo": "ds"}, Revision("ds", sha, "2026-09-11T00:00:00+00:00", "h"),
-                                  ["condition"], ["task"])
-        assert record.verdict == "pass" and record.executed == 3
-    cargo_envs = [env for cmd, env in calls if cmd[0] == "cargo"]
-    npm_envs = [env for cmd, env in calls if cmd[0] == "npm"]
-    target = str(tmp_path / "cache" / "cargo-target" / "ds")
-    assert [env["CARGO_TARGET_DIR"] for env in cargo_envs] == [target, target]
-    assert npm_envs and all(env is None for env in npm_envs)   # the npm steps are unchanged
+    record = runner.cargo_lib("ds.cargo", {"repo": "ds"}, Revision("ds", "b" * 40, "2026-09-11T00:00:00+00:00", "h"),
+                              ["condition"], ["task"])
+    assert record.verdict == "pass"
+    cargo = next(kwargs for cmd, kwargs in calls if cmd[0] == "cargo")
+    assert cargo["cwd"] == tree / "src-tauri" and "env" not in cargo      # the tree's own target
+    assert not (tmp_path / "cache" / "cargo-target").exists()
 
 
 def _pdf_runner(tmp_path: Path, monkeypatch, repos=None):
@@ -1298,12 +1299,21 @@ def test_pdf_proof_runs_in_an_isolated_home(tmp_path: Path, monkeypatch, outcome
             raise PermissionError()
         return subprocess.CompletedProcess(cmd, 1 if (is_proof and outcome == "fail") else 0, stdout="", stderr="")
 
+    owned: list = []
     monkeypatch.setattr(verify.subprocess, "run", step)
+    monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: (owned.append(cmd), step(cmd, **kwargs))[1])
+    stale = tmp_path / "cache" / "xapp-homes" / "pdf-an-earlier-run"      # a decided run never returns here
+    (stale / ".cache").mkdir(parents=True)
     record = _run_pdf(runner, trees)
+    assert not stale.exists()                                   # swept before the proof
+    assert [cmd for cmd in owned if "connect-local-proof.py" in " ".join(cmd)]   # the proof owns its group
+    assert not [cmd for cmd in owned if "connect-local-proof.py" not in " ".join(cmd)]   # builds do not
     assert record.verdict == {"pass": "pass", "fail": "fail", "timeout": "unavailable", "oserror": "unavailable"}[outcome]
     builds = [env for is_proof, env, _ in seen if not is_proof]
     proofs = [(env, existed) for is_proof, env, existed in seen if is_proof]
-    assert len(builds) == 3 and all(env["HOME"] == "/operator/home" for env in builds)   # tool caches kept
+    assert len(builds) == 3
+    for env in builds:                                           # tool caches kept: HOME and every XDG dir
+        assert all(env[name] == value for name, value in operator.items()), env
     (proof_env, existed), = proofs
     root = tmp_path / "cache" / "xapp-homes"
     home = Path(proof_env["HOME"])
@@ -1326,8 +1336,39 @@ def test_pdf_contracts_step_honours_the_interpreter_pin(tmp_path: Path, monkeypa
             repos["connect-contracts"]["python"] = pin
         runner, trees = _pdf_runner(work, monkeypatch, repos)
         calls = []
-        monkeypatch.setattr(verify.subprocess, "run",
-                            lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
+        fake = lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1]  # noqa: E731
+        monkeypatch.setattr(verify.subprocess, "run", fake)
+        monkeypatch.setattr(verify, "run_owned_group", fake)
         _run_pdf(runner, trees)
         assert calls[0][:3 + len(expected) + 1] == ["/tools/uv", "run", "--quiet", *expected, "--with-requirements"]
+
+
+def test_pdf_proof_home_that_cannot_be_prepared_is_unavailable(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    monkeypatch.setattr(verify.subprocess, "run", ok)
+    monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: (_ for _ in ()).throw(AssertionError("proof must not start")))
+    (tmp_path / "cache" / "xapp-homes" / "pdf-stuck").mkdir(parents=True)
+    real_rmtree = verify.shutil.rmtree
+    monkeypatch.setattr(verify.shutil, "rmtree",
+                        lambda path, *a, **k: (_ for _ in ()).throw(PermissionError()) if Path(path).name == "pdf-stuck"
+                        else real_rmtree(path, *a, **k))
+    record = _run_pdf(runner, trees)
+    assert record.verdict == "unavailable"
+    assert record.summary == "could not prepare the proof's isolated home: PermissionError"
+
+
+def test_pdf_proof_home_removal_failure_is_said_out_loud(tmp_path: Path, monkeypatch, capsys):
+    import lcstatus.verify as verify
+
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    monkeypatch.setattr(verify.subprocess, "run", ok)
+    monkeypatch.setattr(verify, "run_owned_group", ok)
+    monkeypatch.setattr(verify.shutil, "rmtree", lambda path, *a, **k: (_ for _ in ()).throw(PermissionError("busy")))
+    record = _run_pdf(runner, trees)
+    assert record.verdict == "pass"                              # the result is still recorded
+    assert "could not remove the proof's isolated home" in capsys.readouterr().err
 

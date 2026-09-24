@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -550,6 +551,33 @@ def run_base(
     )
 
 
+def run_owned_group(
+    cmd: list[str], *, cwd: Path, env: dict[str, str], timeout: float,
+) -> subprocess.CompletedProcess:
+    """Run a command in its own session; on timeout kill and reap the whole group (contract 06 B5).
+
+    subprocess.run kills only the direct child.  A wrapper such as xvfb-run runs its program as a
+    child, so Xvfb, the program and anything the program launched would outlive the timeout and keep
+    writing.  Raises TimeoutExpired only after the group is gone; OSError if the command cannot start.
+    """
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
 class Runner:
     def __init__(self, mirrors: Mirrors, cache: Path, logs: Path, gh: GitHub, catalogue: dict[str, Any]):
         self.mirrors = mirrors
@@ -777,19 +805,13 @@ class Runner:
                 return Record(verdict="unavailable", summary=f"{tool} not installed", **base)
         log, _ = self._execution_paths(check_id, rev.sha[:12])
         t0 = time.time()
-        # One Rust build cache per repository (contract 06 B4): cargo keys workspace artifacts by
-        # their source path, so trees at different revisions never collide, and every dependency
-        # compiles once instead of once per revision.  The npm steps inherit the environment.
-        target = self.cache / "cargo-target" / repo
-        target.mkdir(parents=True, exist_ok=True)
-        cargo_env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
-        steps = [(["npm", "install", "--silent"], tree, None), (["npm", "run", "build"], tree, None),
-                 (["cargo", "test", "--lib"], tree / "src-tauri", cargo_env)]
+        steps = [(["npm", "install", "--silent"], tree), (["npm", "run", "build"], tree),
+                 (["cargo", "test", "--lib"], tree / "src-tauri")]
         out: list[str] = []
         rc = 0
-        for cmd, cwd, step_env in steps:
+        for cmd, cwd in steps:
             try:
-                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=3600, env=step_env)
+                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=3600)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(out), encoding="utf-8")
                 return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}", log_path=str(log), **base)
@@ -1045,18 +1067,27 @@ class Runner:
         # HOME, cache and state still came from the collector, and the provider it launches shares
         # the installed Document Summarizer's identity.  Give the proof step alone an isolated home
         # (contract 06 B5); the build steps keep the operator's home for the uv, npm and cargo caches.
-        compat_home = self.cache / "xapp-homes" / f"pdf-{key}"
-        if compat_home.is_symlink():
-            compat_home.unlink()
-        elif compat_home.exists():
-            shutil.rmtree(compat_home)
+        compat_root = self.cache / "xapp-homes"
+        compat_home = compat_root / f"pdf-{key}"
         proof_env = {**env, "HOME": str(compat_home), **isolated_xdg_env(compat_home)}
         try:
+            # Every stale proof home, not only this key's: a decided run never returns to its key.
+            if compat_root.is_dir():
+                for stale in sorted(compat_root.glob("pdf-*")):
+                    if stale.is_symlink() or not stale.is_dir():
+                        stale.unlink()
+                    else:
+                        shutil.rmtree(stale)
             for directory in (compat_home, *(Path(proof_env[name]) for name in isolated_xdg_env(compat_home))):
                 directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as exc:
+            log.write_text("\n".join(output), encoding="utf-8")
+            return Record(verdict="unavailable",
+                          summary=f"could not prepare the proof's isolated home: {type(exc).__name__}",
+                          log_path=str(log), **base)
+        try:
             try:
-                result = subprocess.run(cmd, cwd=ew_tree, capture_output=True, text=True,
-                                        timeout=1800, env=proof_env)
+                result = run_owned_group(cmd, cwd=ew_tree, env=proof_env, timeout=1800)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(output), encoding="utf-8")
                 return Record(verdict="unavailable", summary="cross-app proof timed out after 1800 seconds",
@@ -1068,9 +1099,12 @@ class Runner:
                               command="connect-local-proof.py (exact trees, stand-in model)",
                               log_path=str(log), **base)
         finally:
-            # Removed on every exit path; a removal that fails is retried by the next run's own
-            # removal above, and never blocks recording the result.
-            shutil.rmtree(compat_home, ignore_errors=True)
+            # The proof's process group is gone by now (run_owned_group), so nothing writes into the
+            # home.  A removal that fails is said out loud and swept by the next PDF run.
+            try:
+                shutil.rmtree(compat_home)
+            except OSError as exc:
+                print(f"could not remove the proof's isolated home {compat_home}: {exc}", file=sys.stderr, flush=True)
         output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
         log.write_text("\n".join(output), encoding="utf-8")
         summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "cross-app proof completed")

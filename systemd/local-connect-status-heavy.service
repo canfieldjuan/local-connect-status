@@ -8,8 +8,9 @@ WorkingDirectory=%h/Desktop/local-connect-status
 Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 # Waits for a routine tick to release the lock, then runs only the heavy checks (contract 06).
 ExecStart=/usr/bin/env python3 -m lcstatus.collect --heavy-only
-# Each runner bounds its own steps; the unit bounds the whole run.
-TimeoutStartSec=3h
+# As in the routine unit: every runner bounds each of its own steps and records a timeout as
+# evidence; a unit limit would kill the run before it could record, save state or render.
+TimeoutStartSec=infinity
 Nice=19
 IOSchedulingClass=idle
 CPUWeight=20
