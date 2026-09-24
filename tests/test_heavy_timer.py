@@ -53,12 +53,36 @@ def test_heavy_units_are_installed_and_bounded():
     assert "local-connect-status-heavy.timer" in enable and "local-connect-status-heavy.timer" in disable
 
 
+def _gone(pid: int) -> bool:
+    """A process that no longer exists, or only as a zombie.  /proc can vanish between the two reads."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z"
+    except OSError:
+        return True
+
+
+def _wait_gone(pid: int, seconds: float = 5) -> bool:
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if _gone(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _kill_if_alive(pid: int) -> None:
+    import signal
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def test_the_proof_owns_its_process_group(tmp_path: Path):
     """Real processes: a wrapper that leaves a long-lived background child and outlives its timeout.
 
     The child must outlive every wait inside run_owned_group (60 s to drain after the kill); otherwise a
     child-only kill would look correct because the child had simply finished."""
-    import signal
     marker = tmp_path / "child.pid"
     started = time.time()
     with pytest.raises(subprocess.TimeoutExpired):
@@ -66,21 +90,75 @@ def test_the_proof_owns_its_process_group(tmp_path: Path):
                         env=dict(os.environ), timeout=1)
     elapsed = time.time() - started
     child = int(marker.read_text())
-    try:
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            stat = Path(f"/proc/{child}/stat")
-            if not stat.exists() or stat.read_text().split()[2] == "Z":
-                break
-            time.sleep(0.05)
-        else:
-            raise AssertionError(f"background child {child} outlived the timeout")
-        assert elapsed < 20, f"the timeout took {elapsed:.1f}s: the group was not killed, the pipe stayed open"
-    finally:
-        try:
-            os.kill(child, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    gone = _wait_gone(child)
+    if not gone:
+        _kill_if_alive(child)                                     # never leave it behind; never kill a reused pid
+    assert gone, f"background child {child} outlived the timeout"
+    assert elapsed < 20, f"the timeout took {elapsed:.1f}s: the group was not killed, the pipe stayed open"
     done = run_owned_group(["sh", "-c", "echo hi; echo err >&2; exit 3"], cwd=tmp_path,
                            env=dict(os.environ), timeout=10)
     assert (done.returncode, done.stdout, done.stderr) == (3, "hi\n", "err\n")
+
+
+def test_owned_group_is_gone_when_the_timeout_returns(tmp_path: Path):
+    """Members writing to /dev/null (as Xvfb and the provider do) hold no pipe the drain waits on; the
+    group must still be gone when the timeout is raised.  Whether killed members are already reaped is
+    a race, so the scenario uses ten such members and three rounds: a helper that does not wait for the
+    group is caught with near certainty, and one that does passes every time."""
+    for round_ in range(3):
+        marker = tmp_path / f"group-{round_}.pid"
+        members = " ".join(["sleep 600 >/dev/null 2>&1 &"] * 10)
+        with pytest.raises(subprocess.TimeoutExpired):
+            run_owned_group(["sh", "-c", f"echo $$ > {marker}; {members} sleep 600"],
+                            cwd=tmp_path, env=dict(os.environ), timeout=1)
+        group = int(marker.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.killpg(group, 0)
+
+
+def test_owned_group_decodes_any_bytes(tmp_path: Path):
+    done = run_owned_group(["sh", "-c", "printf '\\377\\376ok'"], cwd=tmp_path, env=dict(os.environ), timeout=10)
+    assert done.returncode == 0 and done.stdout.endswith("ok") and "\ufffd" in done.stdout
+    with pytest.raises(subprocess.TimeoutExpired):                # not UnicodeDecodeError
+        run_owned_group(["sh", "-c", "printf '\\377'; sleep 600"], cwd=tmp_path, env=dict(os.environ), timeout=1)
+
+
+def test_owned_group_ends_the_group_on_interrupt(tmp_path: Path):
+    """Ctrl-C on a manual run: SIGINT to the collector must end its step's whole group."""
+    import signal
+    import sys
+    marker = tmp_path / "child.pid"
+    script = (
+        "import os, sys\n"
+        f"sys.path.insert(0, {str(ROOT)!r})\n"
+        "from lcstatus.verify import run_owned_group\n"
+        f"run_owned_group(['sh', '-c', 'sleep 600 & echo $! > {marker}; wait'], cwd={str(tmp_path)!r},\n"
+        "                env=dict(os.environ), timeout=600)\n"
+    )
+    collector = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.time() + 20
+        while not (marker.exists() and marker.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        child = int(marker.read_text())
+        os.kill(collector.pid, signal.SIGINT)
+        collector.wait(timeout=90)
+    finally:
+        if collector.poll() is None:
+            collector.kill()
+            collector.wait()
+    gone = _wait_gone(child)
+    if not gone:
+        _kill_if_alive(child)
+    assert collector.returncode != 0                              # it was interrupted
+    assert gone, f"the step's child {child} outlived the interrupt"
+
+
+def test_owned_group_gives_a_step_no_input(tmp_path: Path):
+    """A step that asks for input sees end of input at once instead of waiting (or being stopped) on a
+    terminal it is no longer in the foreground of."""
+    started = time.time()
+    done = run_owned_group(["sh", "-c", "if read answer; then echo read:$answer; else echo eof; fi"],
+                           cwd=tmp_path, env=dict(os.environ), timeout=30)
+    assert done.stdout == "eof\n" and time.time() - started < 10
+
