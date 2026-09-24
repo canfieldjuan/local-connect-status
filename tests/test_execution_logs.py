@@ -160,7 +160,11 @@ def test_timeout_and_startup_failure_name_only_what_was_written(tmp_path: Path, 
             return subprocess.CompletedProcess(cmd, 0, stdout="installed\n", stderr="")
         raise subprocess.TimeoutExpired(cmd, 3600)
 
-    monkeypatch.setattr("lcstatus.verify.subprocess.run", steps)
+    # every heavy step goes through run_owned_group (contract 06 rev 4); a direct subprocess.run would
+    # execute a real npm here
+    monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: steps(cmd, **kwargs))
+    monkeypatch.setattr("lcstatus.verify.subprocess.run",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("heavy step bypassed run_owned_group")))
     record = runner.cargo_lib("ds.lib", {"repo": "ip"}, REV, ["condition"], ["task"])
     assert record.verdict == "unavailable" and record.summary == "timeout in npm run build"
     written = list((tmp_path / "logs").iterdir())

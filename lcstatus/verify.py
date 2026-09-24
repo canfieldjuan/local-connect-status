@@ -554,28 +554,48 @@ def run_base(
 def run_owned_group(
     cmd: list[str], *, cwd: Path, env: dict[str, str], timeout: float,
 ) -> subprocess.CompletedProcess:
-    """Run a command in its own session; on timeout kill and reap the whole group (contract 06 B5).
+    """Run one heavy step in its own session; whatever ends the wait ends the whole group (contract 06 B5).
 
-    subprocess.run kills only the direct child.  A wrapper such as xvfb-run runs its program as a
-    child, so Xvfb, the program and anything the program launched would outlive the timeout and keep
-    writing.  Raises TimeoutExpired only after the group is gone; OSError if the command cannot start.
+    subprocess.run kills only the direct child.  xvfb-run, npm, cargo and uv run their work in
+    children, which would outlive a timeout -- or an interrupted manual run -- and keep writing or
+    burning CPU.  On a timeout, an interrupt or any other exception the group is killed, its output
+    drained, the step reaped, and no process of the group remains when this raises.  Output is
+    decoded as UTF-8 with replacement, so a byte sequence cut by the kill cannot turn a timeout into a
+    crash.  Raises TimeoutExpired on timeout; OSError if the command cannot start.
     """
-    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
+    # No heavy step reads input.  In its own session a step is outside the terminal's foreground group,
+    # so a tool that prompted on an inherited terminal would be stopped until its timeout; with an empty
+    # stdin it sees end of input and fails at once.
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                            start_new_session=True)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            proc.communicate(timeout=60)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+    except BaseException:
+        _end_group(proc)
         raise
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
+def _end_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.communicate(timeout=60)
+    except Exception:
+        proc.kill()
+        proc.wait()
+    # Members that write to /dev/null (Xvfb, the provider) hold none of the pipes the drain waits on:
+    # wait, bounded, until the group itself is gone.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(proc.pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return
+        time.sleep(0.05)
 
 
 class Runner:
@@ -811,7 +831,7 @@ class Runner:
         rc = 0
         for cmd, cwd in steps:
             try:
-                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=3600)
+                r = run_owned_group(cmd, cwd=cwd, env=dict(os.environ), timeout=3600)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(out), encoding="utf-8")
                 return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}", log_path=str(log), **base)
@@ -1034,8 +1054,7 @@ class Runner:
         started = time.time()
         for cmd, cwd, timeout in steps:
             try:
-                result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                                        timeout=timeout, env=env)
+                result = run_owned_group(cmd, cwd=cwd, env=env, timeout=timeout)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(output), encoding="utf-8")
                 return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}",
