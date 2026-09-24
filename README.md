@@ -133,7 +133,8 @@ Connect services on this machine:
   of the repositories it touches, the collector's own code and the revision(s), the tick prints
   `unchanged` and does not re-run it. Any other result (a failure with no framework count, a skip, an
   unknown or unavailable result) is retried every tick. A change to the collector's code runs every
-  local check once. The host environment is not in that key: `--rerun` or `--checks` forces execution.
+  local check once; a tick that finds its own code changed on disk after it started exits without
+  running. The host environment is not in that key: `--rerun` or `--checks` forces execution.
 - `local-connect-status-web.service` — creates and serves generated `site/` on
   `http://127.0.0.1:8790/`, loopback only.
 

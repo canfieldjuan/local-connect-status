@@ -25,7 +25,10 @@ from .evidence import Record, Store, atomic_write, now_iso
 from .render import render_all
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
-from .verify import Runner, decided, discard_execution_files, run_base
+from .verify import (
+    COLLECTOR_PACKAGE, LOADED_COLLECTOR_CODE, Runner, collector_package_fingerprint, decided,
+    discard_execution_files, run_base,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -144,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
         fcntl.flock(lock_fh, fcntl.LOCK_EX | (0 if args.set_baseline else fcntl.LOCK_NB))
     except BlockingIOError:
         print("another collection is running; not starting a second one", file=sys.stderr)
+        return 3
+    if collector_package_fingerprint(COLLECTOR_PACKAGE) != LOADED_COLLECTOR_CODE:
+        # The tree was updated after this process imported its code (contract 07 B1 rev 4): rows
+        # stamped now would claim code that did not produce them.  The next tick runs the new code.
+        print("the collector's code changed after this process loaded it; not running", file=sys.stderr)
         return 3
     store = Store(data / "records.jsonl")
     state_path = data / "state.json"
@@ -313,21 +321,28 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             rev = run_revs[chk["repo"]]
             if runner_kind == "source_inspection":
-                store_result(store, failures, runner.source_inspection(cid, chk, rev, conds, tasks))
-                continue
-            at = "" if catmod.participants_required(chk) else f" @ {rev.sha[:12]}"
-            heavy = " (heavy)" if chk.get("heavy") else ""
-            print(f"running {cid}{at}{heavy} ...", flush=True)
-            if runner_kind == "pytest":
-                r = runner.pytest(cid, chk, rev, conds, tasks)
-            elif runner_kind == "cargo_lib":
-                r = runner.cargo_lib(cid, chk, rev, conds, tasks)
-            elif runner_kind == "accept_ew_ip":
-                r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
+                r = runner.source_inspection(cid, chk, rev, conds, tasks)
             else:
-                r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
+                at = "" if catmod.participants_required(chk) else f" @ {rev.sha[:12]}"
+                heavy = " (heavy)" if chk.get("heavy") else ""
+                print(f"running {cid}{at}{heavy} ...", flush=True)
+                if runner_kind == "pytest":
+                    r = runner.pytest(cid, chk, rev, conds, tasks)
+                elif runner_kind == "cargo_lib":
+                    r = runner.cargo_lib(cid, chk, rev, conds, tasks)
+                elif runner_kind == "accept_ew_ip":
+                    r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
+                else:
+                    r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
+                print(f"  {r.verdict}: {r.summary}", flush=True)
+            if r.series_identity() != planned.series_identity():
+                # Contract 07 B1: a row outside its planned identity can never be found by the skip,
+                # and means a runner drifted from run_base.  Keep the evidence; say so on the page.
+                drift = {"repo": r.repo, "what": "runner_identity",
+                         "why": f"{cid} wrote a row outside its planned identity"}
+                if drift not in failures:
+                    failures.append(drift)
             store_result(store, failures, r)
-            print(f"  {r.verdict}: {r.summary}", flush=True)
         for repo, checks in ci_by_repo.items():
             rev = revs.get(repo)
             if rev is None:
