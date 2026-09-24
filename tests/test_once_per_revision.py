@@ -7,9 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from lcstatus.evidence import DECIDED_VERDICTS, Record, Store
+import ast
+
+import lcstatus.verify as verify
+from lcstatus.evidence import Record, Store
 from lcstatus.sources import Failure, Revision
-from lcstatus.verify import LOCAL_RUNNERS, Runner, run_base
+from lcstatus.verify import LOCAL_RUNNERS, Runner, decided, run_base
 
 T0 = "2026-09-20T10:00:00+00:00"
 
@@ -72,7 +75,50 @@ def test_store_add_and_the_collector_share_one_series_lookup(tmp_path: Path):
     assert store.latest_in_series(first) is first
     assert store.add(Record(kind="automated_test", repo="ew", revision="a" * 40, verdict="pass",
                             revision_time=T0, source=dict(source))) is False
-    assert DECIDED_VERDICTS == ("pass", "fail", "inconclusive")
+
+
+def test_every_runner_return_is_built_from_base():
+    """Every Record(...) in the five local runners spreads **base, and nothing edits base after it
+    is built -- so no return path can make its row a different series from the planned row."""
+    tree = ast.parse(Path(verify.__file__).read_text())
+    runner_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Runner")
+    methods = {n.name: n for n in runner_class.body if isinstance(n, ast.FunctionDef)}
+    for name in LOCAL_RUNNERS:
+        fn = methods[name]
+        records = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "Record"]
+        assert records, name
+        for call in records:
+            spreads = [k for k in call.keywords if k.arg is None]
+            assert any(isinstance(k.value, ast.Name) and k.value.id == "base" for k in spreads), (name, call.lineno)
+        writes = [n for n in ast.walk(fn)
+                  if (isinstance(n, (ast.Assign, ast.AugAssign)) and any(
+                      isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == "base"
+                      for t in (n.targets if isinstance(n, ast.Assign) else [n.target])))
+                  or (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                      and isinstance(n.func.value, ast.Name) and n.func.value.id == "base")]
+        assert writes == [], (name, [w.lineno for w in writes])
+        assigns = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == "base" for t in n.targets)]
+        assert len(assigns) == 1, (name, [a.lineno for a in assigns])
+
+
+def test_decided_requires_positive_proof():
+    def row(verdict, failed=None):
+        return Record(kind="automated_test", repo="ew", revision="a" * 40, verdict=verdict, failed=failed)
+    for runner in LOCAL_RUNNERS:
+        assert decided(runner, row("pass")) is True
+        for verdict in ("skip", "unknown", "unavailable", "pending", "partial"):
+            assert decided(runner, row(verdict)) is False, (runner, verdict)
+        assert decided(runner, row("fail")) is False, runner                 # no count: may be the harness
+        assert decided(runner, row("fail", failed=0)) is False, runner      # e.g. pytest exit 4/5
+    for runner in ("pytest", "cargo_lib"):                                   # the framework counted a failure
+        assert decided(runner, row("fail", failed=1)) is True
+        assert decided(runner, row("fail", failed=True)) is False           # not a count
+    for runner in ("accept_ew_ip", "accept_ew_ds"):                          # exit-code derived, never a count
+        assert decided(runner, row("fail", failed=1)) is False
+    assert decided("source_inspection", row("inconclusive")) is True
+    assert decided("pytest", row("inconclusive")) is False
 
 
 # --- B2..B4: the collector, end to end ---------------------------------------------------------
@@ -86,6 +132,10 @@ class World:
         self.collect, self.tmp, self.monkeypatch = collect, tmp_path, monkeypatch
         self.heads = {"ghost": rev("ghost", "a"), "other": rev("other", "b")}
         self.verdict = "pass"
+        self.failed: int | None = 1
+        self.pins: dict[str, str] = {}
+        self.broken: set[str] = set()
+        self.reads: list[str] = []
         self.calls: list[str] = []
         self.checks = {"g.pytest": {"runner": "pytest", "repo": "ghost", "platform": "linux", "args": ["tests"]}}
         self.conditions = [{"id": "g.c1", "kind": "automated_test", "check": "g.pytest", "proves": "it works"}]
@@ -99,6 +149,8 @@ class World:
                 return None
 
             def head(self, repo):
+                if repo in world.broken:
+                    return Failure("head", "unreadable in this test")
                 return world.heads[repo]
 
             def changed_files(self, repo, old, new):
@@ -112,7 +164,10 @@ class World:
 
         class FakeGitHub:
             def default_branch_head(self, gh_repo):
-                return {"sha": world.heads[gh_repo.split("/")[-1]].sha}
+                repo = gh_repo.split("/")[-1]
+                if repo in world.broken:
+                    return Failure("github", "unreadable in this test")
+                return {"sha": world.heads[repo].sha}
 
         class FakeRunner:
             def __init__(self, *args, **kwargs):
@@ -121,7 +176,9 @@ class World:
             def _row(self, kind, cid, check, revisions, conds, tasks):
                 world.calls.append(cid)
                 verdict = "inconclusive" if kind == "source_inspection" else world.verdict
-                return Record(verdict=verdict, **run_base(self.cat, kind, cid, check, revisions, conds, tasks))
+                failed = world.failed if verdict == "fail" else None
+                return Record(verdict=verdict, failed=failed,
+                              **run_base(self.cat, kind, cid, check, revisions, conds, tasks))
 
             def source_inspection(self, cid, check, r, conds, tasks):
                 return self._row("source_inspection", cid, check, {check["repo"]: r}, conds, tasks)
@@ -129,8 +186,30 @@ class World:
             def pytest(self, cid, check, r, conds, tasks):
                 return self._row("pytest", cid, check, {check["repo"]: r}, conds, tasks)
 
+            def cargo_lib(self, cid, check, r, conds, tasks):
+                return self._row("cargo_lib", cid, check, {check["repo"]: r}, conds, tasks)
+
             def accept_ew_ip(self, cid, check, revisions, conds, tasks):
                 return self._row("accept_ew_ip", cid, check, revisions, conds, tasks)
+
+            def accept_ew_ds(self, cid, check, revisions, conds, tasks):
+                return self._row("accept_ew_ds", cid, check, revisions, conds, tasks)
+
+            def ci_jobs(self, repo, r, checks, cond_map):
+                world.reads.append(f"ci:{repo}")
+                return []
+
+            def releases(self, cid, check, repo, r, conds, tasks):
+                world.reads.append(f"release:{cid}")
+                return Record(kind="release_artifact", repo=repo, revision=r.sha, revision_time=r.committed_at,
+                              verdict="fail", summary="no published release", condition_ids=conds,
+                              source={"type": "github_release", "check": cid})
+
+            def release_issues(self, cid, check, r, conds, tasks):
+                world.reads.append(f"issues:{cid}")
+                return Record(kind="issue_gate", repo=check["repo"], revision=r.sha, revision_time=r.committed_at,
+                              verdict="pass", summary="0 open issues", condition_ids=conds,
+                              source={"type": "github_issues", "check": cid})
 
         monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
         monkeypatch.setattr(collect, "Mirrors", FakeMirrors)
@@ -141,7 +220,9 @@ class World:
         catalogue = {
             "release": {"required_platforms": ["linux"], "target": "t",
                         "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None}},
-            "repos": {"ghost": {"github": "x/ghost", "ci_workflows": []}, "other": {"github": "x/other", "ci_workflows": []}},
+            "repos": {repo: {"github": f"x/{repo}", "ci_workflows": [],
+                             **({"python": self.pins[repo]} if repo in self.pins else {})}
+                      for repo in ("ghost", "other")},
             "apps": {"app": {"name": "App", "repo": "ghost"}},
             "checks": self.checks,
             "tasks": [{"id": "g.task", "app": "app", "layer": "standalone", "title": "T", "promise": "p",
@@ -149,7 +230,7 @@ class World:
         }
         path = self.tmp / "catalogue.json"
         path.write_text(json.dumps(catalogue))
-        self.calls = []
+        self.calls, self.reads = [], []
         self.collect.main(["--catalogue", str(path), "--data", str(self.tmp / "data"),
                            "--site", str(self.tmp / "site"), *extra])
         return self.calls
@@ -177,10 +258,10 @@ def test_an_inspection_reading_is_decided(tmp_path: Path, monkeypatch):
     assert world.run() == []
 
 
-@pytest.mark.parametrize("verdict", ["unavailable", "skip", "unknown"])
+@pytest.mark.parametrize("verdict", ["unavailable", "skip", "unknown", "uncounted fail"])
 def test_non_decisive_result_is_retried(tmp_path: Path, monkeypatch, verdict):
     world = World(tmp_path, monkeypatch)
-    world.verdict = verdict
+    world.verdict, world.failed = ("fail", None) if verdict == "uncounted fail" else (verdict, 1)
     assert world.run() == ["g.pytest"]
     assert world.run() == ["g.pytest"]                 # a harness answer is not an answer: retry
     world.verdict = "pass"
@@ -227,7 +308,7 @@ def test_rerun_and_checks_force_execution(tmp_path: Path, monkeypatch):
     assert world.run() == []
 
 
-def test_cheap_reads_still_run_every_tick(tmp_path: Path, monkeypatch):
+def test_the_tick_still_observes_heads_and_renders(tmp_path: Path, monkeypatch):
     world = World(tmp_path, monkeypatch)
     assert world.run() == ["g.pytest"]
     before = json.loads((tmp_path / "data" / "state.json").read_text())["runs"]
@@ -236,3 +317,74 @@ def test_cheap_reads_still_run_every_tick(tmp_path: Path, monkeypatch):
     assert state["runs"] == before + 1                 # the tick itself still happened
     assert state["heads"]["ghost"] == "a" * 40         # heads are still observed
     assert (tmp_path / "site" / "status.json").exists()
+
+
+def test_every_input_that_produces_a_result_is_in_the_key(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    monkeypatch.setattr(verify, "collector_fingerprint", lambda: world.collector)
+    world.collector = "c" * 24
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+    world.pins["ghost"] = "3.14"                          # the interpreter pin (repos[...].python)
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+    world.pins["other"] = "3.14"                          # a repository this run does not touch
+    assert world.run() == []
+    world.collector = "d" * 24                            # the collector's own code changed
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+    world.failed, world.verdict = 2, "fail"               # a counted failure is decided too
+    world.collector = "e" * 24
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+
+
+def test_the_real_collector_fingerprint_covers_the_whole_package():
+    verify.collector_fingerprint.cache_clear()
+    first = verify.collector_fingerprint()
+    assert len(first) == 24 and first == verify.collector_fingerprint()
+    package = sorted(p.name for p in Path(verify.__file__).parent.glob("*.py"))
+    assert {"verify.py", "collect.py", "evidence.py", "rules.py", "sources.py"} <= set(package)
+
+
+def test_heavy_checks_obey_the_skip(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.checks = {"g.cargo": {"runner": "cargo_lib", "repo": "ghost", "platform": "linux", "heavy": True}}
+    world.conditions = [{"id": "g.k1", "kind": "automated_test", "check": "g.cargo", "proves": "the library works"}]
+    assert world.run() == []                              # routine tick: heavy checks are not selected
+    assert world.run("--heavy") == ["g.cargo"]
+    assert world.run("--heavy") == []                     # heavy, decided at this revision: skipped
+
+
+def test_unobserved_participant_head_launches_nothing(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.checks = {"g.xapp": {"runner": "accept_ew_ds", "repo": "ghost", "platform": "linux",
+                               "participants": ["ghost", "other"]}}
+    world.conditions = [{"id": "g.x1", "kind": "automated_test", "check": "g.xapp", "proves": "they work together"}]
+    world.broken = {"other"}
+    assert world.run() == []                              # no head for `other`: nothing to run against
+    world.broken = set()
+    assert world.run() == ["g.xapp"]
+
+
+def test_removing_a_condition_runs(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.conditions.append({"id": "g.c2", "kind": "automated_test", "check": "g.pytest", "proves": "more"})
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+    world.conditions.pop()
+    assert world.run() == ["g.pytest"]
+
+
+def test_reads_still_run_when_local_checks_are_decided(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.checks.update({
+        "g.ci": {"runner": "ci_job", "repo": "ghost", "workflow": "CI", "job": "test", "platform": "linux"},
+        "g.rel": {"runner": "github_release", "repo": "ghost"},
+        "g.gate": {"runner": "github_issues", "repo": "ghost", "platform": "n/a", "milestone": "First Public Release"},
+    })
+    assert world.run() == ["g.pytest"]
+    assert sorted(world.reads) == ["ci:ghost", "issues:g.gate", "release:g.rel"]
+    assert world.run() == []                              # the local check is decided...
+    assert sorted(world.reads) == ["ci:ghost", "issues:g.gate", "release:g.rel"]   # ...the reads are not
+

@@ -21,11 +21,11 @@ from typing import Any
 
 from . import catalogue as catmod
 from .change import assess
-from .evidence import DECIDED_VERDICTS, Record, Store, atomic_write, now_iso
+from .evidence import Record, Store, atomic_write, now_iso
 from .render import render_all
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
-from .verify import Runner, discard_execution_files, run_base
+from .verify import Runner, decided, discard_execution_files, run_base
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             # store's own identity -- the one Store.add collapses a repeat on after a run.
             planned = Record(verdict="pending", **run_base(cat, runner_kind, cid, chk, run_revs, conds, tasks))
             previous = store.latest_in_series(planned)
-            if previous is not None and previous.verdict in DECIDED_VERDICTS and not forced:
+            if previous is not None and decided(runner_kind, previous) and not forced:
                 print(f"unchanged {cid} @ {planned.revision[:12]}: {previous.verdict} "
                       f"(recorded {previous.recorded_at}); not re-run", flush=True)
                 continue
