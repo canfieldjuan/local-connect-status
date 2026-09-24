@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Local Connect heavy checks (Rust suite, PDF handoff) nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=10min
+Persistent=true
+Unit=local-connect-status-heavy.service
+
+[Install]
+WantedBy=timers.target

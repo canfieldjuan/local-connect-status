@@ -1214,3 +1214,120 @@ def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, mo
     assert record.verdict == "unavailable"
     assert record.summary == "could not start: FileNotFoundError"
     assert not verify.WATCHER_COMPAT_PATH.exists()
+
+
+# --- contract 06: heavy runner environments ------------------------------------------------------
+
+def test_rust_suite_shares_one_build_cache_per_repository(tmp_path: Path, monkeypatch):
+    from lcstatus.sources import Revision
+    from lcstatus.verify import Runner
+
+    tree = tmp_path / "tree"
+    (tree / "src-tauri").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", object(), {"repos": {"ds": {}}})
+    monkeypatch.setattr("lcstatus.verify.shutil.which", lambda name: f"/usr/bin/{name}")
+    calls = []
+
+    def completed(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("env")))
+        stdout = "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured\n" if cmd[0] == "cargo" else ""
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("lcstatus.verify.subprocess.run", completed)
+    for sha in ("b" * 40, "c" * 40):                           # two revisions, one cache
+        record = runner.cargo_lib("ds.cargo", {"repo": "ds"}, Revision("ds", sha, "2026-09-11T00:00:00+00:00", "h"),
+                                  ["condition"], ["task"])
+        assert record.verdict == "pass" and record.executed == 3
+    cargo_envs = [env for cmd, env in calls if cmd[0] == "cargo"]
+    npm_envs = [env for cmd, env in calls if cmd[0] == "npm"]
+    target = str(tmp_path / "cache" / "cargo-target" / "ds")
+    assert [env["CARGO_TARGET_DIR"] for env in cargo_envs] == [target, target]
+    assert npm_envs and all(env is None for env in npm_envs)   # the npm steps are unchanged
+
+
+def _pdf_runner(tmp_path: Path, monkeypatch, repos=None):
+    import lcstatus.verify as verify
+
+    trees = _pdf_handoff_trees(tmp_path)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return trees[repo]
+
+    runner = verify.Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", object(),
+                           {"repos": repos or {repo: {} for repo in trees}})
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    monkeypatch.setattr(verify, "find_tool", lambda name: f"/tools/{name}")
+    return runner, trees
+
+
+def _run_pdf(runner, trees):
+    from lcstatus.sources import Revision
+    revisions = {repo: Revision(repo, char * 40, "2026-09-11T00:00:00Z", repo) for repo, char in zip(trees, "abc")}
+    return runner.accept_ew_ds("xapp.accept_ew_to_ds",
+                               {"participants": list(trees), "repo": "eom-email-watcher", "heavy": True},
+                               revisions, ["condition"], ["task"])
+
+
+@pytest.mark.parametrize("outcome", ["pass", "fail", "timeout", "oserror"])
+def test_pdf_proof_runs_in_an_isolated_home(tmp_path: Path, monkeypatch, outcome):
+    import lcstatus.verify as verify
+
+    operator = {"HOME": "/operator/home", "XDG_CONFIG_HOME": "/operator/.config",
+                "XDG_DATA_HOME": "/operator/.local/share", "XDG_CACHE_HOME": "/operator/.cache",
+                "XDG_STATE_HOME": "/operator/.local/state"}
+    for name, value in operator.items():
+        monkeypatch.setenv(name, value)
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    seen: list = []
+
+    def step(cmd, **kwargs):
+        env = kwargs["env"]
+        is_proof = "connect-local-proof.py" in " ".join(cmd)
+        seen.append((is_proof, dict(env), {n: Path(env[n]).is_dir() for n in ("HOME", *verify.isolated_xdg_env(Path("/")))}))
+        if is_proof and outcome == "timeout":
+            raise subprocess.TimeoutExpired(cmd, 1800)
+        if is_proof and outcome == "oserror":
+            raise PermissionError()
+        return subprocess.CompletedProcess(cmd, 1 if (is_proof and outcome == "fail") else 0, stdout="", stderr="")
+
+    monkeypatch.setattr(verify.subprocess, "run", step)
+    record = _run_pdf(runner, trees)
+    assert record.verdict == {"pass": "pass", "fail": "fail", "timeout": "unavailable", "oserror": "unavailable"}[outcome]
+    builds = [env for is_proof, env, _ in seen if not is_proof]
+    proofs = [(env, existed) for is_proof, env, existed in seen if is_proof]
+    assert len(builds) == 3 and all(env["HOME"] == "/operator/home" for env in builds)   # tool caches kept
+    (proof_env, existed), = proofs
+    root = tmp_path / "cache" / "xapp-homes"
+    home = Path(proof_env["HOME"])
+    assert home.parent == root and home.name.startswith("pdf-")
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"):
+        assert Path(proof_env[name]).is_relative_to(home), name
+        assert proof_env[name] != operator[name], name
+    assert all(existed.values()), existed                       # the directories existed during the proof
+    assert not home.exists()                                    # and are gone afterwards, on every path
+
+
+def test_pdf_contracts_step_honours_the_interpreter_pin(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    for pin, expected in (("3.13", ["--python", "3.13"]), (None, [])):
+        work = tmp_path / (pin or "none")
+        work.mkdir()
+        repos = {repo: {} for repo in ("eom-email-watcher", "document-summarizer", "connect-contracts")}
+        if pin:
+            repos["connect-contracts"]["python"] = pin
+        runner, trees = _pdf_runner(work, monkeypatch, repos)
+        calls = []
+        monkeypatch.setattr(verify.subprocess, "run",
+                            lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1])
+        _run_pdf(runner, trees)
+        assert calls[0][:3 + len(expected) + 1] == ["/tools/uv", "run", "--quiet", *expected, "--with-requirements"]
+

@@ -2,6 +2,7 @@
 
     python -m lcstatus.collect                 # routine run (timer)
     python -m lcstatus.collect --heavy         # also run Rust and PDF handoff checks (slow)
+    python -m lcstatus.collect --heavy-only    # only the heavy checks (the nightly timer); waits for the lock
     python -m lcstatus.collect --checks xapp.accept_ew_to_ip xapp.accept_ew_to_ds
     python -m lcstatus.collect --set-baseline eom-email-watcher=<sha>   # then the next run observes the real move
     python -m lcstatus.collect --render-only
@@ -127,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--site", default=str(SITE))
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust and PDF handoff)")
+    ap.add_argument("--heavy-only", action="store_true",
+                    help="run only the checks marked heavy (the nightly timer); waits for the lock")
     ap.add_argument("--checks", nargs="*", help="only these check ids (plus CI/release reads)")
     ap.add_argument("--no-local", action="store_true", help="skip local runners; read CI and releases only")
     ap.add_argument("--rerun", action="store_true",
@@ -136,15 +139,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--render-only", action="store_true")
     args = ap.parse_args(argv)
 
+    if args.heavy_only and (args.heavy or args.checks is not None):
+        ap.error("--heavy-only cannot be combined with --heavy or --checks")
     cat = catmod.load(Path(args.catalogue))
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
     # One collector at a time. A second run (timer tick, or a baseline write during a run)
-    # must never interleave with a run in progress; state.json would lose one of them.
+    # must never interleave with a run in progress; state.json would lose one of them.  A routine
+    # tick yields; a baseline write and the nightly heavy run wait (contract 06 B3): a routine tick
+    # holds the lock for seconds, and the heavy run must not lose its night to one.
     import fcntl
     lock_fh = open(data / ".lock", "w")
+    waits = bool(args.set_baseline) or args.heavy_only
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | (0 if args.set_baseline else fcntl.LOCK_NB))
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | (0 if waits else fcntl.LOCK_NB))
     except BlockingIOError:
         print("another collection is running; not starting a second one", file=sys.stderr)
         return 3
@@ -275,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
         def wanted(cid: str, chk: dict[str, Any]) -> bool:
             if args.checks is not None:
                 return cid in args.checks
+            if args.heavy_only:
+                return bool(chk.get("heavy"))
             if chk.get("heavy") and not args.heavy:
                 return False
             return True
