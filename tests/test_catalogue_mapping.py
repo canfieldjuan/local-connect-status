@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -143,6 +144,34 @@ def test_a_listing_that_fails_is_a_failure_never_an_empty_tree(tmp_path: Path):
     assert isinstance(mirrors.files_at("absent", head), Failure)
 
 
+def test_listing_and_diff_print_paths_in_one_form(tmp_path: Path, monkeypatch):
+    # the operator's git configuration asks for raw paths; neither listing may follow it (B3a)
+    config = tmp_path / "gitconfig"
+    config.write_text("[core]\n\tquotePath = false\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    work = make_repo(tmp_path, "ghost", {"plain.txt": ""})
+    base = git(work, "rev-parse", "HEAD")
+    for name in (b"caf\xc3\xa9.txt", b"latin\xe9.txt", b"tab\there.txt", b"new.txt"):
+        open(os.path.join(os.fsencode(work), name), "w").close()
+    git(work, "add", "-A")
+    git(work, "commit", "--quiet", "-m", "names")
+    head = mirror(work, tmp_path / "mirrors", "ghost")
+    mirrors = Mirrors(tmp_path / "mirrors", {"ghost": {}})
+
+    listed = mirrors.files_at("ghost", head)            # a non-UTF-8 name must not raise
+    changed = mirrors.changed_files("ghost", base, head)
+    assert isinstance(listed, list) and isinstance(changed, list)
+    assert len(changed) == 4 and set(changed) <= set(listed)   # the same file, byte for byte, in both
+    assert all(path.isascii() for path in listed)
+    assert '"caf\\303\\251.txt"' in listed
+
+    tasks = [{"id": "raw", "depends_on": [{"repo": "ghost", "paths": ["caf\u00e9.txt"]}]},
+             {"id": "quoted", "depends_on": [{"repo": "ghost", "paths": ['"caf\\303\\251.txt"']}]}]
+    attributed = set(assess("ghost", base, head, changed, tasks).affected_tasks)
+    dead = {task for task, _ in uncovered_patterns("ghost", listed, tasks)}
+    assert attributed == {"quoted"} and dead == {"raw"}      # dead exactly where assess can never match
+
+
 # ------------------------------------------------------------------------------ B3/B4 in a tick
 
 class FakeGitHub:
@@ -206,6 +235,25 @@ def test_a_moved_file_shows_as_a_gap_on_the_page_and_nowhere_else(tmp_path: Path
     monkeypatch.setattr(collect, "Mirrors", NoMirrorReads)
     assert run_tick(tmp_path, cat, "--render-only") == 0
     assert json.loads((tmp_path / "site" / "status.json").read_text())["catalogue_mapping"]["gaps"] == [gap]
+
+
+def test_the_collector_holds_the_lock_while_it_reads_its_sources(tmp_path: Path, monkeypatch):
+    work = make_repo(tmp_path, "ghost", {"src/app.py": ""})
+    mirror(work, tmp_path / "cache" / "mirrors", "ghost")
+    probes: list[object] = []
+
+    class ProbingGitHub(FakeGitHub):
+        def default_branch_head(self, gh_repo: str):
+            probe = collection_lock(tmp_path / "data", wait=False)   # a second writer, mid-tick
+            probes.append(probe)
+            if probe is not None:
+                probe.close()
+            return super().default_branch_head(gh_repo)
+
+    monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
+    monkeypatch.setattr(collect, "GitHub", lambda: ProbingGitHub({"ghost": work}))
+    assert run_tick(tmp_path, catalogue([{"repo": "ghost", "paths": ["src/**"]}])) == 0
+    assert probes == [None]
 
 
 def test_the_mapping_banner_text_and_its_absence():
