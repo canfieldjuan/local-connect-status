@@ -240,20 +240,38 @@ def test_a_moved_file_shows_as_a_gap_on_the_page_and_nowhere_else(tmp_path: Path
 def test_the_collector_holds_the_lock_while_it_reads_its_sources(tmp_path: Path, monkeypatch):
     work = make_repo(tmp_path, "ghost", {"src/app.py": ""})
     mirror(work, tmp_path / "cache" / "mirrors", "ghost")
-    probes: list[object] = []
+    held: list[tuple[str, bool]] = []
+
+    def probe(moment: str) -> None:
+        other = collection_lock(tmp_path / "data", wait=False)   # a second writer, mid-tick
+        held.append((moment, other is None))
+        if other is not None:
+            other.close()
 
     class ProbingGitHub(FakeGitHub):
         def default_branch_head(self, gh_repo: str):
-            probe = collection_lock(tmp_path / "data", wait=False)   # a second writer, mid-tick
-            probes.append(probe)
-            if probe is not None:
-                probe.close()
+            probe("head lookup")
             return super().default_branch_head(gh_repo)
+
+    class ProbingMirrors(Mirrors):
+        def files_at(self, repo: str, sha: str):
+            probe("file listing")
+            return super().files_at(repo, sha)
+
+    real_write = collect.atomic_write
+
+    def probing_write(path, text):
+        if Path(path).name == "state.json":
+            probe("state write")
+        return real_write(path, text)
 
     monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
     monkeypatch.setattr(collect, "GitHub", lambda: ProbingGitHub({"ghost": work}))
+    monkeypatch.setattr(collect, "Mirrors", ProbingMirrors)
+    monkeypatch.setattr(collect, "atomic_write", probing_write)
     assert run_tick(tmp_path, catalogue([{"repo": "ghost", "paths": ["src/**"]}])) == 0
-    assert probes == [None]
+    # from the first source read, through the mapping check, to the last write of state
+    assert held == [("head lookup", True), ("file listing", True), ("state write", True)]
 
 
 def test_the_mapping_banner_text_and_its_absence():
