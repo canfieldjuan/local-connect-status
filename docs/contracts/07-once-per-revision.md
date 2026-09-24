@@ -1,7 +1,9 @@
 # Contract 07 — A check runs once per revision, not once per tick
 
 Status: **accepted 2026-09-24** (operator: "go"; rev 2, written before any code after reading every local
-runner, replaces rev 1's hand-listed key with the store's own identity and corrects the decided-verdict set).
+runner, replaced rev 1's hand-listed key with the store's own identity; rev 3, after independent review of
+the implementation, makes "decided" require positive proof about the code and puts every input that
+produces a result into the key).
 Slice 7 of the 2026-09-18 fix plan, promoted ahead of the timer work because it removes the cost the timer
 work was budgeting for.
 Scope: `lcstatus/collect.py` (the dispatch decision for local runners), `lcstatus/evidence.py` (the
@@ -46,24 +48,39 @@ a different observation makes a different key: the revision, any participant's h
 fingerprint (a note edit does not), a reworded condition claim, and a condition added to or removed from
 the check. (Rev 1 listed the key's fields by hand and omitted the last two.)
 
+**Rev 3: the key covers every input that produces the result**, not only the check. The planned row's
+source also carries `collector_code` — a fingerprint of the collector's own source (`lcstatus/*.py`) —
+and `repo_config` — a fingerprint of the catalogue entries of every repository the run touches (the
+interpreter pin lives there: `repos[...].python`, read by `uv_sync_command`). `series_identity()`
+includes both when present. Rows written before rev 3 carry neither, so their identity is unchanged and
+the store's collapse behaves as before for them; the planned rows do carry them, so **the first tick after
+this merges runs every routine local check once**, and so does the first tick after any later change to
+the collector's code. That is the intended behaviour: a runner fix must be able to overturn a result the
+old runner recorded.
+
 B2. **Skip when decided.** Before launching a local runner, the collector asks the store for the latest
 row in the planned row's series (`Store.latest_in_series`, the same lookup `Store.add` uses to collapse a
-repeat). If that row's verdict is in `DECIDED_VERDICTS` the runner is not launched, nothing is written,
-and the collector prints one `unchanged <check> ...` line naming the verdict and when it was recorded.
-Otherwise the runner runs, as today. `DECIDED_VERDICTS` is exactly the verdicts in which the runner reached
-the code and got an answer, read from the writers:
+repeat). If `verify.decided(runner, row)` holds, the runner is not launched, nothing is written, and the
+collector prints one `unchanged <check> ...` line naming the verdict and when it was recorded. Otherwise
+the runner runs, as today.
 
-| verdict | written when | decided? |
+**Decided means positive proof about the code** (rev 3; rev 2 treated every `fail` as decided, and the
+writers record harness faults as `fail` too). `decided` holds for exactly:
+
+| row | decided? | why |
 |---|---|---|
-| `pass` | exit 0 and every counted test passed | yes |
-| `fail` | nonzero exit, a counted failure, or an incomplete acceptance proof | yes: a failure is an answer (D1) |
-| `inconclusive` | a source inspection read the exact tree (the tree at a SHA never changes; paths and markers are in the fingerprint) | yes |
-| `skip` | zero tests executed | no: nothing was checked |
-| `unknown` | the counts could not be read | no: a harness fault |
-| `unavailable` | tree, environment, tool, licence, path or timeout problem | no: a harness fault |
-| `pending`, `partial` | not produced by local runners; listed for completeness | no |
+| `pass` (any local runner) | yes | the runner's own pass criteria were met: exit 0 with counted passing tests, or a complete acceptance proof |
+| `inconclusive` (source inspection) | yes | the runner read the exact tree; the tree at a SHA never changes and the paths and markers are in the fingerprint |
+| `fail` from `pytest` or `cargo_lib` with `failed` ≥ 1 | yes | the count comes from the framework's own report (JUnit; cargo's test-result lines): tests ran and failed |
+| any other `fail` | no | a nonzero exit without a framework count: an out-of-memory kill, a usage or collection error (pytest exit 4/5 are written `fail` with `executed` 0), an `npm install`, `uv` or build step, a network fetch, a licence the product rejects, Xvfb, an acceptance run that printed no proof. The PDF handoff writes `failed = 1` from the proof's exit code, which is not a framework count, so its `fail` is never decided |
+| `skip`, `unknown`, `unavailable` | no | nothing was checked, or the harness could not produce a result |
 
-Recovery therefore still happens: a check that was unavailable is retried every tick until it decides.
+The rule is a column of the one runner table (`verify.LOCAL_RUNNERS`), so it cannot drift from the runner
+list. Recovery therefore still happens: a harness failure is retried every tick until it decides.
+
+B6. **Outside the key.** The host environment — tool versions, the installed licence, network, umask — is
+not an input the collector can fingerprint. A result that depends on it is re-evaluated when the code, the
+check, a condition, a repository's catalogue entry or the collector changes, or on `--rerun`.
 
 B3. **What still runs every tick.** Head observation, change detection, CI-run reads, release reads and
 issue-gate reads: they are cheap API reads and they are what makes the page truthful about *which*
@@ -91,8 +108,11 @@ I5. A change to a check's configuration is always checked: the run key contains 
 | Situation | Result |
 |---|---|
 | head unchanged, last row `pass` | skipped; the page's evidence row is unchanged, its date unchanged |
-| head unchanged, last row `fail` | skipped: a failure at this revision is decided; it changes only when the code does (or `--rerun`) |
+| head unchanged, last row a counted `fail` (tests ran and failed) | skipped until the code, configuration or collector changes (or `--rerun`) |
+| head unchanged, last row an uncounted `fail` (killed, setup step, licence rejected, no proof) | runs again |
 | head unchanged, last row `unavailable` (tool missing, timeout, harness fault) | runs again |
+| the collector's own code changed (a runner fix deployed) | runs once (new `collector_code`) |
+| a repository's interpreter pin changed | runs once (new `repo_config`) |
 | head moved for one participant of a cross-app check | runs (new key) |
 | check `args` edited (new fingerprint) | runs (new key) |
 | operator runs `--checks ip.pytest.all` | runs regardless of the store |
@@ -114,29 +134,38 @@ Unit:
 1. `test_decided_result_at_the_same_revision_is_not_rerun`: driving `collect.main` with a real store and a
    runner that records its calls: with a `pass` row at the head, the runner is not invoked and the store
    does not grow; same for `fail` and `inconclusive`.
-2. `test_non_decisive_result_is_retried`: `unavailable`, `skip`, `unknown` each cause a run.
+2. `test_non_decisive_result_is_retried`: `unavailable`, `skip`, `unknown`, and a `fail` without a
+   framework count each cause a run; `test_decided_requires_positive_proof` pins the B2 table per runner.
+2b. `test_every_input_that_produces_a_result_is_in_the_key`: a changed interpreter pin and a changed
+   collector fingerprint each cause a run.
+2c. `test_every_runner_return_is_built_from_base`: every `Record(...)` inside the five local runners
+   spreads `**base`, and nothing assigns into `base` after it is built (a syntax-tree check that covers
+   every return path, not only the one the parity test reaches).
 3. `test_new_revision_or_new_configuration_runs`: head moved; one participant moved; `args` edited;
    condition claim reworded; condition added. A note edit does not run.
 4. `test_cross_app_key_uses_every_declared_participant`: the invoice acceptance is keyed on all three
    heads.
 5. `test_rerun_and_checks_force_execution`.
-6. `test_cheap_reads_still_run_every_tick`: CI, release and gate readers are invoked with a decisive row
-   present.
+6. `test_cheap_reads_still_run_every_tick`: with a decided local row present, the CI, release and issue
+   readers are still invoked every tick; heavy checks obey the skip under `--heavy`; a cross-app check
+   whose participant head was not observed is not launched; removing a condition causes a run.
 
 Live, read-only, before merge: for every local check in the live catalogue at the live heads, the planned
 row's series equals the series of the row main's runners last wrote at that head (so the first tick after
 merge does not re-run everything once), and the skip decision is listed per check.
 
-Live (after merge and fast-forward): the first tick with unchanged heads launches no local runner
-(collector output shows only the reads), appends no row, keeps `data/logs` unchanged, and the page it
-renders is identical to the previous one except `generated_at`; the first tick after a real head move
-runs the affected checks once.
+Live (after merge and fast-forward): the **first** tick runs every routine local check once (the new
+`collector_code` and `repo_config` keys) and records its results; the **second** tick with unchanged heads
+prints `unchanged` for every decided check and launches only checks whose latest row is not decided (today:
+the invoice acceptance, `unavailable` while `/tmp/watcher-main` exists); its page is identical to the first
+tick's except `generated_at`; the first tick after a real head move runs the affected checks once.
 
 ## Decisions
 
-D1. **A decided failure is not re-run at the same revision.** The old rule re-ran a failing suite 72
-times a day and got the same answer. A flaky suite is a product problem to surface, not to average away
-by retrying; `--rerun` exists for the operator who wants a second look.
+D1. **A counted failure is not re-run at the same revision; an uncounted one is.** Re-running a suite
+whose tests ran and failed gets the same answer 72 times a day; a flaky suite is a product problem to
+surface, not to average away. A failure with no framework count may be the harness, so it is retried.
+`--rerun` exists for the operator who wants a second look.
 D2. **Non-decisive is always retried.** Those verdicts describe the harness, not the code; the next tick
 may have the tool, the network, or the lock.
 D3. **The key includes the semantic fingerprint, not the whole check.** Editing a note must not trigger a
@@ -148,10 +177,21 @@ D5. **The key is the store's identity, not a new one.** The store already decide
 result repeats the previous observation and throws the run's files away. Making that same decision before
 the run, with the same function, is the whole fix; a second, hand-listed key is how rev 1 missed claim
 edits, and how slice 4 drifted three times.
+D7. **Positive proof, not honest writers (rev 3).** The review found harness faults written as `fail` in
+all four executing runners. Relabelling each writer is an open list (every new failure mode is another
+case); defining "decided" by what proves the code failed is closed. How the page *labels* a harness fault
+(today "check failed") is a separate, pre-existing question, filed as an issue.
+D8. **The collector's own code is in the key (rev 3).** Rev 2 would have let a pass recorded under an
+older, weaker acceptance rule stand forever: PR #9 changed that rule, and the 2026-09-19 invoice
+acceptance `fail` (the collector did not yet stage the licence) turned into a `pass` eleven minutes after
+the collector fix, at the same heads. Fingerprinting the whole package is over-inclusive by design: a
+render-only change costs one extra tick of test runs; missing a module that affects runners would cost a
+wrong verdict.
 D6. **Pre-existing, not changed here:** a harness failure that retries can still append a row per tick when
 its details differ (eight `unavailable` rows for the invoice acceptance at today's heads).
 
 ## Estimated diff
 
-~40 lines in `collect.py`, ~15 in `evidence.py`, ~40 in `verify.py` (one base function, five runners
-calling it), ~220 lines of tests, README paragraph.
+~40 lines in `collect.py`, ~20 in `evidence.py`, ~70 in `verify.py` (one runner table with the decided
+rule, one base function, five runners calling it, the collector fingerprint), ~320 lines of tests, README
+paragraph.
