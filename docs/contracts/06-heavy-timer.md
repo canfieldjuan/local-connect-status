@@ -1,11 +1,14 @@
 # Contract 06 — Heavy checks run on their own nightly timer
 
 Status: **accepted 2026-09-24** (operator: "good to go" on the proposed defaults; rev 2, written before any
-code after re-reading every piece of code rev 1 made claims about, corrects rev 1's isolation premise and
-builds on contract 07). Slice 6 of the 2026-09-18 fix plan.
+code after re-reading every piece of code rev 1 made claims about, corrected rev 1's isolation premise and
+built on contract 07; rev 3, after independent review of the implementation, **withdraws the shared Rust
+build cache** (it could run a previous revision's binary under a new SHA), removes the unit's time limit,
+adds two retry attempts a night, and makes the proof own its process group). Slice 6 of the 2026-09-18 fix
+plan.
 Scope: `systemd/` (one new timer and service, `install.sh`), `lcstatus/collect.py` (one selection flag,
-the lock mode), `lcstatus/verify.py` (`Runner.cargo_lib` build cache, `Runner.accept_ew_ds` proof-step
-home and interpreter pin), tests, README "Heavy checks". No rules or render change, no catalogue edit, no
+the lock mode, catalogue load order), `lcstatus/verify.py` (`Runner.accept_ew_ds` proof-step home, process
+group and interpreter pin), tests, README "Heavy checks". No rules or render change, no catalogue edit, no
 product repository.
 
 ## Problem (evidence, not description)
@@ -21,12 +24,10 @@ product repository.
 - The collector takes its lock non-blocking for every run except `--set-baseline`
   (`collect.py:147`). A nightly heavy run that starts while a routine tick holds the lock would exit 3
   and not run that night.
-- `Runner.cargo_lib` (`verify.py:769`) compiles in each extracted tree's own `src-tauri/target`, so every
-  new revision recompiles every dependency from nothing.
 - `Runner.accept_ew_ds` (`verify.py:951`): the watcher's proof script already isolates itself — it
-  creates a temporary directory (`scripts/connect-local-proof.py:503`) and points `XDG_RUNTIME_DIR`,
-  `XDG_CONFIG_HOME` and `XDG_DATA_HOME` for itself and the provider into it (`:526`, `:527`,
-  `:535`). **Rev 1 overstated the exposure.** What remains: the proof step runs with the operator's
+  creates a temporary directory (`scripts/connect-local-proof.py:581` at the watcher head `ac4829fd`) and
+  points `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME` for itself and the provider into it
+  (`:610`, `:611`, `:622`). **Rev 1 overstated the exposure.** What remains: the proof step runs with the operator's
   `HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` (`verify.py:988` builds the environment from the
   collector's own), and it launches the Document Summarizer provider under the installed app's identity,
   so the provider's WebKit cache and state can land beside the operator's installed Document Summarizer.
@@ -37,39 +38,55 @@ product repository.
   (`uv_sync_command`, `verify.py:99`). connect-contracts declares none today, so the gap is latent.
 - With contract 07, a heavy check already runs at most once per revision (07 B4): a heavy run with no new
   head, configuration or collector code takes seconds.
+- The proof step's timeout (`subprocess.run(..., timeout=1800)`) kills only `xvfb-run`; `xvfb-run` runs its
+  command as a child, so Xvfb, the proof and the provider are orphaned and keep running.
 
 ## Observable behaviour
 
-B1. **A nightly heavy timer.** `systemd/local-connect-status-heavy.timer` fires
-`local-connect-status-heavy.service` daily at 03:30 local (`OnCalendar=*-*-* 03:30:00`,
-`RandomizedDelaySec=10min`, `Persistent=true`, so a sleeping machine runs it on wake). The service runs
-`python3 -m lcstatus.collect --heavy-only` with `Nice=19`, `IOSchedulingClass=idle`, `CPUWeight=20` and
-`TimeoutStartSec=3h` (the runners bound each step; the unit bounds the whole). `install.sh` copies, enables
-and starts both timers, and `--uninstall` disables and removes both.
+B1. **A nightly heavy timer with two retries.** `systemd/local-connect-status-heavy.timer` fires
+`local-connect-status-heavy.service` at 03:30, 04:30 and 05:30 local (`OnCalendar=*-*-* 03,04,05:30:00`,
+`RandomizedDelaySec=10min`, `Persistent=true`: a machine that was off catches up once at boot; one that was
+suspended fires on resume). The service runs `python3 -m lcstatus.collect --heavy-only` with `Nice=19`,
+`CPUWeight=20` and `IOSchedulingClass=idle` (honoured only by an I/O scheduler that supports priorities; the
+root NVMe here uses `none`, so the idle priority that applies is CPU), and **no time limit**
+(`TimeoutStartSec=infinity`), for the same reason the routine unit has none: every runner bounds each of its
+own steps and records the timeout as evidence, and a unit limit would kill the run before it could record,
+save state or render. Because a heavy check runs once per revision (contract 07), the second and third
+attempts cost seconds when the first succeeded, and retry what the first could not run. `install.sh`
+copies, enables and starts both timers, and `--uninstall` disables and removes both.
 
 B2. **`--heavy-only` selects the heavy checks and nothing else local.** Under it, `wanted()` is true exactly
 for checks with `heavy: true`; head observation, change detection and the CI, release and issue reads run
 as in any tick, so the heavy rows are about observed revisions. `--heavy` keeps its meaning (everything).
-`--heavy-only` cannot be combined with `--heavy` or `--checks` (argument error, exit 2). The once-per-revision
+`--heavy-only` is a mode of its own: combined with `--heavy`, `--checks` (with or without ids), `--no-local`,
+`--render-only` or `--set-baseline` it is an argument error (exit 2) before any side effect. A wanted check
+whose repository or participant head was not observed that tick is not run and the collector prints
+`skipped <check>: head of <repos> not observed this tick`; the next attempt retries it. The once-per-revision
 rule (contract 07) applies unchanged.
 
 B3. **The heavy run waits for the lock; a routine tick yields.** `--heavy-only` takes the lock blocking, as
-`--set-baseline` already does: a routine tick holds it for seconds now (contract 07), so the heavy run waits
-rather than losing its night. A routine tick that finds the lock held by a heavy run exits 3 as today and is
-skipped; the page's last-run time shows when it last rendered.
+`--set-baseline` already does; a routine tick holds it for seconds when no head moved (contract 07) and for
+the length of its checks when one did, so the heavy run waits rather than losing its attempt. Whoever must
+wait prints `waiting for the collection lock` first. The catalogue is read **after** the lock is taken, so
+a run uses the catalogue current when it starts working, not when it started waiting. A routine tick that
+finds the lock held exits 3 as today and is skipped; the page's last-run time shows when it last rendered.
+A heavy run whose code changed on disk while it waited exits 3 (contract 07 rev 4); the next attempt runs
+the new code.
 
-B4. **One Rust build cache per repository for the Rust suite.** `cargo_lib` runs `cargo test --lib` with
-`CARGO_TARGET_DIR` set to `<cache>/cargo-target/<repo>`, so dependencies compile once and each new revision
-rebuilds only what changed. The npm steps are unchanged. **The PDF handoff's build is not redirected**: its
-runner reads the provider binary from `src-tauri/target/release/document-summarizer` inside the tree
-(`verify.py:1026`).
+B4. **Withdrawn (rev 3): no shared Rust build cache.** Each extracted tree keeps compiling in its own
+`src-tauri/target`, as before. See D5.
 
 B5. **The proof step runs in an isolated home.** For the proof step only, `accept_ew_ds` creates a
 compatibility home under `<cache>/xapp-homes/<key>` and runs the proof with `HOME` and the four XDG base
 directories inside it (`isolated_xdg_env`, `verify.py:390`, as the invoice handoff does). The proof still
 creates its own temporary directory inside that. The three build steps keep the operator's home so the
 tool caches are shared. No licence is staged: the proof takes the contracts' test keyring and fixture
-entitlements by argument. The compatibility home is removed on every exit path.
+entitlements by argument. **The proof owns its process group** (rev 3): it starts in a new session, and on
+timeout the whole group — `xvfb-run`, Xvfb, the proof and the provider — is killed and reaped before the
+home is removed, so nothing writes into it afterwards. Before starting, the runner removes every stale
+`pdf-*` home in `<cache>/xapp-homes` (a decided run never returns to its key, so a leftover would otherwise
+stay forever); a failure to prepare the home is an `unavailable` row, not an aborted tick. After the proof the
+home is removed; a removal that fails is printed to the journal and swept by the next PDF run.
 
 B6. **The contracts step honours the interpreter pin.** It passes `--python <pin>` to `uv run` when the
 catalogue declares `repos["connect-contracts"].python`, exactly as `uv_sync_command` does; without a pin
@@ -84,7 +101,8 @@ shares one build cache per repository, and that the PDF proof runs in an isolate
 
 ## Invariants
 
-I1. Evidence is never rewritten; the store stays append-only; one writer at a time.
+I1. Evidence is never rewritten; the store stays append-only; one collector at a time. (Pre-existing and out
+of scope: `scripts/record_observation.py` appends a manual observation without taking the lock; slice 8.)
 I2. **No label changes at merge**: the timer is inert until its first fire; the first fire runs the two
 heavy checks once each (new revisions for the collector code key, contract 07) and changes only the four
 conditions that depend on them.
@@ -95,63 +113,89 @@ I4. A routine tick and a heavy run never interleave, and the heavy run is never 
 
 | Situation | Result |
 |---|---|
-| routine tick holds the lock at 03:30 | the heavy run waits (seconds), then runs |
+| routine tick holds the lock at 03:30 | the heavy run prints that it is waiting, waits, then runs |
 | routine tick fires during the heavy run | exits 3, skipped; the next routine tick renders |
-| heavy run overruns 3 h | systemd stops it; each runner writes its row after its step, so no partial row; the next night retries (an uncounted fail or unavailable is not decided) |
-| `--heavy-only` with `--heavy` or `--checks` | argument error, exit 2 |
+| a heavy step hangs | the runner's own step timeout ends it and records `unavailable`; the unit sets no limit that could pre-empt that record |
+| a head cannot be read at 03:30 (network not up after boot) | the heavy check is printed as skipped; the 04:30 and 05:30 attempts retry it |
+| the proof times out | its whole process group is killed and reaped; `unavailable`; the home is removed afterwards |
+| the proof's home cannot be prepared (a stale entry cannot be removed) | `unavailable`, and the tick continues |
+| the catalogue changes while the heavy run waits for the lock | the run uses the new catalogue |
+| `--heavy-only` with `--heavy`, `--checks`, `--no-local`, `--render-only` or `--set-baseline` | argument error, exit 2, nothing created |
 | machine asleep at 03:30 | `Persistent=true` fires on wake |
 | no head moved since the last heavy run | both heavy checks print `unchanged` (contract 07); the run takes seconds |
 | xvfb-run, cargo, npm or uv missing | `unavailable` rows, as today |
 | the proof writes to `HOME` or an XDG directory | it lands in the compatibility home, which is removed afterwards |
-| the shared Rust build cache is deleted | the next run rebuilds it; the verdict does not depend on it |
 
 ## Concurrency model
 
 Two timers, one exclusive lock. The routine tick acquires non-blocking and yields; the heavy run acquires
-blocking and waits (at most one routine tick). The shared Rust build cache is used only under the lock.
+blocking and waits (at most one routine tick). The proof's process group is owned by its runner and never
+outlives the step.
 
 ## Settling test evidence
 
 Unit:
 1. `test_heavy_only_selects_exactly_the_heavy_checks`: under `--heavy-only` the heavy check runs and a routine
-   check does not; the CI, release and issue reads still run; `--heavy` still selects both; a routine tick
-   selects no heavy check.
-2. `test_heavy_only_cannot_be_combined`: with `--heavy` or `--checks`, exit 2.
-3. `test_heavy_run_waits_for_the_lock`: with the lock held by another open file, a `--heavy-only` run blocks,
-   then completes after the lock is released and runs the heavy check; a routine tick in the same
-   situation exits 3 at once.
-4. `test_rust_suite_shares_one_build_cache_per_repository`: the `cargo test` step carries
-   `CARGO_TARGET_DIR=<cache>/cargo-target/<repo>`; the npm steps do not.
-5. `test_pdf_proof_runs_in_an_isolated_home`: the proof step's `HOME` and four XDG directories are inside
-   the compatibility home and none equals an inherited value; the build steps keep the collector's `HOME`;
-   the compatibility home is removed after pass, fail, timeout and OSError.
-6. `test_pdf_contracts_step_honours_the_interpreter_pin`: `--python 3.13` present with a pin, absent without.
-7. `test_heavy_units_are_installed_and_bounded`: the unit files parse; the heavy service carries `Nice=19`,
-   `IOSchedulingClass=idle`, `CPUWeight=20`, `TimeoutStartSec=3h` and `--heavy-only`; the heavy timer's
-   `OnCalendar` is 03:30 daily and `Persistent=true`; `install.sh` names both timers when installing and
-   when uninstalling.
+   check does not, and the reads still run; on a fresh store a routine tick selects no heavy check and
+   `--heavy` selects both.
+2. `test_heavy_only_is_a_mode_of_its_own`: with `--heavy`, `--checks` (with and without ids), `--no-local`,
+   `--render-only` or `--set-baseline`, exit 2 and no data directory is created.
+3. `test_heavy_run_waits_for_the_lock`: with the lock held, a routine tick exits 3 at once (bounded by a
+   thread join, so a regression fails instead of hanging); a `--heavy-only` run prints that it is waiting,
+   blocks, and after release runs the heavy check **from the catalogue as it was when the lock was released**.
+4. `test_rust_suite_builds_in_its_own_tree`: the `cargo test` step inherits the environment; no
+   `CARGO_TARGET_DIR` is set.
+5. `test_pdf_proof_runs_in_an_isolated_home`: the proof step's `HOME` and four XDG directories are inside the
+   compatibility home and none equals an inherited value; the build steps keep the collector's `HOME` **and
+   XDG directories**; the home is removed after pass, fail, timeout and OSError; a stale `pdf-*` home from an
+   earlier run is swept first; a home that cannot be prepared is `unavailable`; a failed removal is printed.
+6. `test_pdf_contracts_step_honours_the_interpreter_pin`.
+7. `test_the_proof_owns_its_process_group`: with real processes, a command that leaves a background child
+   and outlives its timeout raises the timeout, and the background child is dead afterwards.
+8. `test_heavy_units_are_installed_and_bounded`: the unit files parse; the heavy service's `ExecStart` is the
+   routine one plus `--heavy-only`, its `Environment` and `WorkingDirectory` equal the routine unit's, it
+   carries `Nice=19`, `CPUWeight=20`, `IOSchedulingClass=idle` and `TimeoutStartSec=infinity`; the heavy
+   timer fires at 03:30, 04:30 and 05:30 with `RandomizedDelaySec=10min`, `Persistent=true` and
+   `WantedBy=timers.target`; `install.sh` names both timers when installing and when uninstalling.
+9. `test_unobserved_participant_head_launches_nothing` also asserts the printed skip line.
 
-Live: `systemd-analyze calendar` confirms the next elapse; after merge and fast-forward, `install.sh` is
+Live: `systemd-analyze calendar` confirms the next elapses; after merge and fast-forward, `install.sh` is
 re-run and `systemctl --user list-timers` shows both timers; the morning after, the journal of
-`local-connect-status-heavy.service` shows the two heavy checks run once and their rows in the store.
+`local-connect-status-heavy.service` shows the two heavy checks run once, the later attempts printing
+`unchanged`, and their rows in the store. The PDF proof has never run under the collector; its first run is
+the first real test of B5, and a failure there is an uncounted `fail`, retried by the next attempt
+(contract 07).
 
 ## Decisions
 
-D1. **Hour: 03:30 local**, the operator's accepted default.
+D1. **Hour: 03:30 local**, the operator's accepted default, with retries at 04:30 and 05:30 (rev 3).
 D2. **The lock is not narrowed to the write.** Mirrors and extracted trees are shared state too; one writer
 at a time is the property every earlier slice relies on.
 D3. **The first heavy run is the timer's first fire**, at the accepted hour, not a run started by merging.
 D4. **No licence is staged for the PDF handoff**: the proof takes the test keyring and fixture entitlements
 by argument; staging the operator's licence would test the wrong thing.
-D5. **One Rust build cache per repository (B4)**, only for the Rust suite. Cargo keys workspace artifacts by
-their source path, so trees at different revisions never collide, and every dependency compiles once. The
-PDF handoff is left alone because its runner reads the binary from the tree.
+D5. **No shared Rust build cache (withdrawn in rev 3).** Rev 2 claimed cargo keys workspace artifacts by
+their absolute source path. It does not: a workspace member's metadata hash uses its path relative to the
+workspace root, so trees at different revisions share one set of artifacts, and freshness falls back to file
+times. `git archive` stamps every file with the commit time, so a revision whose commit landed before the
+previous build finished looks older than that build, and cargo would run the previous revision's test binary
+and record its result against the new SHA — a false `pass` that contract 07 would then treat as decided.
+Saving a minute of compilation at 03:30 is not worth a verdict that can be about the wrong code.
 D6. **The heavy run waits for the lock (B3).** Rev 1 kept non-blocking acquisition, which would let a
 routine tick cost the heavy run its night; since contract 07 a routine tick holds the lock for seconds.
 D7. **The build steps keep the operator's home (B5).** Isolating them would re-download every `uv`, `npm`
 and `cargo` dependency on each run; the tool caches are content-addressed and shared on purpose.
 
+D8. **No unit time limit (rev 3).** Rev 2 set `TimeoutStartSec=3h`, below the sum of the runners' own step
+timeouts (about 5.5 hours in the worst case). systemd's SIGTERM ends Python without running `finally` blocks,
+so a killed run records nothing. The routine unit already runs without a limit for exactly this reason.
+D9. **Retries are more attempts, not restart logic (rev 3).** Once-per-revision makes a repeated attempt a
+no-op when the previous one decided, so firing three times a night retries what failed (an unobserved head
+after boot, a code change during the lock wait) without exit-code-specific restart rules.
+D10. **The proof owns its process group (rev 3).** Killing only the direct child on timeout leaves Xvfb, the
+proof and the provider running and writing; the home cannot be honestly removed until they are gone.
+
 ## Estimated diff
 
-~40 lines of systemd units and `install.sh`, ~20 in `collect.py`, ~40 in `verify.py`, ~200 lines of
+~40 lines of systemd units and `install.sh`, ~30 in `collect.py`, ~70 in `verify.py`, ~300 lines of
 tests, README paragraph.
