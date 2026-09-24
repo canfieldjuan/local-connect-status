@@ -1,7 +1,9 @@
 # Contract 08 — Every dependency pattern names code that exists, and one writer at a time
 
 Status: **accepted 2026-09-24** (operator: D1 "1. remove it", D2 "2. is good with me"; rev 2 adds
-`lcstatus/sources.py` to the scope for the file listing B3 reads, before any code). Slice 8 of the 2026-09-18 fix plan.
+`lcstatus/sources.py` to the scope for the file listing B3 reads, before any code; rev 3, after independent
+review of the implementation, puts both file listings in one path form (B3a) and holds both lock handles
+for the whole write (I5)). Slice 8 of the 2026-09-18 fix plan.
 Scope: `catalogue.json` (task `depends_on` lists; D1 may remove one check), `lcstatus/catalogue.py`
 (`depends_on` shape validation), `lcstatus/change.py` (one pattern-coverage function beside `assess`),
 `lcstatus/sources.py` (one `Mirrors` method that lists the files at a revision), `lcstatus/collect.py` (per-tick
@@ -78,7 +80,7 @@ today for every other catalogue error.
 
 B3. **Mapping check, every tick.** After the observation phase, for every repository whose head was
 observed this tick, the collector lists the files at that head from its own mirror (`git ls-tree -r
---name-only <sha>`). For each task `depends_on` pattern naming that repository, a **gap** is recorded
+--name-only <sha>`, in the path form of B3a). For each task `depends_on` pattern naming that repository, a **gap** is recorded
 when no listed file matches. The check uses `change._glob_match`, the matcher `assess` uses, called
 through one new function in `change.py`. A repository whose head was not observed this tick is
 **unchecked** ("current revision not observed this tick", the same predicate as contract 04 B7). A
@@ -86,6 +88,18 @@ repository whose file listing fails is **unchecked** with the failure's reason. 
 `state.json` as `mapping = {"gaps": [{task, repo, pattern, revision}], "unchecked": [{repo, why}]}`, so
 that `--render-only` re-renders it. It is not an evidence row and not a source failure. It changes no
 label, no readiness and no exit code.
+
+B3a. **One path form (rev 3).** The file listing and the change record's diff (`Mirrors.changed_files`)
+print paths the same way: git's quoted form, where a path with bytes outside printable ASCII, a quote, a
+backslash or a control character is printed as a C-style quoted string (`"caf\303\251.txt"`). Both
+commands pass `-c core.quotePath=true`, so the operator's git configuration cannot change either form.
+Rev 2's listing used `-z`, which prints raw bytes. Independent review reproduced two faults from that.
+First, a file name that is not valid UTF-8 raised `UnicodeDecodeError` out of the listing, the mapping
+check and the tick, so one such file in a product repository would stop every collection. Second, a
+non-ASCII path appeared raw in the listing but quoted in the diff, so a pattern naming it read as covered
+while `assess` could never attribute a change to it, which breaks I3. The quoted form is ASCII, so it
+decodes, and it is the form `assess` receives. A catalogue pattern for such a path must be written in that
+form, and the mapping check now reports one that is not.
 
 B4. **Page.** When `gaps` is non-empty, a warning banner reads: "**Catalogue mapping: N dependency
 pattern(s) match no file at the current revision.** A change to the code a pattern was meant to cover is
@@ -118,12 +132,14 @@ I2. **No label changes at merge.** Verified live before merge: the branch's deri
 store and state gives task and condition labels identical to the served page. The only page differences
 are the new mapping banner and payload key (empty after B1), the changed `depends_on` lists in task
 detail, and none from D1, because no condition reads the removed check.
-I3. **One matcher.** The mapping check and `assess` call the same `_glob_match`. A pattern the check
-reports live is exactly one that `assess` can never match.
+I3. **One matcher, one path form.** The mapping check and `assess` call the same `_glob_match` on paths
+in the same form (B3a). A pattern the check reports dead is exactly one that `assess` can never match at
+that revision.
 I4. **Zero gaps after B1.** Verified before merge: every `depends_on` pattern matches at least one file at
 each repository's current head in the live mirrors.
 I5. **One writer.** The observation script and the collector never read or append the store at the same
-time. The observation script never builds its `Store` before holding the lock.
+time. The observation script never builds its `Store` before holding the lock. Each program keeps its lock
+handle referenced until it exits (rev 3): an unreferenced handle is closed at once, and the lock with it.
 
 ## Failure cases
 
@@ -134,6 +150,8 @@ time. The observation script never builds its `Store` before holding the lock.
 | `depends_on` names an undeclared repository, or `paths` is empty, not a list, or has duplicates | `catalogue.load` fails; the collector does not start (as for every other catalogue error) |
 | a repository's head is not observed this tick | its patterns are "unchecked: current revision not observed this tick"; no gap is claimed |
 | `git ls-tree` fails for an observed head | "unchecked" with the reason; no gap is claimed; no source failure |
+| a product repository holds a file name that is not valid UTF-8, or a non-ASCII path | listed in git's quoted ASCII form (B3a); the tick continues; a pattern matches it only in that form |
+| the operator sets `core.quotePath=false` | no effect: both listings force `core.quotePath=true` |
 | `--render-only` | re-renders the last tick's `mapping` from `state.json` |
 | state written by an earlier collector (no `mapping` key) | no banner until the next full tick |
 | observation script started during a tick | prints the waiting line, blocks, then records against the catalogue and store current at that moment |
@@ -165,6 +183,15 @@ Unit:
    to its collapse.
 6. `test_one_lock_helper`: `collect` and `record_observation` acquire through the same helper and the
    same lock path.
+6a. (rev 3) `test_listing_and_diff_print_paths_in_one_form`: a real repository with a non-ASCII path, a
+   non-UTF-8 path and a plain path, with `core.quotePath=false` in the global git configuration. The
+   listing never raises; every path it prints is byte-equal to the path the diff prints for the same
+   file; and `uncovered_patterns` agrees with `assess` on both the raw and the quoted pattern.
+6b. (rev 3) `test_*_holds_the_lock_while_it_reads_and_writes`: the lock is still held when the
+   observation script builds and appends to its `Store`, and while the collector reads its sources.
+   Checked by a second acquire, which must fail.
+6c. (rev 3) The real-process lock test reads the processes' output with a deadline, so a regression
+   fails the test instead of hanging it and leaving the processes behind.
 7. `test_live_catalogue_has_no_dead_patterns` is **not** a unit test, because product repositories move.
    Instead, before merge: the branch's mapping check run read-only against the live mirrors at the live
    heads prints zero gaps (I4).
