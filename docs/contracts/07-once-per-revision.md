@@ -3,7 +3,9 @@
 Status: **accepted 2026-09-24** (operator: "go"; rev 2, written before any code after reading every local
 runner, replaced rev 1's hand-listed key with the store's own identity; rev 3, after independent review of
 the implementation, makes "decided" require positive proof about the code and puts every input that
-produces a result into the key).
+produces a result into the key; rev 4, after a focused check of rev 3, excludes pytest collection errors,
+fixes the code fingerprint to the code the process loaded, and moves the one-definition guarantee from a
+syntax check to the runtime point where the planned and the actual row meet).
 Slice 7 of the 2026-09-18 fix plan, promoted ahead of the timer work because it removes the cost the timer
 work was budgeting for.
 Scope: `lcstatus/collect.py` (the dispatch decision for local runners), `lcstatus/evidence.py` (the
@@ -42,14 +44,23 @@ check, revisions, condition_ids, task_ids)` returns the fields a row of that run
 is known: kind, repository, revision and revision time, platform, condition ids, source (type, check,
 semantic check fingerprint, condition fingerprints, host) and, for a check that declares participants,
 their exact heads. **Every local runner builds its rows from it**, and the collector builds the planned
-row from the same call. The run key is that planned row's `series_identity()` — the identity the store
+row from the same call. **Rev 4: the collector enforces it at runtime.** Every row a local runner returns
+must have the planned row's series identity; one that does not is still stored (it is evidence about the
+code) and the tick records a source failure `runner_identity: <check> wrote a row outside its planned
+identity`, so the page says so and the next tick runs the check again. This covers every return path and
+every helper a runner might call, which a syntax check cannot (the review bypassed one four ways). The run key is that planned row's `series_identity()` — the identity the store
 already uses to decide that a delivery repeats the observation before it. So everything that makes a row
 a different observation makes a different key: the revision, any participant's head, the semantic
 fingerprint (a note edit does not), a reworded condition claim, and a condition added to or removed from
 the check. (Rev 1 listed the key's fields by hand and omitted the last two.)
 
 **Rev 3: the key covers every input that produces the result**, not only the check. The planned row's
-source also carries `collector_code` — a fingerprint of the collector's own source (`lcstatus/*.py`) —
+source also carries `collector_code` — a fingerprint of the collector's own code: the package's importable
+modules (regular files named `<identifier>.py` in `lcstatus/`; an editor's `.#verify.py` or a broken link
+is not code Python would import and is not hashed). **Rev 4:** it is computed when the collector's modules
+are imported, so a row is stamped with the code that produced it; after taking the lock the collector
+hashes the package on disk again and, if it differs, exits 3 without running (the tree was updated after
+this process loaded its code; the next tick runs the new code) —
 and `repo_config` — a fingerprint of the catalogue entries of every repository the run touches (the
 interpreter pin lives there: `repos[...].python`, read by `uv_sync_command`). `series_identity()`
 includes both when present. Rows written before rev 3 carry neither, so their identity is unchanged and
@@ -71,8 +82,9 @@ writers record harness faults as `fail` too). `decided` holds for exactly:
 |---|---|---|
 | `pass` (any local runner) | yes | the runner's own pass criteria were met: exit 0 with counted passing tests, or a complete acceptance proof |
 | `inconclusive` (source inspection) | yes | the runner read the exact tree; the tree at a SHA never changes and the paths and markers are in the fingerprint |
-| `fail` from `pytest` or `cargo_lib` with `failed` ≥ 1 | yes | the count comes from the framework's own report (JUnit; cargo's test-result lines): tests ran and failed |
-| any other `fail` | no | a nonzero exit without a framework count: an out-of-memory kill, a usage or collection error (pytest exit 4/5 are written `fail` with `executed` 0), an `npm install`, `uv` or build step, a network fetch, a licence the product rejects, Xvfb, an acceptance run that printed no proof. The PDF handoff writes `failed = 1` from the proof's exit code, which is not a framework count, so its `fail` is never decided |
+| `fail` from `pytest` with exit status 1 and `failed` ≥ 1 | yes | exit 1 is pytest's own "tests were collected and run and some failed"; the count is JUnit's |
+| `fail` from `cargo_lib` with `failed` ≥ 1 | yes | the count comes from cargo's test-result lines, which exist only when tests ran |
+| any other `fail` | no | a nonzero exit without a framework count: an out-of-memory kill, a collection error (pytest exit 2: JUnit reports it as an *error* on a test it never ran, so the runner's `failed` is 1 — rev 4 excludes it by the exit status), a usage error or no tests (pytest exit 4/5 are written `fail` with `executed` 0), an `npm install`, `uv` or build step, a network fetch, a licence the product rejects, Xvfb, an acceptance run that printed no proof. The PDF handoff writes `failed = 1` from the proof's exit code, which is not a framework count, so its `fail` is never decided |
 | `skip`, `unknown`, `unavailable` | no | nothing was checked, or the harness could not produce a result |
 
 The rule is a column of the one runner table (`verify.LOCAL_RUNNERS`), so it cannot drift from the runner
@@ -138,9 +150,14 @@ Unit:
    framework count each cause a run; `test_decided_requires_positive_proof` pins the B2 table per runner.
 2b. `test_every_input_that_produces_a_result_is_in_the_key`: a changed interpreter pin and a changed
    collector fingerprint each cause a run.
-2c. `test_every_runner_return_is_built_from_base`: every `Record(...)` inside the five local runners
-   spreads `**base`, and nothing assigns into `base` after it is built (a syntax-tree check that covers
-   every return path, not only the one the parity test reaches).
+2c. `test_runner_row_outside_its_planned_identity_is_reported` (rev 4, replaces rev 3's syntax check): a
+   runner returning a drifted row has it stored, a `runner_identity` source failure recorded, and is run
+   again next tick. `test_pytest_collection_error_is_not_decided`: real pytest output for a module that
+   fails to import (exit 2) is not decided; a failing assertion (exit 1) is.
+2d. `test_collector_fingerprint_is_the_loaded_code`: on a copy of the package, editing any module changes
+   the fingerprint, a hidden editor file, a broken link, a text file or `__pycache__` do not and do not
+   raise; `test_a_collector_whose_code_changed_under_it_exits_without_running`: exit 3, no runner, no
+   state written.
 3. `test_new_revision_or_new_configuration_runs`: head moved; one participant moved; `args` edited;
    condition claim reworded; condition added. A note edit does not run.
 4. `test_cross_app_key_uses_every_declared_participant`: the invoice acceptance is keyed on all three
@@ -187,6 +204,11 @@ acceptance `fail` (the collector did not yet stage the licence) turned into a `p
 the collector fix, at the same heads. Fingerprinting the whole package is over-inclusive by design: a
 render-only change costs one extra tick of test runs; missing a module that affects runners would cost a
 wrong verdict.
+D9. **Enforce at the boundary, not by syntax (rev 4).** Rev 3 guarded "every row is built from the base"
+with a syntax-tree test; a focused review defeated it four ways (a helper method, a nested write into
+`base`, `base |=`, a rebuilt record). Each is another pattern to enumerate. The collector holds the planned
+row and receives the actual one, so comparing their identities there closes the property for every path,
+present and future, and costs one comparison per run.
 D6. **Pre-existing, not changed here:** a harness failure that retries can still append a row per tick when
 its details differ (eight `unavailable` rows for the invoice acceptance at today's heads).
 
