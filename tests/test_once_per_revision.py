@@ -77,35 +77,10 @@ def test_store_add_and_the_collector_share_one_series_lookup(tmp_path: Path):
                             revision_time=T0, source=dict(source))) is False
 
 
-def test_every_runner_return_is_built_from_base():
-    """Every Record(...) in the five local runners spreads **base, and nothing edits base after it
-    is built -- so no return path can make its row a different series from the planned row."""
-    tree = ast.parse(Path(verify.__file__).read_text())
-    runner_class = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Runner")
-    methods = {n.name: n for n in runner_class.body if isinstance(n, ast.FunctionDef)}
-    for name in LOCAL_RUNNERS:
-        fn = methods[name]
-        records = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                   and n.func.id == "Record"]
-        assert records, name
-        for call in records:
-            spreads = [k for k in call.keywords if k.arg is None]
-            assert any(isinstance(k.value, ast.Name) and k.value.id == "base" for k in spreads), (name, call.lineno)
-        writes = [n for n in ast.walk(fn)
-                  if (isinstance(n, (ast.Assign, ast.AugAssign)) and any(
-                      isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == "base"
-                      for t in (n.targets if isinstance(n, ast.Assign) else [n.target])))
-                  or (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                      and isinstance(n.func.value, ast.Name) and n.func.value.id == "base")]
-        assert writes == [], (name, [w.lineno for w in writes])
-        assigns = [n for n in ast.walk(fn) if isinstance(n, ast.Assign)
-                   and any(isinstance(t, ast.Name) and t.id == "base" for t in n.targets)]
-        assert len(assigns) == 1, (name, [a.lineno for a in assigns])
-
-
 def test_decided_requires_positive_proof():
-    def row(verdict, failed=None):
-        return Record(kind="automated_test", repo="ew", revision="a" * 40, verdict=verdict, failed=failed)
+    def row(verdict, failed=None, exit_code=1):
+        return Record(kind="automated_test", repo="ew", revision="a" * 40, verdict=verdict, failed=failed,
+                      exit_code=exit_code)
     for runner in LOCAL_RUNNERS:
         assert decided(runner, row("pass")) is True
         for verdict in ("skip", "unknown", "unavailable", "pending", "partial"):
@@ -115,6 +90,8 @@ def test_decided_requires_positive_proof():
     for runner in ("pytest", "cargo_lib"):                                   # the framework counted a failure
         assert decided(runner, row("fail", failed=1)) is True
         assert decided(runner, row("fail", failed=True)) is False           # not a count
+    for exit_code in (2, 3, 4, 5, -9, None):                                 # pytest: only exit 1 means tests ran
+        assert decided("pytest", row("fail", failed=1, exit_code=exit_code)) is False, exit_code
     for runner in ("accept_ew_ip", "accept_ew_ds"):                          # exit-code derived, never a count
         assert decided(runner, row("fail", failed=1)) is False
     assert decided("source_inspection", row("inconclusive")) is True
@@ -136,6 +113,7 @@ class World:
         self.pins: dict[str, str] = {}
         self.broken: set[str] = set()
         self.reads: list[str] = []
+        self.drift = False
         self.calls: list[str] = []
         self.checks = {"g.pytest": {"runner": "pytest", "repo": "ghost", "platform": "linux", "args": ["tests"]}}
         self.conditions = [{"id": "g.c1", "kind": "automated_test", "check": "g.pytest", "proves": "it works"}]
@@ -177,8 +155,10 @@ class World:
                 world.calls.append(cid)
                 verdict = "inconclusive" if kind == "source_inspection" else world.verdict
                 failed = world.failed if verdict == "fail" else None
-                return Record(verdict=verdict, failed=failed,
-                              **run_base(self.cat, kind, cid, check, revisions, conds, tasks))
+                base = run_base(self.cat, kind, cid, check, revisions, conds, tasks)
+                if world.drift:
+                    base = {**base, "platform": "windows"}
+                return Record(verdict=verdict, failed=failed, exit_code=1 if verdict == "fail" else 0, **base)
 
             def source_inspection(self, cid, check, r, conds, tasks):
                 return self._row("source_inspection", cid, check, {check["repo"]: r}, conds, tasks)
@@ -339,12 +319,101 @@ def test_every_input_that_produces_a_result_is_in_the_key(tmp_path: Path, monkey
     assert world.run() == []
 
 
-def test_the_real_collector_fingerprint_covers_the_whole_package():
-    verify.collector_fingerprint.cache_clear()
-    first = verify.collector_fingerprint()
-    assert len(first) == 24 and first == verify.collector_fingerprint()
-    package = sorted(p.name for p in Path(verify.__file__).parent.glob("*.py"))
-    assert {"verify.py", "collect.py", "evidence.py", "rules.py", "sources.py"} <= set(package)
+def test_collector_fingerprint_is_the_loaded_code(tmp_path: Path):
+    import shutil
+    real = verify.COLLECTOR_PACKAGE
+    copy = tmp_path / "lcstatus"
+    shutil.copytree(real, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    assert verify.collector_package_fingerprint(copy) == verify.LOADED_COLLECTOR_CODE == verify.collector_fingerprint()
+    baseline = verify.collector_package_fingerprint(copy)
+    # things Python would not import: no change, and no crash
+    (copy / ".#verify.py").symlink_to(copy / "missing-target.py")        # an editor lock, dangling
+    (copy / "notes.txt").write_text("prose")
+    (copy / "__pycache__").mkdir()
+    (copy / "__pycache__" / "verify.cpython-313.pyc").write_bytes(b"\0")
+    assert verify.collector_package_fingerprint(copy) == baseline
+    # any module, not only the runners', is part of the code
+    for module in ("rules.py", "render.py", "verify.py", "collect.py"):
+        edited = copy / module
+        original = edited.read_bytes()
+        edited.write_bytes(original + b"\n# edited\n")
+        assert verify.collector_package_fingerprint(copy) != baseline, module
+        edited.write_bytes(original)
+    (copy / "extra_module.py").write_text("X = 1\n")                     # a new module counts too
+    assert verify.collector_package_fingerprint(copy) != baseline
+
+
+def test_a_collector_whose_code_changed_under_it_exits_without_running(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    assert world.run() == ["g.pytest"]
+    state_before = (tmp_path / "data" / "state.json").read_text()
+    monkeypatch.setattr(world.collect, "collector_package_fingerprint", lambda package: "changed-on-disk")
+    world.heads["ghost"] = rev("ghost", "f")                              # even with work to do
+    path = tmp_path / "catalogue.json"
+    world.calls = []
+    rc = world.collect.main(["--catalogue", str(path), "--data", str(tmp_path / "data"), "--site", str(tmp_path / "site")])
+    assert rc == 3 and world.calls == []
+    assert (tmp_path / "data" / "state.json").read_text() == state_before
+
+
+def test_runner_row_outside_its_planned_identity_is_reported(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.drift = True                                                   # the fake writes platform "windows"
+    assert world.run() == ["g.pytest"]
+    state = json.loads((tmp_path / "data" / "state.json").read_text())
+    assert {"repo": "ghost", "what": "runner_identity",
+            "why": "g.pytest wrote a row outside its planned identity"} in state["last_failures"]
+    rows = [json.loads(l) for l in (tmp_path / "data" / "records.jsonl").read_text().splitlines() if l.strip()]
+    assert any(r["platform"] == "windows" and r["source"]["check"] == "g.pytest" for r in rows)   # kept as evidence
+    assert world.run() == ["g.pytest"]                                    # never found by the skip: runs again
+    world.drift = False
+    assert world.run() == ["g.pytest"]
+    assert world.run() == []
+
+
+def test_pytest_collection_error_is_not_decided(tmp_path: Path, monkeypatch):
+    """Real pytest output: a module that fails to import versus a failing assertion."""
+    import subprocess
+    import sys
+    outcomes = {}
+    for name, body in (("collection", "import module_that_does_not_exist\n\ndef test_x():\n    pass\n"),
+                       ("assertion", "def test_x():\n    assert 1 == 2\n")):
+        work = tmp_path / name
+        work.mkdir()
+        (work / "test_case.py").write_text(body)
+        junit = work / "junit.xml"
+        real = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                               f"--junitxml={junit}", "test_case.py"], cwd=work, capture_output=True, text=True)
+        outcomes[name] = (real.returncode, junit.read_text(), real.stdout)
+    assert outcomes["collection"][0] == 2 and outcomes["assertion"][0] == 1
+
+    tree = tmp_path / "tree"
+    (tree / "tests").mkdir(parents=True)
+    (tree / "tests" / "test_case.py").write_text("")
+    venv = tree / ".venv"
+    (venv / "bin").mkdir(parents=True)
+
+    class Mirrors:
+        def extract(self, repo, sha, destination):
+            return tree
+
+    catalogue = {"repos": {"ew": {"github": "x/ew"}}, "tasks": []}
+    runner = Runner(Mirrors(), tmp_path / "cache", tmp_path / "logs", object(), catalogue)
+    monkeypatch.setattr(runner, "_venv", lambda *args, **kwargs: venv)
+    for name, expect in (("collection", False), ("assertion", True)):
+        code, junit_text, stdout = outcomes[name]
+
+        def completed(cmd, **kwargs):
+            if "--version" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="Python 3.13.11\n", stderr="")
+            Path(next(a.split("=", 1)[1] for a in cmd if a.startswith("--junitxml="))).write_text(junit_text)
+            return subprocess.CompletedProcess(cmd, code, stdout=stdout, stderr="")
+
+        monkeypatch.setattr("lcstatus.verify.subprocess.run", completed)
+        row = runner.pytest("ew.case", {"repo": "ew", "args": ["tests/test_case.py"]},
+                            rev("ew", "a"), [], [])
+        assert row.verdict == "fail" and row.failed == 1, (name, row.summary)
+        assert decided("pytest", row) is expect, name
 
 
 def test_heavy_checks_obey_the_skip(tmp_path: Path, monkeypatch):

@@ -249,6 +249,7 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
     import lcstatus.collect as collect
     from lcstatus.evidence import Record
     from lcstatus.sources import Revision
+    from lcstatus.verify import run_base
 
     check = {"runner": runner_kind, "repo": "ghost", "platform": "linux"}
     if runner_kind == "source_inspection":
@@ -289,30 +290,30 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
             return {"sha": revision.sha}
 
     class FakeRunner:
+        # Rows are built from run_base, as every real local runner's are (contract 07 B1).
         def __init__(self, *args, **kwargs):
-            pass
+            self.cat = args[-1]
 
-        def result(self, rev, condition_ids, task_ids):
+        def result(self, check_id, check_config, revisions, condition_ids, task_ids):
             return Record(
-                kind=condition_kind, repo="ghost", revision=rev.sha, revision_time=rev.committed_at,
-                verdict="unavailable", platform="linux", condition_ids=condition_ids, task_ids=task_ids,
-                source={"type": source_type}, summary=f"{runner_kind} unavailable",
+                verdict="unavailable", summary=f"{runner_kind} unavailable",
+                **run_base(self.cat, runner_kind, check_id, check_config, revisions, condition_ids, task_ids),
             )
 
         def source_inspection(self, check_id, check_config, rev, condition_ids, task_ids):
-            return self.result(rev, condition_ids, task_ids)
+            return self.result(check_id, check_config, {"ghost": rev}, condition_ids, task_ids)
 
         def pytest(self, check_id, check_config, rev, condition_ids, task_ids):
-            return self.result(rev, condition_ids, task_ids)
+            return self.result(check_id, check_config, {"ghost": rev}, condition_ids, task_ids)
 
         def cargo_lib(self, check_id, check_config, rev, condition_ids, task_ids):
-            return self.result(rev, condition_ids, task_ids)
+            return self.result(check_id, check_config, {"ghost": rev}, condition_ids, task_ids)
 
         def accept_ew_ip(self, check_id, check_config, revisions, condition_ids, task_ids):
-            return self.result(revisions["ghost"], condition_ids, task_ids)
+            return self.result(check_id, check_config, revisions, condition_ids, task_ids)
 
         def accept_ew_ds(self, check_id, check_config, revisions, condition_ids, task_ids):
-            return self.result(revisions["ghost"], condition_ids, task_ids)
+            return self.result(check_id, check_config, revisions, condition_ids, task_ids)
 
     monkeypatch.setattr(collect, "CACHE", tmp_path / "cache")
     monkeypatch.setattr(collect, "Mirrors", FakeMirrors)

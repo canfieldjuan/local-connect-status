@@ -29,7 +29,6 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -434,17 +433,27 @@ def discard_execution_files(record: Record) -> None:
                 pass
 
 
-# The one table of local runners: (record kind, source type, platform, failure counts come from the
-# test framework's own report).  A platform of ("check", default) reads the check's own platform, as
-# the pytest and inspection runners always did.  The last column is what makes a `fail` positive proof
-# (contract 07 B2): pytest counts from JUnit and cargo from its test-result lines; the acceptance
-# runners have no such count (the PDF handoff derives `failed` from the proof's exit code).
-LOCAL_RUNNERS: dict[str, tuple[str, str, Any, bool]] = {
-    "source_inspection": ("source_inspection", "source_inspection", ("check", "n/a"), False),
-    "pytest": ("automated_test", "local_runner", ("check", "linux"), True),
-    "cargo_lib": ("automated_test", "local_runner", "linux", True),
-    "accept_ew_ip": ("automated_test", "local_runner", "linux", False),
-    "accept_ew_ds": ("automated_test", "local_runner", "linux", False),
+def _pytest_counted_failure(row: Any) -> bool:
+    # Exit status 1 is pytest's own "tests were collected and run and some failed".  A collection
+    # error exits 2 while JUnit reports it as an error on a test that never ran.
+    return row.exit_code == 1 and type(row.failed) is int and row.failed >= 1
+
+
+def _cargo_counted_failure(row: Any) -> bool:
+    # cargo's test-result lines, the only source of `failed`, exist only when tests ran.
+    return type(row.failed) is int and row.failed >= 1
+
+
+# The one table of local runners: (record kind, source type, platform, counted-failure rule).  A
+# platform of ("check", default) reads the check's own platform, as the pytest and inspection runners
+# always did.  The last column is what makes a `fail` positive proof (contract 07 B2); the acceptance
+# runners have none (the PDF handoff derives `failed` from the proof's exit code).
+LOCAL_RUNNERS: dict[str, tuple[str, str, Any, Any]] = {
+    "source_inspection": ("source_inspection", "source_inspection", ("check", "n/a"), None),
+    "pytest": ("automated_test", "local_runner", ("check", "linux"), _pytest_counted_failure),
+    "cargo_lib": ("automated_test", "local_runner", "linux", _cargo_counted_failure),
+    "accept_ew_ip": ("automated_test", "local_runner", "linux", None),
+    "accept_ew_ds": ("automated_test", "local_runner", "linux", None),
 }
 
 
@@ -461,20 +470,34 @@ def decided(runner: str, row: Any) -> bool:
     if row.verdict == "inconclusive":
         return runner == "source_inspection"
     if row.verdict == "fail":
-        return LOCAL_RUNNERS[runner][3] and type(row.failed) is int and row.failed >= 1
+        rule = LOCAL_RUNNERS[runner][3]
+        return rule is not None and rule(row)
     return False
 
 
-@lru_cache(maxsize=1)
-def collector_fingerprint() -> str:
-    """The collector's own code, an input to every local run (contract 07 B1 rev 3).
+def collector_package_fingerprint(package: Path) -> str:
+    """The collector's code: every module of the package Python would import (contract 07 B1).
 
-    The whole package is hashed on purpose: a module that affects runners can never be left out.
+    The whole package is hashed on purpose, so a module that affects runners can never be left out.
+    Only regular files named `<identifier>.py` count: an editor's `.#verify.py`, a broken link or a
+    cache file is not code this process runs.  A real module that cannot be read raises.
     """
     digest = hashlib.sha256()
-    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
-        digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    for path in sorted(package.iterdir()):
+        if path.suffix == ".py" and path.stem.isidentifier() and path.is_file():
+            digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     return digest.hexdigest()[:24]
+
+
+COLLECTOR_PACKAGE = Path(__file__).resolve().parent
+# Fixed when this module is imported, so every row is stamped with the code that produced it even if
+# the tree is updated while the process runs; collect.py re-checks the disk after taking the lock.
+LOADED_COLLECTOR_CODE = collector_package_fingerprint(COLLECTOR_PACKAGE)
+
+
+def collector_fingerprint() -> str:
+    """The code this process loaded; an input to every local run's identity."""
+    return LOADED_COLLECTOR_CODE
 
 
 def repo_config_fingerprint(catalogue: dict[str, Any], repos: list[str]) -> str:
