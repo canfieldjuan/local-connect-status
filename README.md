@@ -154,7 +154,12 @@ was off is seen on the next tick, with every intermediate commit listed in the c
 A transient diff or commit-log failure keeps that comparison baseline in place for the next tick
 without hiding the newly confirmed current head.
 
-**Heavy checks** are opt-in. They include Document Summarizer's Rust suite and the exact-tree
+**Heavy checks** run nightly at 03:30 on their own timer (`local-connect-status-heavy.timer`, idle
+priority, `--heavy-only`), once per revision like every local check. The heavy run waits for a routine
+tick to finish; a routine tick that finds the heavy run holding the lock is skipped, and the page's
+last-run time shows it. The Rust suite shares one build cache per repository; the PDF proof runs in an
+isolated home while its build steps keep the operator's tool caches. They include Document Summarizer's
+Rust suite and the exact-tree
 Email Watcher → Document Summarizer PDF handoff. The handoff first validates the current Connect
 Contracts fixtures, builds the exact provider revision with that revision's test keyring, and then
 runs Email Watcher's real cross-process proof under software rendering with its fixture model. Its

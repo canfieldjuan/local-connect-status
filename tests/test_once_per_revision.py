@@ -457,3 +457,65 @@ def test_reads_still_run_when_local_checks_are_decided(tmp_path: Path, monkeypat
     assert world.run() == []                              # the local check is decided...
     assert sorted(world.reads) == ["ci:ghost", "issues:g.gate", "release:g.rel"]   # ...the reads are not
 
+
+# --- contract 06: the nightly heavy run ---------------------------------------------------------
+
+def _heavy_world(tmp_path: Path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    world.checks = {
+        "g.pytest": {"runner": "pytest", "repo": "ghost", "platform": "linux", "args": ["tests"]},
+        "g.cargo": {"runner": "cargo_lib", "repo": "ghost", "platform": "linux", "heavy": True},
+        "g.ci": {"runner": "ci_job", "repo": "ghost", "workflow": "CI", "job": "test", "platform": "linux"},
+        "g.rel": {"runner": "github_release", "repo": "ghost"},
+        "g.gate": {"runner": "github_issues", "repo": "ghost", "platform": "n/a", "milestone": "First Public Release"},
+    }
+    world.conditions = [
+        {"id": "g.c1", "kind": "automated_test", "check": "g.pytest", "proves": "it works"},
+        {"id": "g.k1", "kind": "automated_test", "check": "g.cargo", "proves": "the library works"},
+    ]
+    return world
+
+
+def test_heavy_only_selects_exactly_the_heavy_checks(tmp_path: Path, monkeypatch):
+    world = _heavy_world(tmp_path, monkeypatch)
+    assert world.run("--heavy-only") == ["g.cargo"]            # the heavy check, and no routine one
+    assert sorted(world.reads) == ["ci:ghost", "issues:g.gate", "release:g.rel"]   # the reads still run
+    assert world.run() == ["g.pytest"]                         # a routine tick selects no heavy check
+    other = _heavy_world(tmp_path / "other", monkeypatch)
+    (tmp_path / "other").mkdir()
+    assert other.run("--heavy") == ["g.pytest", "g.cargo"]     # --heavy still means everything
+
+
+@pytest.mark.parametrize("extra", [["--heavy"], ["--checks", "g.cargo"]])
+def test_heavy_only_cannot_be_combined(tmp_path: Path, monkeypatch, extra):
+    world = _heavy_world(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as stopped:
+        world.run("--heavy-only", *extra)
+    assert stopped.value.code == 2
+    assert world.calls == []
+
+
+def test_heavy_run_waits_for_the_lock(tmp_path: Path, monkeypatch):
+    import fcntl
+    import threading
+    import time
+    world = _heavy_world(tmp_path, monkeypatch)
+    assert world.run() == ["g.pytest"]                         # creates data/ and the lock file
+    holder = open(tmp_path / "data" / ".lock", "w")
+    fcntl.flock(holder, fcntl.LOCK_EX)                         # a routine tick "is running"
+    try:
+        routine = world.collect.main(["--catalogue", str(tmp_path / "catalogue.json"),
+                                      "--data", str(tmp_path / "data"), "--site", str(tmp_path / "site")])
+        assert routine == 3                                    # a routine tick yields at once
+        outcome: dict = {}
+        heavy = threading.Thread(target=lambda: outcome.setdefault("calls", world.run("--heavy-only")))
+        heavy.start()
+        time.sleep(0.5)
+        assert heavy.is_alive() and "calls" not in outcome     # the heavy run waits...
+    finally:
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        holder.close()
+    heavy.join(timeout=30)
+    assert not heavy.is_alive()
+    assert outcome["calls"] == ["g.cargo"]                     # ...and then runs its night
+

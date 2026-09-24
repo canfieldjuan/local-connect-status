@@ -777,13 +777,19 @@ class Runner:
                 return Record(verdict="unavailable", summary=f"{tool} not installed", **base)
         log, _ = self._execution_paths(check_id, rev.sha[:12])
         t0 = time.time()
-        steps = [(["npm", "install", "--silent"], tree), (["npm", "run", "build"], tree),
-                 (["cargo", "test", "--lib"], tree / "src-tauri")]
+        # One Rust build cache per repository (contract 06 B4): cargo keys workspace artifacts by
+        # their source path, so trees at different revisions never collide, and every dependency
+        # compiles once instead of once per revision.  The npm steps inherit the environment.
+        target = self.cache / "cargo-target" / repo
+        target.mkdir(parents=True, exist_ok=True)
+        cargo_env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
+        steps = [(["npm", "install", "--silent"], tree, None), (["npm", "run", "build"], tree, None),
+                 (["cargo", "test", "--lib"], tree / "src-tauri", cargo_env)]
         out: list[str] = []
         rc = 0
-        for cmd, cwd in steps:
+        for cmd, cwd, step_env in steps:
             try:
-                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=3600)
+                r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=3600, env=step_env)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(out), encoding="utf-8")
                 return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}", log_path=str(log), **base)
@@ -993,8 +999,11 @@ class Runner:
         )
         tool_dirs = [str(Path(path).parent) for path in (npm, cargo, uv, xvfb)]
         env["PATH"] = os.pathsep.join([*dict.fromkeys(tool_dirs), env.get("PATH", "")])
+        # The contracts step honours the catalogue's interpreter pin, as uv_sync_command does.
+        contracts_pin = self.cat.get("repos", {}).get("connect-contracts", {}).get("python")
         steps = [
-            ([uv, "run", "--quiet", "--with-requirements", str(contract_requirements),
+            ([uv, "run", "--quiet", *(["--python", contracts_pin] if contracts_pin else []),
+              "--with-requirements", str(contract_requirements),
               "python", "-m", "unittest", "discover", "-s", "tests"], contracts_tree, 1200),
             ([npm, "install", "--silent"], ds_tree, 1200),
             ([npm, "run", "desktop:build:no-bundle"], ds_tree, 3600),
@@ -1032,19 +1041,36 @@ class Runner:
                "--provider-binary", str(provider), "--pdf", str(pdf),
                "--entitlement-keyring", str(keyring), "--active-entitlement", str(active),
                "--expired-entitlement", str(expired)]
+        # The proof puts its own config, data and runtime directories in a temporary directory; its
+        # HOME, cache and state still came from the collector, and the provider it launches shares
+        # the installed Document Summarizer's identity.  Give the proof step alone an isolated home
+        # (contract 06 B5); the build steps keep the operator's home for the uv, npm and cargo caches.
+        compat_home = self.cache / "xapp-homes" / f"pdf-{key}"
+        if compat_home.is_symlink():
+            compat_home.unlink()
+        elif compat_home.exists():
+            shutil.rmtree(compat_home)
+        proof_env = {**env, "HOME": str(compat_home), **isolated_xdg_env(compat_home)}
         try:
-            result = subprocess.run(cmd, cwd=ew_tree, capture_output=True, text=True,
-                                    timeout=1800, env=env)
-        except subprocess.TimeoutExpired:
-            log.write_text("\n".join(output), encoding="utf-8")
-            return Record(verdict="unavailable", summary="cross-app proof timed out after 1800 seconds",
-                          command="connect-local-proof.py (exact trees, stand-in model)",
-                          log_path=str(log), **base)
-        except OSError as exc:
-            log.write_text("\n".join(output), encoding="utf-8")
-            return Record(verdict="unavailable", summary=f"could not start cross-app proof: {type(exc).__name__}",
-                          command="connect-local-proof.py (exact trees, stand-in model)",
-                          log_path=str(log), **base)
+            for directory in (compat_home, *(Path(proof_env[name]) for name in isolated_xdg_env(compat_home))):
+                directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                result = subprocess.run(cmd, cwd=ew_tree, capture_output=True, text=True,
+                                        timeout=1800, env=proof_env)
+            except subprocess.TimeoutExpired:
+                log.write_text("\n".join(output), encoding="utf-8")
+                return Record(verdict="unavailable", summary="cross-app proof timed out after 1800 seconds",
+                              command="connect-local-proof.py (exact trees, stand-in model)",
+                              log_path=str(log), **base)
+            except OSError as exc:
+                log.write_text("\n".join(output), encoding="utf-8")
+                return Record(verdict="unavailable", summary=f"could not start cross-app proof: {type(exc).__name__}",
+                              command="connect-local-proof.py (exact trees, stand-in model)",
+                              log_path=str(log), **base)
+        finally:
+            # Removed on every exit path; a removal that fails is retried by the next run's own
+            # removal above, and never blocks recording the result.
+            shutil.rmtree(compat_home, ignore_errors=True)
         output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
         log.write_text("\n".join(output), encoding="utf-8")
         summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "cross-app proof completed")

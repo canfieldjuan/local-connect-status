@@ -1,0 +1,15 @@
+[Unit]
+Description=Local Connect heavy checks (Rust suite, exact-tree PDF handoff), once per revision
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Desktop/local-connect-status
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+# Waits for a routine tick to release the lock, then runs only the heavy checks (contract 06).
+ExecStart=/usr/bin/env python3 -m lcstatus.collect --heavy-only
+# Each runner bounds its own steps; the unit bounds the whole run.
+TimeoutStartSec=3h
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=20
