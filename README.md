@@ -127,6 +127,11 @@ Installed as **user systemd units** (`systemd/install.sh`), matching the other L
 Connect services on this machine:
 
 - `local-connect-status.timer` — every 20 minutes, persistent across sleep, runs the collector.
+  Each tick observes heads and reads CI runs, releases and release issues. A local check runs **once
+  per revision**: when the store already holds a decided result (pass, fail, or an inspection's reading)
+  for that exact check configuration, conditions and revision(s), the tick prints `unchanged` and does
+  not re-run it. A skipped, unknown or unavailable result is retried every tick. `--rerun` or `--checks`
+  forces execution.
 - `local-connect-status-web.service` — creates and serves generated `site/` on
   `http://127.0.0.1:8790/`, loopback only.
 

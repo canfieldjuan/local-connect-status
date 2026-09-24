@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from .catalogue import declared_participants
+from .catalogue import declared_participants, participants_required
 from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
 
@@ -433,6 +433,56 @@ def discard_execution_files(record: Record) -> None:
                 pass
 
 
+# The fixed shape of a local runner's rows: (record kind, source type, platform).  A platform of
+# ("check", default) reads the check's own platform, as the pytest and inspection runners always did.
+LOCAL_RUNNERS: dict[str, tuple[str, str, Any]] = {
+    "source_inspection": ("source_inspection", "source_inspection", ("check", "n/a")),
+    "pytest": ("automated_test", "local_runner", ("check", "linux")),
+    "cargo_lib": ("automated_test", "local_runner", "linux"),
+    "accept_ew_ip": ("automated_test", "local_runner", "linux"),
+    "accept_ew_ds": ("automated_test", "local_runner", "linux"),
+}
+
+
+def run_source(
+    catalogue: dict[str, Any], source_type: str, check_id: str, check: dict[str, Any],
+    condition_ids: list[str], **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "type": source_type,
+        "check": check_id,
+        "check_fingerprint": check_fingerprint(check),
+        "condition_fingerprints": condition_fingerprint_map(catalogue, condition_ids),
+        **extra,
+    }
+
+
+def run_base(
+    catalogue: dict[str, Any], runner: str, check_id: str, check: dict[str, Any],
+    revisions: dict[str, Revision], condition_ids: list[str], task_ids: list[str],
+) -> dict[str, Any]:
+    """The fields every row of one local run carries before its outcome is known (contract 07 B1).
+
+    Every local runner builds its rows from this, and the collector builds the planned row from the
+    same call, so "was this exact run already decided?" is asked with the store's own identity.
+    `revisions` must hold the head of every repository the check declares.
+    """
+    kind, source_type, platform = LOCAL_RUNNERS[runner]
+    if isinstance(platform, tuple):
+        platform = check.get("platform", platform[1])
+    extra = {} if source_type == "source_inspection" else {"host": os.uname().nodename}
+    rev = revisions[check["repo"]]
+    participants = (
+        {repo: revisions[repo].sha for repo in declared_participants(check)}
+        if participants_required(check) else {}
+    )
+    return dict(
+        kind=kind, repo=check["repo"], revision=rev.sha, revision_time=rev.committed_at,
+        platform=platform, condition_ids=condition_ids, task_ids=task_ids, participants=participants,
+        source=run_source(catalogue, source_type, check_id, check, condition_ids, **extra),
+    )
+
+
 class Runner:
     def __init__(self, mirrors: Mirrors, cache: Path, logs: Path, gh: GitHub, catalogue: dict[str, Any]):
         self.mirrors = mirrors
@@ -446,13 +496,7 @@ class Runner:
         self, source_type: str, check_id: str, check: dict[str, Any],
         condition_ids: list[str], **extra: Any,
     ) -> dict[str, Any]:
-        return {
-            "type": source_type,
-            "check": check_id,
-            "check_fingerprint": check_fingerprint(check),
-            "condition_fingerprints": condition_fingerprint_map(self.cat, condition_ids),
-            **extra,
-        }
+        return run_source(self.cat, source_type, check_id, check, condition_ids, **extra)
 
     # ---- trees & environments --------------------------------------------------------
 
@@ -558,10 +602,7 @@ class Runner:
     def source_inspection(self, check_id: str, check: dict[str, Any], rev: Revision,
                           condition_ids: list[str], task_ids: list[str]) -> Record:
         repo = check["repo"]
-        base = dict(kind="source_inspection", repo=repo, revision=rev.sha,
-                    revision_time=rev.committed_at, platform=check.get("platform", "n/a"),
-                    condition_ids=condition_ids, task_ids=task_ids,
-                    source=self._source("source_inspection", check_id, check, condition_ids))
+        base = run_base(self.cat, "source_inspection", check_id, check, {repo: rev}, condition_ids, task_ids)
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -590,11 +631,7 @@ class Runner:
 
     def pytest(self, check_id: str, check: dict[str, Any], rev: Revision, condition_ids: list[str], task_ids: list[str]) -> Record:
         repo = check["repo"]
-        base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
-                    platform=check.get("platform", "linux"), condition_ids=condition_ids, task_ids=task_ids,
-                    source=self._source(
-                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
-                    ))
+        base = run_base(self.cat, "pytest", check_id, check, {repo: rev}, condition_ids, task_ids)
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -664,11 +701,7 @@ class Runner:
 
     def cargo_lib(self, check_id: str, check: dict[str, Any], rev: Revision, condition_ids: list[str], task_ids: list[str]) -> Record:
         repo = check["repo"]
-        base = dict(kind="automated_test", repo=repo, revision=rev.sha, revision_time=rev.committed_at,
-                    platform="linux", condition_ids=condition_ids, task_ids=task_ids,
-                    source=self._source(
-                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
-                    ))
+        base = run_base(self.cat, "cargo_lib", check_id, check, {repo: rev}, condition_ids, task_ids)
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
             return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
@@ -713,14 +746,8 @@ class Runner:
     # ---- cross-app acceptance (Email Watcher -> Invoice Processor) --------------------
 
     def accept_ew_ip(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
-        participants = {repo: revs[repo].sha for repo in declared_participants(check)}
         ip, ew = revs["invoice-processor"], revs["eom-email-watcher"]
-        base = dict(kind="automated_test", repo="invoice-processor", revision=ip.sha,
-                    revision_time=ip.committed_at, platform="linux", condition_ids=condition_ids,
-                    task_ids=task_ids, participants=participants,
-                    source=self._source(
-                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
-                    ))
+        base = run_base(self.cat, "accept_ew_ip", check_id, check, revs, condition_ids, task_ids)
         # The products only honour a licence signed by their production authority, so the run
         # borrows the operator's installed one. Without a usable licence the acceptance cannot run.
         licence_path = installed_entitlement_path(os.environ)
@@ -855,14 +882,8 @@ class Runner:
     # ---- cross-app acceptance (Email Watcher -> Document Summarizer) -----------------
 
     def accept_ew_ds(self, check_id: str, check: dict[str, Any], revs: dict[str, Revision], condition_ids: list[str], task_ids: list[str]) -> Record:
-        participants = {repo: revs[repo].sha for repo in declared_participants(check)}
         ew, ds = revs["eom-email-watcher"], revs["document-summarizer"]
-        base = dict(kind="automated_test", repo="eom-email-watcher", revision=ew.sha,
-                    revision_time=ew.committed_at, platform="linux", condition_ids=condition_ids,
-                    task_ids=task_ids, participants=participants,
-                    source=self._source(
-                        "local_runner", check_id, check, condition_ids, host=os.uname().nodename,
-                    ))
+        base = run_base(self.cat, "accept_ew_ds", check_id, check, revs, condition_ids, task_ids)
         trees: dict[str, Path] = {}
         for repo in declared_participants(check):
             tree = self.tree(repo, revs[repo].sha)

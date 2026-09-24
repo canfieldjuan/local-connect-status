@@ -39,6 +39,11 @@ KINDS = (
 
 VERDICTS = ("pass", "fail", "skip", "unavailable", "pending", "partial", "unknown", "inconclusive")
 
+# The verdicts in which a local runner reached the code at that revision and got an answer: a pass,
+# a failure, or an inspection's reading of an immutable tree.  Every other verdict describes the
+# harness or an empty run, so the collector retries it (contract 07 B2).
+DECIDED_VERDICTS = ("pass", "fail", "inconclusive")
+
 PLATFORMS = ("linux", "windows", "macos", "n/a")
 
 
@@ -414,6 +419,15 @@ class Store:
     def __len__(self) -> int:
         return len(self._records)
 
+    def latest_in_series(self, rec: Record) -> Record | None:
+        """The newest stored row of the same check stream at the same revision(s), if any.
+
+        One definition, used twice: add() collapses a repeat onto it after a run, and the collector
+        asks it before a run whether that exact run was already decided (contract 07).
+        """
+        series = rec.series_identity()
+        return next((item for item in reversed(self._records) if item.series_identity() == series), None)
+
     def all(self) -> list[Record]:
         return list(self._records)
 
@@ -425,11 +439,7 @@ class Store:
         A row whose instants are not timezone-aware is refused (ValueError) and never written.
         """
         validate_record_instants(rec)
-        series = rec.series_identity()
-        previous = next(
-            (item for item in reversed(self._records) if item.series_identity() == series),
-            None,
-        )
+        previous = self.latest_in_series(rec)
         if previous is not None and previous.observation_identity() == rec.observation_identity():
             return False
         if rec.record_id in self._ids:

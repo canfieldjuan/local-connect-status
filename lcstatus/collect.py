@@ -21,11 +21,11 @@ from typing import Any
 
 from . import catalogue as catmod
 from .change import assess
-from .evidence import Record, Store, atomic_write, now_iso
+from .evidence import DECIDED_VERDICTS, Record, Store, atomic_write, now_iso
 from .render import render_all
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
-from .verify import Runner, discard_execution_files
+from .verify import Runner, discard_execution_files, run_base
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust and PDF handoff)")
     ap.add_argument("--checks", nargs="*", help="only these check ids (plus CI/release reads)")
     ap.add_argument("--no-local", action="store_true", help="skip local runners; read CI and releases only")
+    ap.add_argument("--rerun", action="store_true",
+                    help="run local checks even when this exact revision already has a decided result")
     ap.add_argument("--set-baseline", nargs="*", default=[], metavar="repo=sha",
                     help="write these heads into state so the next run observes the real change")
     ap.add_argument("--render-only", action="store_true")
@@ -269,6 +271,9 @@ def main(argv: list[str] | None = None) -> int:
                 return False
             return True
 
+        # An operator who names checks, or asks for a rerun, wants them run whatever the store holds.
+        forced = args.rerun or args.checks is not None
+
         # ---- verify -----------------------------------------------------------------
         ci_by_repo: dict[str, dict[str, dict[str, Any]]] = {}
         for cid, chk in cat["checks"].items():
@@ -293,39 +298,36 @@ def main(argv: list[str] | None = None) -> int:
                 continue   # only a person records these, via scripts/record_observation.py
             if args.no_local or not wanted(cid, chk):
                 continue
+            declared = catmod.declared_participants(chk)
+            if any(repo not in revs for repo in declared):
+                continue   # a head was not observed this tick: there is nothing to run against
+            run_revs = {repo: revs[repo] for repo in declared}
+            # Contract 07: a check runs once per revision.  The planned row is built by the same
+            # function the runner builds its rows from, so "already decided?" is asked with the
+            # store's own identity -- the one Store.add collapses a repeat on after a run.
+            planned = Record(verdict="pending", **run_base(cat, runner_kind, cid, chk, run_revs, conds, tasks))
+            previous = store.latest_in_series(planned)
+            if previous is not None and previous.verdict in DECIDED_VERDICTS and not forced:
+                print(f"unchanged {cid} @ {planned.revision[:12]}: {previous.verdict} "
+                      f"(recorded {previous.recorded_at}); not re-run", flush=True)
+                continue
+            rev = run_revs[chk["repo"]]
             if runner_kind == "source_inspection":
-                rev = revs.get(chk["repo"])
-                if rev is None:
-                    continue
                 store_result(store, failures, runner.source_inspection(cid, chk, rev, conds, tasks))
-            elif runner_kind == "pytest":
-                rev = revs.get(chk["repo"])
-                if rev is None:
-                    continue
-                print(f"running {cid} @ {rev.sha[:12]} ...", flush=True)
+                continue
+            at = "" if catmod.participants_required(chk) else f" @ {rev.sha[:12]}"
+            heavy = " (heavy)" if chk.get("heavy") else ""
+            print(f"running {cid}{at}{heavy} ...", flush=True)
+            if runner_kind == "pytest":
                 r = runner.pytest(cid, chk, rev, conds, tasks)
-                store_result(store, failures, r)
-                print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "cargo_lib":
-                rev = revs.get(chk["repo"])
-                if rev is None:
-                    continue
-                print(f"running {cid} @ {rev.sha[:12]} (heavy) ...", flush=True)
                 r = runner.cargo_lib(cid, chk, rev, conds, tasks)
-                store_result(store, failures, r)
-                print(f"  {r.verdict}: {r.summary}", flush=True)
             elif runner_kind == "accept_ew_ip":
-                if all(p in revs for p in catmod.declared_participants(chk)):
-                    print(f"running {cid} ...", flush=True)
-                    r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
-                    store_result(store, failures, r)
-                    print(f"  {r.verdict}: {r.summary}", flush=True)
-            elif runner_kind == "accept_ew_ds":
-                if all(p in revs for p in catmod.declared_participants(chk)):
-                    print(f"running {cid} (heavy) ...", flush=True)
-                    r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
-                    store_result(store, failures, r)
-                    print(f"  {r.verdict}: {r.summary}", flush=True)
+                r = runner.accept_ew_ip(cid, chk, revs, conds, tasks)
+            else:
+                r = runner.accept_ew_ds(cid, chk, revs, conds, tasks)
+            store_result(store, failures, r)
+            print(f"  {r.verdict}: {r.summary}", flush=True)
         for repo, checks in ci_by_repo.items():
             rev = revs.get(repo)
             if rev is None:

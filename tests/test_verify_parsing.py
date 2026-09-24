@@ -297,7 +297,7 @@ def _cross_app_runner(tmp_path: Path, monkeypatch):
 
 def _accept(runner, trees, revisions):
     return runner.accept_ew_ip(
-        "xapp.accept", {"participants": list(trees)}, revisions, ["condition"], ["task"]
+        "xapp.accept", {"repo": "invoice-processor", "participants": list(trees)}, revisions, ["condition"], ["task"]
     )
 
 
@@ -810,7 +810,7 @@ def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, mon
         for repo, char in zip(trees, "abc")
     }
     record = runner.accept_ew_ds(
-        "xapp.accept_ew_to_ds", {"participants": list(trees)}, revisions,
+        "xapp.accept_ew_to_ds", {"repo": "eom-email-watcher", "participants": list(trees)}, revisions,
         ["condition"], ["task"],
     )
 
@@ -1209,7 +1209,7 @@ def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, mo
         for repo, char in zip(trees, "abc")
     }
     record = runner.accept_ew_ip(
-        "xapp.accept", {"participants": list(trees)}, revisions, ["condition"], ["task"]
+        "xapp.accept", {"repo": "invoice-processor", "participants": list(trees)}, revisions, ["condition"], ["task"]
     )
     assert record.verdict == "unavailable"
     assert record.summary == "could not start: FileNotFoundError"
