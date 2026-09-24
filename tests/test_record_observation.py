@@ -264,6 +264,16 @@ def read_line(stream, seconds: float = 30) -> str:
     return stream.readline()
 
 
+def finish(proc: subprocess.Popen, seconds: float = 60) -> tuple[str, str]:
+    """Wait for a child with a deadline; a child that overruns it is killed, never left behind."""
+    try:
+        return proc.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+
+
 def run_script(data: Path, catalogue: Path, mirrors: Path, args: list[str], **popen) -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "-c", SCRIPT, str(data), str(catalogue), str(mirrors), *args],
                             cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen)
@@ -273,7 +283,7 @@ def test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it(
     args, catalogue, mirrors = observation_world(tmp_path)
     # the row this observation writes, recorded once without contention
     first = tmp_path / "first"
-    out, err = run_script(first, catalogue, mirrors, args).communicate(timeout=60)
+    out, err = finish(run_script(first, catalogue, mirrors, args))
     assert out.strip() == "stored", err
     row = first / "records.jsonl"
     assert len(row.read_text().splitlines()) == 1
@@ -288,18 +298,19 @@ def test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it(
         assert "waiting for the collection lock" in read_line(script.stderr)
         assert not (data / "records.jsonl").exists()          # nothing written while it waits
         go.touch()                                             # the collection appends the same row, then ends
-        out, err = script.communicate(timeout=60)
+        out, err = finish(script)
         assert script.returncode == 0, err
         # the store was read after the lock: the row appended while it waited is the one it collapses onto
         assert out.strip() == "already recorded (identical)"
         assert (data / "records.jsonl").read_bytes() == row.read_bytes()
     finally:
         go.touch()
-        for proc in (holder, script):
-            if proc is not None and proc.poll() is None:
+        children = [proc for proc in (holder, script) if proc is not None]
+        for proc in children:
+            if proc.poll() is None:
                 proc.kill()
-            if proc is not None:
-                proc.wait(timeout=10)
+        for proc in children:
+            proc.wait(timeout=10)
 
 
 def test_observation_holds_the_lock_while_it_reads_and_writes_the_store(monkeypatch):
@@ -318,7 +329,7 @@ def test_observation_holds_the_lock_while_it_reads_and_writes_the_store(monkeypa
 
     class Mirrors:
         def __init__(self, *args, **kwargs):
-            pass
+            probe()
 
         def commit_time(self, repo, sha):
             return "2026-09-08T15:52:51+00:00"
@@ -331,7 +342,11 @@ def test_observation_holds_the_lock_while_it_reads_and_writes_the_store(monkeypa
             probe()
             return True
 
-    monkeypatch.setattr(observation.catmod, "load", lambda path: catalogue)
+    def load(path):
+        probe()
+        return catalogue
+
+    monkeypatch.setattr(observation.catmod, "load", load)
     monkeypatch.setattr(observation, "Mirrors", Mirrors)
     monkeypatch.setattr(observation, "Store", Store)
     monkeypatch.setattr(sys, "argv", [
@@ -340,5 +355,5 @@ def test_observation_holds_the_lock_while_it_reads_and_writes_the_store(monkeypa
         "--observed-at", "2026-09-08T10:47:51-05:00", "--observed-by", "operator",
     ])
     assert observation.main() == 0
-    assert probes == [None, None]
+    assert probes == [None, None, None, None]     # catalogue, mirrors, store, append: all under the lock
 
