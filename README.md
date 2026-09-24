@@ -154,6 +154,15 @@ was off is seen on the next tick, with every intermediate commit listed in the c
 A transient diff or commit-log failure keeps that comparison baseline in place for the next tick
 without hiding the newly confirmed current head.
 
+**Catalogue mapping** is checked every tick. Each task's `depends_on` patterns are matched against the
+files at each repository's current head, using the matcher the change record uses. A pattern that
+matches no file (for example, a product repository moved or deleted the code it named) appears as a
+warning banner naming the task, repository and pattern, because a change to that code would otherwise
+be attributed to no task. It is not a source failure, and it changes no label and no exit status. The fix
+is to edit the pattern in `catalogue.json`. A repository whose head was not observed, or whose files
+could not be listed, is reported as not checked, never as clean. A malformed `depends_on` (an unknown
+repository, or empty or duplicate paths) stops the collector at load, like any other catalogue error.
+
 **Heavy checks** run nightly at 03:30, with retries at 04:30 and 05:30, on their own timer
 (`local-connect-status-heavy.timer`, `--heavy-only`, CPU idle priority), once per revision like every
 local check, so a retry after a successful attempt takes seconds. The heavy run waits for a routine tick
@@ -223,9 +232,14 @@ test that would fail if the dashboard could be fooled that way:
 | let a backfilled, future-dated, or pre-commit manual pass displace a newer observed failure or claim revisions that did not exist yet | `test_manual_record_uses_normalized_observation_time`, `test_manual_observation_time_allows_clock_skew_but_rejects_material_future`, `test_manual_observation_must_follow_every_participant_revision_with_clock_skew`, `test_manual_record_rejects_observation_before_any_participant_revision`, `test_backfilled_older_manual_pass_cannot_displace_newer_observed_failure` |
 | promise that failed-source rows always show historical proof when they may show the failed attempt | `test_source_failure_banner_matches_current_or_historical_row_evidence` |
 | order evidence, stored heads, or recent changes lexicographically instead of by absolute instant | `test_last_proven_uses_absolute_instant_across_offsets`, `test_store_latest_revision_uses_absolute_instant_across_offsets`, `test_recent_changes_are_ordered_by_absolute_instant_across_offsets` |
+| treat a dependency pattern that names no file as current, report an unlisted or unobserved repository as clean, match patterns differently from the change record, or count a dead pattern as a source failure | `test_mapping_check_gaps_and_unchecked`, `test_a_listing_that_fails_is_a_failure_never_an_empty_tree`, `test_pattern_coverage_uses_assess_matcher`, `test_a_moved_file_shows_as_a_gap_on_the_page_and_nowhere_else` |
+| accept a malformed dependency list | `test_catalogue_rejects_malformed_depends_on` |
+| let the observation script write while a collection runs, or judge its collapse against a store read before the lock | `test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it`, `test_the_collector_and_the_helper_share_one_lock` |
 
 Two runs cannot interleave: the collector takes an exclusive lock on `data/.lock`, and a
-baseline write waits for a running collection to finish rather than racing it.
+baseline write waits for a running collection to finish rather than racing it. So does
+`scripts/record_observation.py`: it takes the same lock through the same helper, says it is waiting,
+and reads the catalogue, mirrors and store only once it holds the lock.
 The systemd unit does not impose a shorter outer start deadline: runner subprocesses keep their
 own bounded timeouts so the collector can store unavailable evidence and render before exiting.
 

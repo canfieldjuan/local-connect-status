@@ -16,9 +16,11 @@ Rules the store enforces, because the report's honesty depends on them:
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -471,6 +473,31 @@ class Store:
             r for r in self._records
             if condition_id in r.condition_ids and r.kind not in ("revision", "change")
         ]
+
+
+LOCK_NAME = ".lock"
+
+
+def collection_lock(data: Path, *, wait: bool) -> Any:
+    """Take the one lock every writer of `data/` holds (contract 08 B5): the collector and the
+    observation script acquire it here, so its path and its waiting cannot drift apart.
+
+    Returns the open lock file, which holds the lock until it is closed or the process exits, or
+    None when another collection holds it and the caller does not wait.  A waiting caller says so
+    on stderr before it blocks, so a run that seems stuck names what it is waiting for.
+    """
+    data = Path(data)
+    data.mkdir(parents=True, exist_ok=True)
+    fh = open(data / LOCK_NAME, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        if not wait:
+            fh.close()
+            return None
+        print("waiting for the collection lock (another collection is running) ...", file=sys.stderr, flush=True)
+        fcntl.flock(fh, fcntl.LOCK_EX)
+    return fh
 
 
 def atomic_write(path: Path, text: str) -> None:

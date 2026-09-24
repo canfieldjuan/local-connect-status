@@ -185,7 +185,13 @@ def test_authenticated_legacy_prefix_preserves_only_unchanged_check_evidence(tmp
         if r.source.get("check") and "check_fingerprint" not in r.source
     ]
     assert legacy_check_records
+    # A check removed from the catalogue has no current configuration to compare with; its rows stay
+    # in the store and nothing selects them (contract 08 D1).  Only the checks removed on purpose.
+    removed = {r.source["check"] for r in legacy_check_records} - set(catalogue["checks"])
+    assert removed == {"ew.pytest.unit"}
     for record in legacy_check_records:
+        if record.source["check"] in removed:
+            continue
         historical = record_check_fingerprint(record)
         current = check_fingerprint(catalogue["checks"][record.source["check"]])
         assert historical is not None

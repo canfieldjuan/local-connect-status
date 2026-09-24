@@ -111,6 +111,14 @@ class Mirrors:
             return Failure("diff", r.stderr.strip()[-200:], {"repo": repo, "old": old, "new": new})
         return [l for l in r.stdout.splitlines() if l.strip()]
 
+    def files_at(self, repo: str, sha: str) -> Failure | list[str]:
+        """Every file path in the tree at a revision (contract 08 B3). A listing that fails is a
+        Failure, never an empty list: an empty list would report every pattern as dead."""
+        r = _run(["git", "-C", str(self.path(repo)), "ls-tree", "-r", "--name-only", "-z", sha])
+        if r.returncode != 0:
+            return Failure("files", r.stderr.strip()[-200:] or f"exit {r.returncode}", {"repo": repo, "sha": sha})
+        return [p for p in r.stdout.split("\0") if p]
+
     def commits_between(self, repo: str, old: str, new: str) -> Failure | list[str]:
         r = _run(["git", "-C", str(self.path(repo)), "log", "--format=%h %s", f"{old}..{new}"])
         if r.returncode != 0:

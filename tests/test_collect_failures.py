@@ -285,6 +285,9 @@ def test_unavailable_local_runner_path_sets_failed_exit_and_banner(
         def head(self, repo):
             return revision
 
+        def files_at(self, repo, sha):
+            return ["src/app.py"]          # the catalogue's one pattern names code that exists
+
     class FakeGitHub:
         def default_branch_head(self, repo):
             return {"sha": revision.sha}
