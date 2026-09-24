@@ -1,8 +1,10 @@
 [Unit]
-Description=Run the Local Connect heavy checks (Rust suite, PDF handoff) nightly
+Description=Run the Local Connect heavy checks (Rust suite, PDF handoff) nightly, with two retries
 
 [Timer]
-OnCalendar=*-*-* 03:30:00
+# Three attempts: a heavy check runs once per revision, so the later attempts retry only what the
+# first could not run (e.g. a head unreadable right after boot) and otherwise take seconds.
+OnCalendar=*-*-* 03,04,05:30:00
 RandomizedDelaySec=10min
 Persistent=true
 Unit=local-connect-status-heavy.service

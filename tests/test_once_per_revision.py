@@ -425,13 +425,14 @@ def test_heavy_checks_obey_the_skip(tmp_path: Path, monkeypatch):
     assert world.run("--heavy") == []                     # heavy, decided at this revision: skipped
 
 
-def test_unobserved_participant_head_launches_nothing(tmp_path: Path, monkeypatch):
+def test_unobserved_participant_head_launches_nothing(tmp_path: Path, monkeypatch, capsys):
     world = World(tmp_path, monkeypatch)
     world.checks = {"g.xapp": {"runner": "accept_ew_ds", "repo": "ghost", "platform": "linux",
                                "participants": ["ghost", "other"]}}
     world.conditions = [{"id": "g.x1", "kind": "automated_test", "check": "g.xapp", "proves": "they work together"}]
     world.broken = {"other"}
     assert world.run() == []                              # no head for `other`: nothing to run against
+    assert "skipped g.xapp: head of other not observed this tick" in capsys.readouterr().out
     world.broken = set()
     assert world.run() == ["g.xapp"]
 
@@ -477,25 +478,32 @@ def _heavy_world(tmp_path: Path, monkeypatch):
 
 
 def test_heavy_only_selects_exactly_the_heavy_checks(tmp_path: Path, monkeypatch):
-    world = _heavy_world(tmp_path, monkeypatch)
+    world = _heavy_world(tmp_path / "heavy-only", monkeypatch)
+    (tmp_path / "heavy-only").mkdir()
     assert world.run("--heavy-only") == ["g.cargo"]            # the heavy check, and no routine one
     assert sorted(world.reads) == ["ci:ghost", "issues:g.gate", "release:g.rel"]   # the reads still run
-    assert world.run() == ["g.pytest"]                         # a routine tick selects no heavy check
-    other = _heavy_world(tmp_path / "other", monkeypatch)
-    (tmp_path / "other").mkdir()
-    assert other.run("--heavy") == ["g.pytest", "g.cargo"]     # --heavy still means everything
+    routine = _heavy_world(tmp_path / "routine", monkeypatch)  # a fresh store: nothing decided yet
+    (tmp_path / "routine").mkdir()
+    assert routine.run() == ["g.pytest"]                       # a routine tick selects no heavy check
+    both = _heavy_world(tmp_path / "both", monkeypatch)
+    (tmp_path / "both").mkdir()
+    assert both.run("--heavy") == ["g.pytest", "g.cargo"]      # --heavy still means everything
 
 
-@pytest.mark.parametrize("extra", [["--heavy"], ["--checks", "g.cargo"]])
-def test_heavy_only_cannot_be_combined(tmp_path: Path, monkeypatch, extra):
+@pytest.mark.parametrize("extra", [
+    ["--heavy"], ["--checks", "g.cargo"], ["--checks"], ["--no-local"], ["--render-only"],
+    ["--set-baseline", "ghost=" + "a" * 40],
+])
+def test_heavy_only_is_a_mode_of_its_own(tmp_path: Path, monkeypatch, extra):
     world = _heavy_world(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as stopped:
         world.run("--heavy-only", *extra)
     assert stopped.value.code == 2
     assert world.calls == []
+    assert not (tmp_path / "data").exists()                    # rejected before any side effect
 
 
-def test_heavy_run_waits_for_the_lock(tmp_path: Path, monkeypatch):
+def test_heavy_run_waits_for_the_lock(tmp_path: Path, monkeypatch, capsys):
     import fcntl
     import threading
     import time
@@ -504,18 +512,33 @@ def test_heavy_run_waits_for_the_lock(tmp_path: Path, monkeypatch):
     holder = open(tmp_path / "data" / ".lock", "w")
     fcntl.flock(holder, fcntl.LOCK_EX)                         # a routine tick "is running"
     try:
-        routine = world.collect.main(["--catalogue", str(tmp_path / "catalogue.json"),
-                                      "--data", str(tmp_path / "data"), "--site", str(tmp_path / "site")])
-        assert routine == 3                                    # a routine tick yields at once
+        # a routine tick yields at once; bounded, so a regression fails instead of hanging the suite
+        routine_rc: dict = {}
+        routine = threading.Thread(target=lambda: routine_rc.setdefault("rc", world.collect.main([
+            "--catalogue", str(tmp_path / "catalogue.json"),
+            "--data", str(tmp_path / "data"), "--site", str(tmp_path / "site")])))
+        routine.start()
+        routine.join(timeout=10)
+        assert not routine.is_alive() and routine_rc["rc"] == 3
         outcome: dict = {}
         heavy = threading.Thread(target=lambda: outcome.setdefault("calls", world.run("--heavy-only")))
         heavy.start()
         time.sleep(0.5)
         assert heavy.is_alive() and "calls" not in outcome     # the heavy run waits...
+        assert "waiting for the collection lock" in capsys.readouterr().err
+        # ...and the catalogue it will use is the one on disk when the lock is released
+        world.checks["g.cargo2"] = world.checks.pop("g.cargo")
+        world.conditions[1]["check"] = "g.cargo2"
+        path = tmp_path / "catalogue.json"
+        import json as _json
+        catalogue = _json.loads(path.read_text())
+        catalogue["checks"]["g.cargo2"] = catalogue["checks"].pop("g.cargo")
+        catalogue["tasks"][0]["conditions"][1]["check"] = "g.cargo2"
+        path.write_text(_json.dumps(catalogue))
     finally:
         fcntl.flock(holder, fcntl.LOCK_UN)
         holder.close()
     heavy.join(timeout=30)
     assert not heavy.is_alive()
-    assert outcome["calls"] == ["g.cargo"]                     # ...and then runs its night
+    assert outcome["calls"] == ["g.cargo2"]                    # ...runs its attempt, from the new catalogue
 

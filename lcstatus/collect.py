@@ -139,9 +139,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--render-only", action="store_true")
     args = ap.parse_args(argv)
 
-    if args.heavy_only and (args.heavy or args.checks is not None):
-        ap.error("--heavy-only cannot be combined with --heavy or --checks")
-    cat = catmod.load(Path(args.catalogue))
+    if args.heavy_only and (args.heavy or args.checks is not None or args.no_local
+                            or args.render_only or args.set_baseline):
+        ap.error("--heavy-only is a mode of its own: it cannot be combined with --heavy, --checks, "
+                 "--no-local, --render-only or --set-baseline")
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
     # One collector at a time. A second run (timer tick, or a baseline write during a run)
@@ -152,15 +153,21 @@ def main(argv: list[str] | None = None) -> int:
     lock_fh = open(data / ".lock", "w")
     waits = bool(args.set_baseline) or args.heavy_only
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | (0 if waits else fcntl.LOCK_NB))
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        print("another collection is running; not starting a second one", file=sys.stderr)
-        return 3
+        if not waits:
+            print("another collection is running; not starting a second one", file=sys.stderr)
+            return 3
+        print("waiting for the collection lock (another collection is running) ...", file=sys.stderr, flush=True)
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
     if collector_package_fingerprint(COLLECTOR_PACKAGE) != LOADED_COLLECTOR_CODE:
         # The tree was updated after this process imported its code (contract 07 B1 rev 4): rows
         # stamped now would claim code that did not produce them.  The next tick runs the new code.
         print("the collector's code changed after this process loaded it; not running", file=sys.stderr)
         return 3
+    # Read after the lock (contract 06 B3): a run that waited uses the catalogue current when it starts
+    # working, not the one on disk when it started waiting.
+    cat = catmod.load(Path(args.catalogue))
     store = Store(data / "records.jsonl")
     state_path = data / "state.json"
     state = load_state(state_path)
@@ -317,8 +324,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.no_local or not wanted(cid, chk):
                 continue
             declared = catmod.declared_participants(chk)
-            if any(repo not in revs for repo in declared):
-                continue   # a head was not observed this tick: there is nothing to run against
+            missing = [repo for repo in declared if repo not in revs]
+            if missing:
+                # A head was not observed this tick: there is nothing to run against.  Say so; the
+                # next tick (or the next nightly attempt, for a heavy check) retries.
+                print(f"skipped {cid}: head of {', '.join(missing)} not observed this tick", flush=True)
+                continue
             run_revs = {repo: revs[repo] for repo in declared}
             # Contract 07: a check runs once per revision.  The planned row is built by the same
             # function the runner builds its rows from, so "already decided?" is asked with the
