@@ -58,16 +58,6 @@
     }
   },
   "checks": {
-    "ew.pytest.unit": {
-      "runner": "pytest",
-      "repo": "eom-email-watcher",
-      "args": [
-        "-m",
-        "not integration"
-      ],
-      "platform": "linux",
-      "note": "Whole non-integration suite. Exercises adapters, notifications, scheduling, Connect consumer, queue."
-    },
     "ew.pytest.connect_v2": {
       "runner": "pytest",
       "repo": "eom-email-watcher",
@@ -536,10 +526,11 @@
             "src/eom_email_watcher/scheduling.py",
             "src/eom_email_watcher/microsoft_calendar.py",
             "src/eom_email_watcher/service.py",
-            "src/eom_email_watcher/entitlement.py",
             "src/eom_email_watcher/db.py",
             "src/eom_email_watcher/engine_api.py",
-            "desktop/src/**"
+            "desktop/src/**",
+            "pyproject.toml",
+            "uv.lock"
           ]
         }
       ]
@@ -652,9 +643,9 @@
         {
           "repo": "eom-email-watcher",
           "paths": [
-            "src/eom_email_watcher/connect.py",
             "src/eom_email_watcher/engine_api.py",
-            "src/eom_email_watcher/entitlement.py"
+            "pyproject.toml",
+            "uv.lock"
           ]
         },
         {
@@ -725,10 +716,10 @@
         {
           "repo": "eom-email-watcher",
           "paths": [
-            "src/eom_email_watcher/connect.py",
             "src/eom_email_watcher/engine_api.py",
             "src/eom_email_watcher/db.py",
-            "src/eom_email_watcher/entitlement.py"
+            "pyproject.toml",
+            "uv.lock"
           ]
         },
         {
@@ -761,7 +752,10 @@
           "repo": "eom-email-watcher",
           "paths": [
             "src/eom_email_watcher/service.py",
-            "src/eom_email_watcher/db.py"
+            "src/eom_email_watcher/db.py",
+            "src/eom_email_watcher/automation/**",
+            "pyproject.toml",
+            "uv.lock"
           ]
         }
       ]
@@ -793,7 +787,10 @@
           "paths": [
             "src/eom_email_watcher/service.py",
             "src/eom_email_watcher/engine_api.py",
-            "desktop/src-tauri/src/scheduler.rs"
+            "desktop/src-tauri/src/scheduler.rs",
+            "src/eom_email_watcher/automation/**",
+            "pyproject.toml",
+            "uv.lock"
           ]
         },
         {
@@ -1120,18 +1117,16 @@
         {
           "repo": "eom-email-watcher",
           "paths": [
-            "src/eom_email_watcher/connect/**",
             "src/eom_email_watcher/engine_api.py",
-            "src/eom_email_watcher/entitlement.py",
-            "desktop/src/**"
+            "desktop/src/**",
+            "pyproject.toml",
+            "uv.lock"
           ]
         },
         {
           "repo": "document-summarizer",
           "paths": [
             "src-tauri/src/connect/**",
-            "src-tauri/src/bin/connect_provider.rs",
-            "src-tauri/src/entitlement.rs",
             "src-tauri/tauri*.conf.json"
           ]
         },
@@ -1147,10 +1142,10 @@
         {
           "repo": "connect-contracts",
           "paths": [
-            "contracts/**",
             "entitlements/**",
-            "connect_windows.py",
-            "docs/**"
+            "schemas/**",
+            "fixtures/**",
+            "adr/**"
           ]
         }
       ]

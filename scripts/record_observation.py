@@ -5,6 +5,7 @@ A person ran something the collector cannot (an installed-app removal test that 
 a live calendar write against a real tenant) and observed the result. This records that
 observation with the artifact it left and the exact revisions of every participant. It is
 the only way installed_demo evidence enters the store, and it requires --observed-by.
+It waits for a running collection to finish before it reads or writes anything.
 
     python scripts/record_observation.py --check manual.ip_removal_test \\
         --participant invoice-processor=5b438baa... --participant eom-email-watcher=c3b5cf64... \\
@@ -26,9 +27,13 @@ sys.path.insert(0, str(ROOT))
 
 from lcstatus import catalogue as catmod  # noqa: E402
 from lcstatus.evidence import (  # noqa: E402
-    Record, Store, check_fingerprint, condition_fingerprint_map,
+    Record, Store, check_fingerprint, collection_lock, condition_fingerprint_map,
 )
 from lcstatus.sources import Mirrors  # noqa: E402
+
+DATA = ROOT / "data"
+CATALOGUE = ROOT / "catalogue.json"
+MIRRORS = ROOT / ".cache" / "mirrors"
 
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
@@ -104,7 +109,10 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    cat = catmod.load(ROOT / "catalogue.json")
+    # One writer at a time (contract 08 B5): wait for any running collection, then read the
+    # catalogue, the mirrors and the store as they are now.  The lock is held until this process exits.
+    lock = collection_lock(DATA, wait=True)  # noqa: F841
+    cat = catmod.load(CATALOGUE)
     chk = cat["checks"].get(a.check)
     if not chk or chk["runner"] != "manual_observation":
         print(f"{a.check} is not a manual_observation check", file=sys.stderr)
@@ -115,7 +123,7 @@ def main() -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    mirrors = Mirrors(ROOT / ".cache" / "mirrors", cat["repos"])
+    mirrors = Mirrors(MIRRORS, cat["repos"])
     primary = chk["repo"]
     sha = parts[primary]
     revision_times: dict[str, str] = {}
@@ -140,7 +148,7 @@ def main() -> int:
                          "condition_fingerprints": condition_fingerprint_map(cat, conds),
                          "artifact": a.artifact,
                          "observed_by": a.observed_by, "observed_at": observed_at})
-    store = Store(ROOT / "data" / "records.jsonl")
+    store = Store(DATA / "records.jsonl")
     print("stored" if store.add(rec) else "already recorded (identical)")
     return 0
 

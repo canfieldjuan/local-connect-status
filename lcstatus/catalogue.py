@@ -46,6 +46,34 @@ def participants_required(check: dict[str, Any]) -> bool:
     return "participants" in check
 
 
+def depends_on_problems(depends_on: Any, cat: dict[str, Any]) -> list[str]:
+    """Shape of a task's `depends_on` (contract 08 B2).  Whether each pattern still names a file is
+    a fact about the product repositories, checked every tick against their heads, not here."""
+    if not isinstance(depends_on, list):
+        return ["depends_on must be a list"]
+    problems: list[str] = []
+    seen: set[str] = set()
+    for item in depends_on:
+        if not isinstance(item, dict):
+            problems.append("each depends_on item must be an object")
+            continue
+        repo = item.get("repo")
+        if not isinstance(repo, str) or repo not in cat.get("repos", {}):
+            problems.append(f"depends_on repo must name one catalogue repository, got {repo!r}")
+        elif repo in seen:
+            problems.append(f"depends_on names {repo} twice; list its paths in one item")
+        else:
+            seen.add(repo)
+        paths = item.get("paths")
+        if (
+            not isinstance(paths, list) or not paths
+            or any(not isinstance(p, str) or not p.strip() for p in paths)
+            or len(set(paths)) != len(paths)
+        ):
+            problems.append(f"depends_on paths for {repo!r} must be a non-empty list of distinct non-empty strings")
+    return problems
+
+
 def load(path: Path) -> dict[str, Any]:
     cat = json.loads(Path(path).read_text(encoding="utf-8"))
     problems: list[str] = []
@@ -102,6 +130,7 @@ def load(path: Path) -> dict[str, Any]:
                 problems.append(f"task {t['id']}: release task needs an issue_gate condition")
         if t.get("layer") != "release" and any(c.get("kind") == "issue_gate" for c in t.get("conditions", [])):
             problems.append(f"task {t['id']}: only release tasks may use issue_gate conditions")
+        problems.extend(f"task {t['id']}: {why}" for why in depends_on_problems(t.get("depends_on", []), cat))
         for c in t.get("conditions", []):
             if c["id"] in seen_conds:
                 problems.append(f"duplicate condition id {c['id']}")

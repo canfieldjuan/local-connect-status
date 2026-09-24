@@ -66,3 +66,19 @@ def assess(repo: str, old: str, new: str, changed_files: list[str], tasks: list[
     a.docs_only = bool(changed_files) and all(f.endswith(DOC_SUFFIXES) for f in changed_files)
     a.touches_contract_text = any(any(h in f for h in CONTRACT_HINTS) for f in changed_files)
     return a
+
+
+def uncovered_patterns(repo: str, files: list[str], tasks: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """The (task, pattern) pairs naming `repo` that match none of `files` (contract 08 B3).
+
+    Same matcher as `assess`, so a pattern reported here is exactly one `assess` can never match
+    at this revision: a change to the code it was meant to cover is attributed to no task.
+    """
+    return [
+        (task["id"], pattern)
+        for task in tasks
+        for dep in task.get("depends_on", [])
+        if dep.get("repo") == repo
+        for pattern in dep.get("paths", [])
+        if not any(_glob_match(f, pattern) for f in files)
+    ]

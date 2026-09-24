@@ -127,6 +127,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
         "release": cat["release"],
         "heads": {repo: revs.get(repo, {"sha": sha, "committed_at": None, "subject": None}) for repo, sha in heads.items()},
         "source_failures": failures,
+        "catalogue_mapping": state.get("mapping"),
         "recent_changes": [
             {"repo": r.repo, "from": r.detail.get("old") or r.summary.split(" -> ")[0], "to": r.revision[:12],
              "summary": r.summary, "affected_tasks": r.task_ids, "unmapped_files": r.detail.get("unmapped_files", []),
@@ -177,6 +178,17 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
         w("> **Some sources could not be read this run.** Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.")
         for f in p["source_failures"]:
             w(f"> - {f['repo']}: {f['what']} — {f['why']}")
+        w("")
+    m = p.get("catalogue_mapping") or {}
+    if m.get("gaps"):
+        w(f"> **Catalogue mapping: {len(m['gaps'])} dependency pattern(s) match no file at the current revision.** "
+          "A change to the code a pattern was meant to cover is not attributed to its task.")
+        for g in m["gaps"]:
+            w(f"> - {g['task']} — {g['repo']}: `{g['pattern']}`")
+        w("")
+    if m.get("unchecked"):
+        w("> **Catalogue mapping not checked this run for:** "
+          + "; ".join(f"{u['repo']} ({u['why']})" for u in m["unchecked"]))
         w("")
     w("## Where the code is")
     w("")
@@ -311,6 +323,8 @@ function render(view){
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.view===view));
   let h='';
   if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
+  const m=p.catalogue_mapping||{}, gaps=m.gaps||[], unchecked=m.unchecked||[];
+  if(gaps.length||unchecked.length){h+=`<div class="banner warn">${gaps.length?`<b>Catalogue mapping: ${gaps.length} dependency pattern(s) match no file at the current revision.</b> A change to the code a pattern was meant to cover is not attributed to its task.<ul style="margin:6px 0 0 18px">${gaps.map(g=>`<li>${esc(g.task)} — ${esc(g.repo)}: <code>${esc(g.pattern)}</code></li>`).join('')}</ul>`:''}${unchecked.length?`<div><b>Catalogue mapping not checked this run for:</b> ${unchecked.map(u=>`${esc(u.repo)} (${esc(u.why)})`).join('; ')}</div>`:''}</div>`;}
   const stale = p.tasks.filter(t=>t.freshness==='changed_since_verification').length, failed=p.tasks.filter(t=>t.freshness==='check_failed').length, unobserved=p.tasks.filter(t=>t.freshness==='head_unobserved').length;
   if(failed) h+=`<div class="banner bad"><b>${failed} task(s) have a failing check</b> at the current code.</div>`;
   if(unobserved) h+=`<div class="banner warn"><b>${unobserved} task(s): current revision not observed</b> this tick. Nothing there claims a revision relation until the head is read again.</div>`;

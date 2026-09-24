@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from . import catalogue as catmod
-from .change import assess
-from .evidence import Record, Store, atomic_write, now_iso
+from .change import assess, uncovered_patterns
+from .evidence import Record, Store, atomic_write, collection_lock, now_iso
 from .render import render_all
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
@@ -55,6 +55,31 @@ def render_heads(state: dict[str, Any]) -> dict[str, str]:
             if f.get("what") in HEAD_FAILURES
         )
     return {repo: sha for repo, sha in state.get("heads", {}).items() if repo not in unknown}
+
+
+def mapping_check(cat: dict[str, Any], heads: dict[str, str], mirrors: Any) -> dict[str, list[dict[str, str]]]:
+    """Which `depends_on` patterns match no file at the head observed this tick (contract 08 B3).
+
+    Only repositories some task names are checked.  One whose head was not observed this tick, or
+    whose file listing failed, is unchecked: no gap is claimed for it, and it is never reported clean.
+    """
+    named = {dep.get("repo") for task in cat["tasks"] for dep in task.get("depends_on", [])}
+    gaps: list[dict[str, str]] = []
+    unchecked: list[dict[str, str]] = []
+    for repo in cat["repos"]:
+        if repo not in named:
+            continue
+        sha = heads.get(repo)
+        if sha is None:
+            unchecked.append({"repo": repo, "why": "current revision not observed this tick"})
+            continue
+        files = mirrors.files_at(repo, sha)
+        if isinstance(files, Failure):
+            unchecked.append({"repo": repo, "why": f"file listing failed: {files.why}"})
+            continue
+        gaps.extend({"task": task_id, "repo": repo, "pattern": pattern, "revision": sha}
+                    for task_id, pattern in uncovered_patterns(repo, files, cat["tasks"]))
+    return {"gaps": gaps, "unchecked": unchecked}
 
 
 def release_targets(check: dict[str, Any], revs: dict[str, Revision]) -> list[tuple[str, Revision]]:
@@ -144,22 +169,14 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--heavy-only is a mode of its own: it cannot be combined with --heavy, --checks, "
                  "--no-local, --render-only or --set-baseline")
     data = Path(args.data)
-    data.mkdir(parents=True, exist_ok=True)
     # One collector at a time. A second run (timer tick, or a baseline write during a run)
     # must never interleave with a run in progress; state.json would lose one of them.  A routine
     # tick yields; a baseline write and the nightly heavy run wait (contract 06 B3): a routine tick
     # holds the lock for seconds, and the heavy run must not lose its night to one.
-    import fcntl
-    lock_fh = open(data / ".lock", "w")
-    waits = bool(args.set_baseline) or args.heavy_only
-    try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        if not waits:
-            print("another collection is running; not starting a second one", file=sys.stderr)
-            return 3
-        print("waiting for the collection lock (another collection is running) ...", file=sys.stderr, flush=True)
-        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+    lock_fh = collection_lock(data, wait=bool(args.set_baseline) or args.heavy_only)
+    if lock_fh is None:
+        print("another collection is running; not starting a second one", file=sys.stderr)
+        return 3
     if collector_package_fingerprint(COLLECTOR_PACKAGE) != LOADED_COLLECTOR_CODE:
         # The tree was updated after this process imported its code (contract 07 B1 rev 4): rows
         # stamped now would claim code that did not produce them.  The next tick runs the new code.
@@ -279,6 +296,10 @@ def main(argv: list[str] | None = None) -> int:
                                      source={"type": "mirror_diff"},
                                      detail=dict(a.as_detail(), old=prev, commits=commit_summaries,
                                                  commits_complete=commits_complete)))
+
+        # A catalogue pattern that names no file is a warning on the page, never a source failure:
+        # it affects no evidence and no label (contract 08 B3, D2).
+        state["mapping"] = mapping_check(cat, heads, mirrors)
 
         # ---- decide what to verify --------------------------------------------------
         cond_map: dict[str, tuple[list[str], list[str]]] = {}

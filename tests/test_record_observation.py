@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 import scripts.record_observation as observation
+
+
+@pytest.fixture(autouse=True)
+def private_data(tmp_path, monkeypatch):
+    """The script takes the collection lock in its data directory; never the repository's own."""
+    monkeypatch.setattr(observation, "DATA", tmp_path / "observation-data")
 
 
 def test_manual_record_uses_normalized_observation_time(monkeypatch):
@@ -184,3 +193,103 @@ def test_manual_record_rejects_observation_before_any_participant_revision(monke
 
     assert observation.main() == 2
     assert "predates the ds participant revision by more than 5 minutes" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ one writer at a time (contract 08 B5)
+
+ROOT = Path(__file__).resolve().parent.parent
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_AUTHOR_DATE": "2026-09-01T00:00:00+00:00", "GIT_COMMITTER_DATE": "2026-09-01T00:00:00+00:00",
+    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "PATH": "/usr/bin:/bin",
+}
+# The real script, pointed at a private catalogue, mirror directory and data directory.
+SCRIPT = """
+import sys
+from pathlib import Path
+import scripts.record_observation as o
+o.DATA, o.CATALOGUE, o.MIRRORS = (Path(a) for a in sys.argv[1:4])
+sys.argv = ["record_observation.py", *sys.argv[4:]]
+sys.exit(o.main())
+"""
+# Another collection: holds the lock until told to go, then appends a row and exits.
+HOLDER = """
+import sys, time
+from pathlib import Path
+from lcstatus.evidence import collection_lock
+data, row, go = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+held = collection_lock(data, wait=False)
+print("held" if held is not None else "busy", flush=True)
+while not go.exists():
+    time.sleep(0.02)
+with open(data / "records.jsonl", "ab") as out:
+    out.write(row.read_bytes())
+"""
+
+
+def observation_world(tmp: Path) -> tuple[list[str], Path, Path]:
+    work = tmp / "work"
+    work.mkdir()
+    for args in (["init", "--quiet", "-b", "main"], ["commit", "--quiet", "--allow-empty", "-m", "first"]):
+        subprocess.run(["git", *args], cwd=work, env=GIT_ENV, check=True, capture_output=True)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=work, env=GIT_ENV, check=True,
+                         capture_output=True, text=True).stdout.strip()
+    mirrors = tmp / "mirrors"
+    mirrors.mkdir()
+    subprocess.run(["git", "clone", "--quiet", "--mirror", str(work), "ghost.git"], cwd=mirrors,
+                   env=GIT_ENV, check=True, capture_output=True)
+    catalogue = tmp / "catalogue.json"
+    catalogue.write_text(json.dumps({
+        "release": {"required_platforms": ["linux"], "target": "t",
+                    "automate_scope": {"decision": "undecided", "note": "n", "required_for_first_release": None}},
+        "repos": {"ghost": {"github": "x/ghost", "ci_workflows": []}},
+        "apps": {"app": {"name": "App", "repo": "ghost"}},
+        "checks": {"manual.demo": {"runner": "manual_observation", "repo": "ghost", "platform": "linux"}},
+        "tasks": [{"id": "g.task", "app": "app", "layer": "standalone", "title": "T", "promise": "p",
+                   "conditions": [{"id": "g.demo", "kind": "installed_demo", "check": "manual.demo"}],
+                   "depends_on": [{"repo": "ghost", "paths": ["**"]}]}],
+    }))
+    args = ["--check", "manual.demo", "--participant", f"ghost={sha}", "--verdict", "pass",
+            "--platform", "linux", "--artifact", "a.txt", "--summary", "observed",
+            "--observed-at", "2026-09-02T00:00:00+00:00", "--observed-by", "operator"]
+    return args, catalogue, mirrors
+
+
+def run_script(data: Path, catalogue: Path, mirrors: Path, args: list[str], **popen) -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-c", SCRIPT, str(data), str(catalogue), str(mirrors), *args],
+                            cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen)
+
+
+def test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it(tmp_path: Path):
+    args, catalogue, mirrors = observation_world(tmp_path)
+    # the row this observation writes, recorded once without contention
+    first = tmp_path / "first"
+    out, err = run_script(first, catalogue, mirrors, args).communicate(timeout=60)
+    assert out.strip() == "stored", err
+    row = first / "records.jsonl"
+    assert len(row.read_text().splitlines()) == 1
+
+    data, go = tmp_path / "data", tmp_path / "go"
+    holder = subprocess.Popen([sys.executable, "-c", HOLDER, str(data), str(row), str(go)],
+                              cwd=ROOT, text=True, stdout=subprocess.PIPE)
+    script = None
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        script = run_script(data, catalogue, mirrors, args)
+        assert "waiting for the collection lock" in script.stderr.readline()
+        assert not (data / "records.jsonl").exists()          # nothing written while it waits
+        go.touch()                                             # the collection appends the same row, then ends
+        out, err = script.communicate(timeout=60)
+        assert script.returncode == 0, err
+        # the store was read after the lock: the row appended while it waited is the one it collapses onto
+        assert out.strip() == "already recorded (identical)"
+        assert (data / "records.jsonl").read_bytes() == row.read_bytes()
+    finally:
+        go.touch()
+        for proc in (holder, script):
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+            if proc is not None:
+                proc.wait(timeout=10)
+
