@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import select
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -256,6 +257,13 @@ def observation_world(tmp: Path) -> tuple[list[str], Path, Path]:
     return args, catalogue, mirrors
 
 
+def read_line(stream, seconds: float = 30) -> str:
+    """One line of a child's output, or a test failure after `seconds`: never a hang."""
+    ready, _, _ = select.select([stream], [], [], seconds)
+    assert ready, f"no output within {seconds}s"
+    return stream.readline()
+
+
 def run_script(data: Path, catalogue: Path, mirrors: Path, args: list[str], **popen) -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "-c", SCRIPT, str(data), str(catalogue), str(mirrors), *args],
                             cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen)
@@ -275,9 +283,9 @@ def test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it(
                               cwd=ROOT, text=True, stdout=subprocess.PIPE)
     script = None
     try:
-        assert holder.stdout.readline().strip() == "held"
+        assert read_line(holder.stdout).strip() == "held"
         script = run_script(data, catalogue, mirrors, args)
-        assert "waiting for the collection lock" in script.stderr.readline()
+        assert "waiting for the collection lock" in read_line(script.stderr)
         assert not (data / "records.jsonl").exists()          # nothing written while it waits
         go.touch()                                             # the collection appends the same row, then ends
         out, err = script.communicate(timeout=60)
@@ -292,4 +300,45 @@ def test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it(
                 proc.kill()
             if proc is not None:
                 proc.wait(timeout=10)
+
+
+def test_observation_holds_the_lock_while_it_reads_and_writes_the_store(monkeypatch):
+    catalogue = {
+        "repos": {"ip": {}},
+        "checks": {"manual.demo": {"runner": "manual_observation", "repo": "ip", "participants": ["ip"]}},
+        "tasks": [{"id": "task", "conditions": [{"id": "condition", "check": "manual.demo"}]}],
+    }
+    probes: list[object] = []
+
+    def probe() -> None:
+        other = observation.collection_lock(observation.DATA, wait=False)   # a second writer
+        probes.append(other)
+        if other is not None:
+            other.close()
+
+    class Mirrors:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def commit_time(self, repo, sha):
+            return "2026-09-08T15:52:51+00:00"
+
+    class Store:
+        def __init__(self, path):
+            probe()
+
+        def add(self, record):
+            probe()
+            return True
+
+    monkeypatch.setattr(observation.catmod, "load", lambda path: catalogue)
+    monkeypatch.setattr(observation, "Mirrors", Mirrors)
+    monkeypatch.setattr(observation, "Store", Store)
+    monkeypatch.setattr(sys, "argv", [
+        "record_observation.py", "--check", "manual.demo", "--participant", f"ip={'a' * 40}",
+        "--verdict", "pass", "--platform", "linux", "--artifact", "artifact.txt", "--summary", "observed",
+        "--observed-at", "2026-09-08T10:47:51-05:00", "--observed-by", "operator",
+    ])
+    assert observation.main() == 0
+    assert probes == [None, None]
 

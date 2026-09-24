@@ -46,6 +46,12 @@ class Revision:
     subject: str
 
 
+# Paths listed for matching are printed in git's quoted form (contract 08 B3a): bytes outside printable
+# ASCII, quotes, backslashes and control characters become a C-style quoted string. The output is ASCII
+# whatever the file names are, and the form does not depend on the operator's git configuration.
+QUOTED_PATHS = ("-c", "core.quotePath=true")
+
+
 def _run(cmd: list[str], *, cwd: Path | None = None, timeout: int = 300, env: dict | None = None) -> subprocess.CompletedProcess:
     """Run a text command without letting startup/timeout errors escape source adapters."""
     try:
@@ -106,18 +112,19 @@ class Mirrors:
         return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
     def changed_files(self, repo: str, old: str, new: str) -> Failure | list[str]:
-        r = _run(["git", "-C", str(self.path(repo)), "diff", "--name-only", f"{old}..{new}"])
+        r = _run(["git", "-C", str(self.path(repo)), *QUOTED_PATHS, "diff", "--name-only", f"{old}..{new}"])
         if r.returncode != 0:
             return Failure("diff", r.stderr.strip()[-200:], {"repo": repo, "old": old, "new": new})
         return [l for l in r.stdout.splitlines() if l.strip()]
 
     def files_at(self, repo: str, sha: str) -> Failure | list[str]:
-        """Every file path in the tree at a revision (contract 08 B3). A listing that fails is a
-        Failure, never an empty list: an empty list would report every pattern as dead."""
-        r = _run(["git", "-C", str(self.path(repo)), "ls-tree", "-r", "--name-only", "-z", sha])
+        """Every file path in the tree at a revision (contract 08 B3), in the form `changed_files`
+        prints them (B3a), so the mapping check sees exactly the paths `assess` matches. A listing
+        that fails is a Failure, never an empty list: an empty list would report every pattern as dead."""
+        r = _run(["git", "-C", str(self.path(repo)), *QUOTED_PATHS, "ls-tree", "-r", "--name-only", sha])
         if r.returncode != 0:
             return Failure("files", r.stderr.strip()[-200:] or f"exit {r.returncode}", {"repo": repo, "sha": sha})
-        return [p for p in r.stdout.split("\0") if p]
+        return [l for l in r.stdout.splitlines() if l.strip()]
 
     def commits_between(self, repo: str, old: str, new: str) -> Failure | list[str]:
         r = _run(["git", "-C", str(self.path(repo)), "log", "--format=%h %s", f"{old}..{new}"])

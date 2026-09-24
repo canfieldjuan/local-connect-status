@@ -160,7 +160,9 @@ matches no file (for example, a product repository moved or deleted the code it 
 warning banner naming the task, repository and pattern, because a change to that code would otherwise
 be attributed to no task. It is not a source failure, and it changes no label and no exit status. The fix
 is to edit the pattern in `catalogue.json`. A repository whose head was not observed, or whose files
-could not be listed, is reported as not checked, never as clean. A malformed `depends_on` (an unknown
+could not be listed, is reported as not checked, never as clean. Paths are compared in git's quoted form,
+the form the change record lists them in, whatever the local git configuration: a pattern for a path with
+non-ASCII or special characters is written the way git prints it (`"caf\303\251.txt"`). A malformed `depends_on` (an unknown
 repository, or empty or duplicate paths) stops the collector at load, like any other catalogue error.
 
 **Heavy checks** run nightly at 03:30, with retries at 04:30 and 05:30, on their own timer
@@ -234,7 +236,8 @@ test that would fail if the dashboard could be fooled that way:
 | order evidence, stored heads, or recent changes lexicographically instead of by absolute instant | `test_last_proven_uses_absolute_instant_across_offsets`, `test_store_latest_revision_uses_absolute_instant_across_offsets`, `test_recent_changes_are_ordered_by_absolute_instant_across_offsets` |
 | treat a dependency pattern that names no file as current, report an unlisted or unobserved repository as clean, match patterns differently from the change record, or count a dead pattern as a source failure | `test_mapping_check_gaps_and_unchecked`, `test_a_listing_that_fails_is_a_failure_never_an_empty_tree`, `test_pattern_coverage_uses_assess_matcher`, `test_a_moved_file_shows_as_a_gap_on_the_page_and_nowhere_else` |
 | accept a malformed dependency list | `test_catalogue_rejects_malformed_depends_on` |
-| let the observation script write while a collection runs, or judge its collapse against a store read before the lock | `test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it`, `test_the_collector_and_the_helper_share_one_lock` |
+| stop a tick on a file name that is not UTF-8, or list paths in a different form from the change record | `test_listing_and_diff_print_paths_in_one_form` |
+| let the observation script write while a collection runs, judge its collapse against a store read before the lock, or let either program drop its lock early | `test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it`, `test_the_collector_and_the_helper_share_one_lock`, `test_observation_holds_the_lock_while_it_reads_and_writes_the_store`, `test_the_collector_holds_the_lock_while_it_reads_its_sources` |
 
 Two runs cannot interleave: the collector takes an exclusive lock on `data/.lock`, and a
 baseline write waits for a running collection to finish rather than racing it. So does
