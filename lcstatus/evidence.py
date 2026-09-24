@@ -39,11 +39,6 @@ KINDS = (
 
 VERDICTS = ("pass", "fail", "skip", "unavailable", "pending", "partial", "unknown", "inconclusive")
 
-# The verdicts in which a local runner reached the code at that revision and got an answer: a pass,
-# a failure, or an inspection's reading of an immutable tree.  Every other verdict describes the
-# harness or an empty run, so the collector retries it (contract 07 B2).
-DECIDED_VERDICTS = ("pass", "fail", "inconclusive")
-
 PLATFORMS = ("linux", "windows", "macos", "n/a")
 
 
@@ -337,9 +332,11 @@ class Record:
 
     def series_identity(self) -> str:
         """Identity of the check stream, excluding the outcome that can change over time."""
+        # collector_code and repo_config are inputs to a local run (contract 07 B1 rev 3); rows
+        # written before they existed carry neither, so their identity is unchanged.
         stable_source = {
             name: self.source[name]
-            for name in ("type", "check")
+            for name in ("type", "check", "collector_code", "repo_config")
             if name in self.source
         }
         fingerprint = resolve_check_fingerprint(record_check_fingerprint(self))

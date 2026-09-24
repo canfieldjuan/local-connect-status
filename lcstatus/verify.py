@@ -29,6 +29,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -433,15 +434,53 @@ def discard_execution_files(record: Record) -> None:
                 pass
 
 
-# The fixed shape of a local runner's rows: (record kind, source type, platform).  A platform of
-# ("check", default) reads the check's own platform, as the pytest and inspection runners always did.
-LOCAL_RUNNERS: dict[str, tuple[str, str, Any]] = {
-    "source_inspection": ("source_inspection", "source_inspection", ("check", "n/a")),
-    "pytest": ("automated_test", "local_runner", ("check", "linux")),
-    "cargo_lib": ("automated_test", "local_runner", "linux"),
-    "accept_ew_ip": ("automated_test", "local_runner", "linux"),
-    "accept_ew_ds": ("automated_test", "local_runner", "linux"),
+# The one table of local runners: (record kind, source type, platform, failure counts come from the
+# test framework's own report).  A platform of ("check", default) reads the check's own platform, as
+# the pytest and inspection runners always did.  The last column is what makes a `fail` positive proof
+# (contract 07 B2): pytest counts from JUnit and cargo from its test-result lines; the acceptance
+# runners have no such count (the PDF handoff derives `failed` from the proof's exit code).
+LOCAL_RUNNERS: dict[str, tuple[str, str, Any, bool]] = {
+    "source_inspection": ("source_inspection", "source_inspection", ("check", "n/a"), False),
+    "pytest": ("automated_test", "local_runner", ("check", "linux"), True),
+    "cargo_lib": ("automated_test", "local_runner", "linux", True),
+    "accept_ew_ip": ("automated_test", "local_runner", "linux", False),
+    "accept_ew_ds": ("automated_test", "local_runner", "linux", False),
 }
+
+
+def decided(runner: str, row: Any) -> bool:
+    """Whether a stored row is positive proof about the code at its revision (contract 07 B2).
+
+    A pass met the runner's own pass criteria; an inspection read an immutable tree; a failure
+    counts only when the test framework itself counted a failed test.  Anything else -- a nonzero
+    exit with no framework count, a skip, an unknown or unavailable result -- may be the harness,
+    so the collector runs the check again.
+    """
+    if row.verdict == "pass":
+        return True
+    if row.verdict == "inconclusive":
+        return runner == "source_inspection"
+    if row.verdict == "fail":
+        return LOCAL_RUNNERS[runner][3] and type(row.failed) is int and row.failed >= 1
+    return False
+
+
+@lru_cache(maxsize=1)
+def collector_fingerprint() -> str:
+    """The collector's own code, an input to every local run (contract 07 B1 rev 3).
+
+    The whole package is hashed on purpose: a module that affects runners can never be left out.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()[:24]
+
+
+def repo_config_fingerprint(catalogue: dict[str, Any], repos: list[str]) -> str:
+    """The catalogue entries of the repositories a run touches (the interpreter pin lives there)."""
+    entries = {repo: catalogue.get("repos", {}).get(repo, {}) for repo in repos}
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
 
 
 def run_source(
@@ -467,10 +506,15 @@ def run_base(
     same call, so "was this exact run already decided?" is asked with the store's own identity.
     `revisions` must hold the head of every repository the check declares.
     """
-    kind, source_type, platform = LOCAL_RUNNERS[runner]
+    kind, source_type, platform, _ = LOCAL_RUNNERS[runner]
     if isinstance(platform, tuple):
         platform = check.get("platform", platform[1])
-    extra = {} if source_type == "source_inspection" else {"host": os.uname().nodename}
+    extra: dict[str, Any] = {
+        "collector_code": collector_fingerprint(),
+        "repo_config": repo_config_fingerprint(catalogue, declared_participants(check)),
+    }
+    if source_type == "local_runner":
+        extra["host"] = os.uname().nodename
     rev = revisions[check["repo"]]
     participants = (
         {repo: revisions[repo].sha for repo in declared_participants(check)}
