@@ -1,9 +1,11 @@
 # Contract 08 — Every dependency pattern names code that exists, and one writer at a time
 
-Status: **proposed 2026-09-24**, awaiting operator review. Slice 8 of the 2026-09-18 fix plan.
+Status: **accepted 2026-09-24** (operator: D1 "1. remove it", D2 "2. is good with me"; rev 2 adds
+`lcstatus/sources.py` to the scope for the file listing B3 reads, before any code). Slice 8 of the 2026-09-18 fix plan.
 Scope: `catalogue.json` (task `depends_on` lists; D1 may remove one check), `lcstatus/catalogue.py`
 (`depends_on` shape validation), `lcstatus/change.py` (one pattern-coverage function beside `assess`),
-`lcstatus/collect.py` (per-tick mapping check, state), `lcstatus/render.py` (one banner, one payload key),
+`lcstatus/sources.py` (one `Mirrors` method that lists the files at a revision), `lcstatus/collect.py` (per-tick
+mapping check, state), `lcstatus/render.py` (one banner, one payload key),
 `lcstatus/evidence.py` (one lock helper), `scripts/record_observation.py` (takes the lock), tests, README.
 No rules change, no fingerprint change, no product repository.
 
@@ -98,7 +100,7 @@ acquiring the lock, then writes and exits, which releases it. Both programs acqu
 helper in `lcstatus/evidence.py`, so the file name and the wait semantics cannot drift. As today, the
 observation appears on the page when the next tick renders.
 
-B6. **`ew.pytest.unit` (D1).** Default: the check is **removed** from the catalogue. It serves no
+B6. **`ew.pytest.unit` (D1, operator: remove).** The check is **removed** from the catalogue. It serves no
 condition (no task condition names it), and the Email Watcher's CI `test` job, `ew.ci.test`, runs the
 whole suite (`uv run pytest --cov=…`) at the same revision and already backs three conditions
 (`ew.ci_linux`, `connect.consumer_ci`, `rel.ew_primary_tests`). It is also the most expensive routine local
@@ -174,8 +176,7 @@ tick's revisions would have appended anyway.
 
 ## Decisions
 
-D1. **`ew.pytest.unit`: remove (default) or map.** This is the operator's call and was already flagged
-as one. The recommendation is to remove it: it proves nothing the page shows, CI runs a superset at the
+D1. **`ew.pytest.unit`: removed (operator's call, 2026-09-24).** The recommendation was to remove it: it proves nothing the page shows, CI runs a superset at the
 same revision, and it is the largest routine cost. Mapping it would need a condition it uniquely proves,
 and none exists: the local selectors (`ew.pytest.adapters`, `…notify`, `…scheduling`, `…automation`,
 `…connect_v1/v2`, `…queue_retry`) already back the task conditions that need a local run.
