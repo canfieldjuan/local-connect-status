@@ -107,7 +107,7 @@ three tasks are unchanged.
 
 B3. **Bundle row.** `release.local_connect_bundle` keeps its 17 conditions and gains the following.
 
-*The pack*, by sharing the pack tasks' checks, as the row already does with nine connect and app checks:
+*The pack*, by sharing the pack tasks' checks, as the row already does with eleven checks it shares with connect and app rows:
 
 | condition | check | kind | platform |
 |---|---|---|---|
@@ -277,7 +277,7 @@ source failure except any the milestone gate reports.
 ## Decisions
 
 D1. **The pack is named once, and the bundle carries it by sharing checks.** Sharing checks is how the
-bundle already carries the connect handoffs (nine shared checks today), and one demonstration record
+bundle already carries the connect handoffs and app releases (eleven shared checks today), and one demonstration record
 then satisfies both rows (settling test 4). A new "task depends on task" rule was the alternative. It
 would put cross-task logic into `rules.py`, which today derives each task from its own conditions alone. The
 validator gives the same guarantee, drift is a load error, and nothing in the rules changes.
