@@ -1,0 +1,354 @@
+# Contract 09 — The first release is the Local Connect bundle, with the Core Business Pack and its licence
+
+Status: **proposed 2026-09-27**, awaiting the operator's acceptance. This is release step 3 of
+invoice-processor#94, the operator's decision of 2026-09-27 and its cross-session order of operations.
+Scope:
+- `catalogue.json`: the release block, new installed-demo conditions on the three pack tasks and the four
+  release rows, one repository, and the new checks those need;
+- `lcstatus/catalogue.py`: one pack validation;
+- `docs/RELEASE_CONTRACT.md`, README, tests.
+
+Out of scope: rules, fingerprints, render code, and every product repository.
+
+## Problem (evidence, not description)
+
+- **The operator changed what the first release is** (invoice-processor#94 §1, 2026-09-27):
+  - **The product is the Local Connect bundle.** One download installs the three apps, the shared model
+    runtime and host (invoice-processor MODEL-SETUP revision 8), and one copy of the model. Installing a
+    single app still works: it sets up the shared runtime if it is absent.
+  - **The Core Business Pack is in the release.** The apps are free when used standalone. A 30-day demo,
+    with no card, unlocks the pack: three automations, active from first launch. A subscription keeps the
+    pack after day 30.
+  - **Licensing uses entitlement v1**, unchanged:
+    - the demo licence is issued online at first launch;
+    - a subscription licence of about 35 days renews automatically;
+    - the hand-signed offline licence remains.
+  - **A lapse stops only the automations.** The apps and the user's data keep working.
+  - **The privacy promise:** "Your emails, invoices and documents are processed on your computer and never
+    uploaded. The apps go online only for models, updates and licence renewal, never with document
+    contents."
+  - **Consequence** (#94 §2): "the first release now includes Automate, because the pack *is* the demo."
+- **The release definition says the opposite in five places.**
+  - `docs/RELEASE_CONTRACT.md:3`: "Automate rules and scheduled workflows are planned for later releases
+    and do not block the first public release."
+  - `docs/RELEASE_CONTRACT.md:30` puts "Automate work" after the first release.
+  - `catalogue.json:10-14` sets `automate_scope` to `required_for_first_release: false`.
+  - The bundle row's `human_involvement` (`catalogue.json:1001`) says Automate "remain[s] a later release".
+  - `README.md:196-197` lists requiring Automate among the things the dashboard must not do.
+  - `tests/test_release_contract.py:86` pins `required_for_first_release is False`.
+- **Nothing makes the bundle wait for the pack.**
+  - The pack is three `automate` tasks:
+    - `ew.meeting_suggestions_and_confirmed_write` (1);
+    - `automate.unattended_pdf_summary` (2);
+    - `automate.invoice_intake_and_digest` (3).
+  - Task 1's only installed demonstration is on Linux: `manual.ew_live_calendar`, `catalogue.json:286`,
+    platform `linux`.
+  - Tasks 2 and 3 have only `source_inspection` conditions. Those can never raise maturity above
+    `planned` (`lcstatus/rules.py`, module docstring).
+  - The bundle row (`catalogue.json:996`) names none of these checks. So the bundle can read
+    **ready for release** without one automation ever demonstrated.
+- **Nothing requires the rest of the product either.** The bundle row's 17 conditions cover:
+  - handoffs, busy retry and local entitlement verification;
+  - installed handoff demonstrations;
+  - the three app publications;
+  - four issue gates.
+
+  None asks for the bundle download, the shared runtime, the demo or subscription licence, a lapse, the
+  offline licence, or the privacy promise. The app release rows likewise do not ask that an app installed
+  alone sets up the shared runtime.
+- **The automation code's repository has no issue gate.**
+  - Automations 2 and 3 are built in Email Watcher and `connect-automate` (#94 §3, codex step 4).
+  - `connect-automate` is not a catalogue repository: contract 08 D3 deferred it because nothing then
+    needed it.
+  - It has no "First Public Release" milestone: `gh api repos/canfieldjuan/connect-automate/milestones?state=all`
+    returned 0 on 2026-09-27.
+  - So a release-blocking automation bug filed where that code lives blocks nothing.
+
+## Observable behaviour
+
+B1. **Release block.**
+- `release.target` becomes "The Local Connect bundle download for Linux and Windows. Each app may also be
+  released on its own, free, for standalone use."
+- `release.automate_scope` becomes:
+  - `decision`: "in the first release: the Core Business Pack is the 30-day demo";
+  - `required_for_first_release`: `true`;
+  - `tasks`: the three pack task ids above, in order;
+  - `note`: "The three automations, working across the apps, are what the demo licence unlocks. The bundle is
+    not ready for release until each is demonstrated installed on Linux and Windows, together with every
+    automated check its task names."
+- The dashboard's first-release scope banner and the report section print `decision` and `note` exactly as
+  today. Render code is unchanged.
+
+B2. **Pack tasks: an installed demonstration on each platform.**
+
+| task | new condition | check (new) | repo · participants | platform |
+|---|---|---|---|---|
+| 1 | `ew.live_calendar_demo_windows` | `manual.ew_live_calendar_windows` | eom-email-watcher | windows |
+| 2 | `auto.pdf_summary_installed_linux` | `manual.auto_pdf_summary_linux` | document-summarizer · EW, DS, contracts | linux |
+| 2 | `auto.pdf_summary_installed_windows` | `manual.auto_pdf_summary_windows` | document-summarizer · EW, DS, contracts | windows |
+| 3 | `auto.invoice_digest_installed_linux` | `manual.auto_invoice_digest_linux` | invoice-processor · EW, IP, contracts | linux |
+| 3 | `auto.invoice_digest_installed_windows` | `manual.auto_invoice_digest_windows` | invoice-processor · EW, IP, contracts | windows |
+
+What each demonstration asserts, stated in each condition's `proves` and each check's `note`:
+- **Task 1:** the Linux demonstration's steps, on the installed Windows app.
+- **Task 2:** with the installed apps and a licence that grants `connect.automations`:
+  - the person defines a rule once ("this sender, any PDF");
+  - a matching mail's PDF is summarized with no click, and the notification carries the summary;
+  - a non-matching mail is not handed over.
+- **Task 3:** under the same conditions:
+  - the person defines a vendor-and-bill rule;
+  - each matching bill is filed into the ledger with no click;
+  - a busy provider leaves the bill queued, and it then completes;
+  - the scheduled digest lists what arrived and what is due;
+  - nothing is paid, and review before payment stays with the person.
+
+`manual.ew_live_calendar`'s `note` gains "on the installed app" (see D7). The existing conditions of all
+three tasks are unchanged.
+
+B3. **Bundle row.** `release.local_connect_bundle` keeps its 17 conditions and gains the following.
+
+*The pack*, by sharing the pack tasks' checks, as the row already does with nine connect and app checks:
+
+| condition | check | kind | platform |
+|---|---|---|---|
+| `rel.bundle_auto1_extraction` | `ew.pytest.scheduling` | automated_test | linux |
+| `rel.bundle_auto1_gated` | `ew.pytest.automation` | automated_test | linux |
+| `rel.bundle_auto1_linux` | `manual.ew_live_calendar` | installed_demo | linux |
+| `rel.bundle_auto1_windows` | `manual.ew_live_calendar_windows` | installed_demo | windows |
+| `rel.bundle_auto2_linux` / `_windows` | `manual.auto_pdf_summary_linux` / `_windows` | installed_demo | each |
+| `rel.bundle_auto3_linux` / `_windows` | `manual.auto_invoice_digest_linux` / `_windows` | installed_demo | each |
+
+*The product*: new `manual_observation` checks anchored on `connect-contracts`. Each declares the
+participants `eom-email-watcher`, `document-summarizer`, `invoice-processor` and `connect-contracts`, and
+there is one check per platform (`…_linux`, `…_windows`), each backing a condition of the same stem.
+
+| condition stem | what a person observes on a clean machine, in `proves` and `note` |
+|---|---|
+| `rel.bundle_download` | One bundle download installs the three apps, the shared runtime and model host, and exactly one model copy, with no configuration. Each app's first launch uses that one server: one model file on disk and one server process. |
+| `rel.bundle_demo_licence` | First launch, online: a 30-day demo licence is issued automatically, without payment details. All three apps verify it locally (entitlement v1: `connect.capability_exchange`, `connect.automations`), and the pack is active in all three. |
+| `rel.bundle_subscription` | A subscription licence (about 35 days) is renewed online before it expires, with no user action and no interruption of the pack. |
+| `rel.bundle_licence_lapse` | With the licence expired and renewal unavailable, each app's standalone flow and all user data keep working. Only what the licence grants stops, and each stop shows a plain message. Importing a hand-signed offline licence restores the pack without going online. |
+| `rel.bundle_privacy` | While the pack demonstrations and a licence renewal run, every outbound connection of the installed apps, runtime and host is recorded. Destinations are only model and runtime downloads, updates and the licence service, and no request carries document content. The artifact is the capture and its destination summary. |
+
+*The automation code's issue gate*: `rel.bundle_automate_issue_gate`, backed by the new check
+`release.issues.automate` (`github_issues`, repo `connect-automate`, milestone "First Public Release").
+
+The row's `human_involvement` becomes: "Run the installed bundle, pack, licence and privacy demonstrations
+on both platforms." Its `promise` gains the pack, licence and privacy clauses. Its `depends_on` gains
+`connect-automate: src/connect_automate/**, pyproject.toml, uv.lock` (B5).
+
+B4. **App release rows: an app installed alone sets up the shared runtime.** Each app release row gets:
+- a new condition `rel.<ew|ds|ip>_shared_runtime_linux` / `_windows`;
+- backed by a new check `manual.<ew|ds|ip>_shared_runtime_linux` / `_windows`, whose repo is the app itself;
+  it declares no participants.
+
+The claim, in the condition's `proves`:
+- On a machine without the shared runtime, installing only this app sets up the runtime and model at
+  first launch, with no configuration, and its primary flow completes on it.
+- On a machine that already has the runtime, installing this app reuses it: no second model copy.
+
+Existing conditions and their evidence are untouched.
+
+B5. **`connect-automate` becomes a catalogue repository.**
+- It is added as `repos["connect-automate"] = {"github": "canfieldjuan/connect-automate", "ci_workflows": []}`, shaped like `connect-contracts` (no local check runs in it).
+- `automate.unattended_pdf_summary` and `automate.invoice_intake_and_digest` add
+  `connect-automate: src/connect_automate/automate/**` to `depends_on`.
+- So the change feed attributes its commits to the pack instead of listing every file as unmapped. This is
+  informational only: `depends_on` feeds only `change.assess` (contract 08).
+- Evidence binding does not change. Released Email Watcher runs the connect-automate commit pinned in its
+  `pyproject.toml`/`uv.lock`, and those files stay mapped (contract 08 D3). The new repository only adds its
+  head, its change stream and its issue gate.
+
+B6. **The pack is validated.** `catalogue.load` refuses the catalogue, naming the fault, when
+`release.automate_scope.required_for_first_release` is `true` and any of the following holds:
+- a. `tasks` is missing, is not a non-empty list of distinct strings, or names an id that is not a task in
+  layer `automate`;
+- b. there is not exactly one release-layer task with `app` `"bundle"`;
+- c. a pack task has a condition, other than `source_inspection`, whose check no condition of the bundle
+  row names ("bundle release row does not carry <check> from <task>");
+- d. a pack task has no `installed_demo` condition on one of `release.required_platforms`. The condition's
+  own `platform` counts, else its check's.
+
+When `required_for_first_release` is not `true`, `tasks` is optional and none of these checks runs. The
+test fixtures that pass `None` load as before.
+
+B7. **`docs/RELEASE_CONTRACT.md`** is rewritten to state B1 to B5 as the release definition:
+- the bundle download is the product;
+- each app may release alone;
+- each Core Business Pack automation is demonstrated installed on both platforms, with every automated
+  check its task names;
+- the licence lifecycle: demo at first launch, subscription renewal, lapse, and the offline licence;
+- the privacy promise, verbatim, as a buyer-facing claim;
+- the bundle is released only when its download is published (the condition is added with the installer
+  repository, D4).
+
+Its issue-gate section names five repositories, and "Automate work" leaves the list of deferrable work.
+
+B8. **README.**
+- The "Require Automate for the first public release" bullet leaves the list of what the dashboard must
+  not do.
+- The "What the tests prove" table gains the B6 and settling-evidence rows below.
+
+## Invariants
+
+I1. **Evidence is never rewritten**, and the store stays append-only. No existing check's or condition's
+fingerprint changes:
+- every edited existing check changes only its `note`, a prose key (`CHECK_PROSE_KEYS`, `lcstatus/evidence.py:66`);
+- no existing condition is edited.
+
+This is verified before merge by fingerprinting every check and condition id present on `origin/main`,
+under both catalogues.
+
+I2. **No label rises at merge.** The expected page changes at merge are exactly:
+- the new conditions read `no_evidence`;
+- the automation-scope banner text changes;
+- the bundle row's issue gate reads **unavailable** until `connect-automate` has the milestone (contract
+  05 B1: a missing milestone is unavailable, never clear).
+
+This is verified live, read-only, before merge. The branch's derivation over the live store and state is
+compared with the served page, task by task, and every other difference is a defect.
+
+I3. **One place names the pack:** `release.automate_scope.tasks`. What the bundle must carry is derived
+from those tasks' conditions (B6), so a proof added to a pack task that the bundle does not carry fails the
+catalogue load instead of silently not blocking the release.
+
+I4. **A bundle-level demonstration is bound to all four product revisions.** A change in any participant
+makes it "changed since demonstrated" (the existing participant rule, `rules._matches_current`).
+
+## Failure cases
+
+| Situation | Result |
+|---|---|
+| every one of the bundle row's 17 original conditions is satisfied and the new ones have no evidence | not ready for release; the missing conditions are exactly those in B3 |
+| a pack task gains an automated condition, but the bundle row does not carry its check | `catalogue.load` fails and names the check and the task; the collector does not start |
+| a pack task loses its Windows (or Linux) demonstration | `catalogue.load` fails (B6 d) |
+| `required_for_first_release` true, with `tasks` empty, unknown, duplicated, or naming a non-automate task | `catalogue.load` fails (B6 a) |
+| no bundle row, or two | `catalogue.load` fails (B6 b) |
+| `connect-automate` has no "First Public Release" milestone | its gate is **unavailable**, and the bundle's readiness fails closed (contract 05) |
+| the `connect-automate` fetch fails | a source failure, as for every repository; its gate and head are not current |
+| a pack demonstration is recorded before the licence service exists, using a hand-signed licence | admitted for the pack condition, which asks for a licence granting `connect.automations`, not for how it was issued; the demo and subscription licence conditions stay `no_evidence` |
+| a bundle demonstration is recorded, then any of the four repositories moves | "changed since demonstrated" (I4) |
+| the three apps are published before the installer repository exists | the bundle cannot be ready: `rel.bundle_download_*` are required installed demos, so "released" (which needs ready) is unreachable until they pass; D4 adds the download's publication condition with that repository |
+| an old record for a shared check (e.g. `ew.pytest.automation`) that predates the new bundle condition | it does not name the new condition, so it does not prove it. The first tick after merge runs `ew.pytest.scheduling` and `ew.pytest.automation` once, because a condition added to a check changes its run key (contract 07 B1) |
+
+## Concurrency model
+
+Unchanged. The first tick after merge, under `data/.lock`:
+- clones the `connect-automate` mirror (`Mirrors.ensure`);
+- reads its head and issue gate;
+- runs the two shared pytest checks once (contract 07 B1).
+
+`record_observation.py` writes the new manual checks like any other, holding the lock (contract 08 B5).
+
+## Settling test evidence
+
+Unit (`uv run pytest`):
+1. `test_first_release_is_the_bundle_with_the_core_business_pack` replaces
+   `test_accepted_contract_splits_app_and_bundle_release_and_defers_automate`. It asserts:
+   - `required_for_first_release is True`, and the pack is exactly the three task ids;
+   - the bundle row carries every pack check;
+   - `download`, `demo_licence`, `subscription`, `licence_lapse` and `privacy` demos exist on both platforms;
+   - the issue checks are the five gates;
+   - each app row has shared-runtime demos on both platforms;
+   - the entitlement checks are unchanged.
+2. `test_catalogue_rejects_a_pack_the_bundle_does_not_carry` breaks the committed catalogue on purpose, one
+   fault at a time, one case per B6 clause a to d, and each is refused with its message. The committed
+   catalogue loads. A catalogue with `required_for_first_release: false` and no `tasks` loads.
+3. `test_old_bundle_evidence_does_not_make_the_new_bundle_ready`:
+   - Setup: records at current heads satisfy every original bundle condition, with fingerprints computed
+     exactly as the writers compute them.
+   - Result: the row is not ready for release, and its unsatisfied conditions are exactly the B3 set.
+   - Adding passing records for the B3 set makes it ready, so the test proves the new conditions are the
+     only difference.
+4. `test_a_pack_demo_record_satisfies_both_rows`: one `record_observation`-shaped record for
+   `manual.auto_pdf_summary_linux` names both conditions (`auto.pdf_summary_installed_linux` and
+   `rel.bundle_auto2_linux`), and both read `satisfied`.
+
+Live, read-only, before merge (reported on the PR):
+- I1: fingerprint equality for every id on `origin/main`.
+- I2: the branch's derivation over the live store and state, compared task by task with the served
+  `site/status.json`, where the only differences are the expected ones.
+- Every new `depends_on` pattern matches a file at `connect-automate`'s head (contract 08's mapping check).
+
+Settle, after merge: the first tick shows the new conditions as `no_evidence`, a `connect-automate` head
+row, and the bundle's issue gate as **unavailable** (or clear, once the milestone exists). It shows no
+source failure except any the milestone gate reports.
+
+## Decisions
+
+D1. **The pack is named once, and the bundle carries it by sharing checks.** Sharing checks is how the
+bundle already carries the connect handoffs (nine shared checks today), and one demonstration record
+then satisfies both rows (settling test 4). A new "task depends on task" rule was the alternative. It
+would put cross-task logic into `rules.py`, which today derives each task from its own conditions alone. The
+validator gives the same guarantee, drift is a load error, and nothing in the rules changes.
+
+D2. **Bundle-level checks are anchored on `connect-contracts`, with all four product repositories as
+participants.** Those demonstrations are about the bundle, not one app. `connect-contracts` holds what the
+bundle shares: entitlement v1, and the canonical runtime profile of MODEL-SETUP revision 8 MS-SHARE-5.
+When the installer's or model host's repository joins the catalogue, those checks add it as a participant.
+Their fingerprints then change and earlier demonstrations read "configuration changed", which is right,
+because they were not bound to that code.
+
+D3. **`connect-automate` joins the catalogue for its issue gate (revisits contract 08 D3).** Contract 08
+deferred the fifth repository because nothing needed its head. The first release now includes the pack,
+and a release-blocking bug in the automation engine is filed where that code lives. Evidence binding is
+unchanged: the Email Watcher pin is still what released behaviour runs.
+
+D4. **The bundle download's publication condition waits for its repository.**
+- The installer's repository follows Q4 of MODEL-SETUP and #94 release step 6, and neither exists yet.
+- A `release_artifact` needs a repository to read releases from, and pointing it at a stand-in would be
+  false.
+- Until then, "released" still needs "ready", which needs `rel.bundle_download_*`. So no bundle can read
+  released without the download having been demonstrated.
+- The release session adds the publication condition in the same change that adds the installer repository.
+
+D5. **The single-app runtime claim is on each app's row.** An app releases on its own (B1), so each app
+must prove it. One bundle-level "any app alone" demonstration would prove it for one app, not three.
+
+D6. **One demonstration per licence behaviour.** The licence service's owner and the payment provider are
+undecided (#94 §5).
+- The demo issuance and subscription renewal demonstrations wait on them.
+- The lapse and offline licence demonstrations do not: entitlement v1 and the hand-signed licence exist
+  today.
+
+Separate conditions let the page show which half is waiting.
+
+D7. **`manual.ew_live_calendar`'s note says "on the installed app".**
+- A note is a prose key, so editing it keeps evidence identity.
+- The store holds no record for this check (checked 2026-09-27: installed-demo rows exist only for the six
+  app install checks and `manual.ip_removal_test`), so no earlier observation is re-described.
+
+D8. **Automated tests for automations 2 and 3 are required once their tasks name them.**
+- B6 cannot require an automated condition on each pack task today, because that would mean naming tests
+  that do not exist. Automations 2 and 3 have none yet, and codex's contracts (#94 codex step 4) add them.
+- When their checks are added to the pack tasks, B6 c makes the bundle row carry them.
+- Until then, the bundle's bar for those two automations is their installed demonstrations on both platforms.
+
+## Questions for the operator
+
+Only the named condition waits on each answer. The rest of this contract does not.
+
+Q1. **Does a lapse also stop one-click handoffs?**
+- #94 says "only the automations stop".
+- Under entitlement v1, one licence grants both `connect.capability_exchange`, which gates discovery and
+  one-click handoffs, and `connect.automations`. So today a lapse stops one-click handoffs too.
+- `rel.bundle_licence_lapse` is written as "only what the licence grants stops", so it is right either way.
+- If one-click handoffs are meant to be free, that is an entitlement change in connect-contracts, codex's
+  area, and a pricing fact for the release contract.
+
+Q2. **Wording of the privacy promise.**
+- It says the apps go online for "models, updates and licence renewal".
+- First-run setup also downloads the model runtime: our llama.cpp build from Hugging Face and NVIDIA's CUDA
+  libraries from NVIDIA (MODEL-SETUP Q1 and Q2).
+- `rel.bundle_privacy` counts those as model downloads. Say if the buyer-facing wording should name them.
+
+**Outside this repository, and not a question:** `connect-automate` needs a "First Public Release"
+milestone. Codex or the operator creates it. Until then the bundle's issue gate reads unavailable (I2).
+
+## Estimated diff
+
+- `catalogue.json`: ~420 lines (22 new checks, 30 new conditions, one repository, release block).
+- `catalogue.py`: ~40 lines.
+- Tests: ~180 lines.
+- `RELEASE_CONTRACT.md`: ~45 lines.
+- README: ~10 lines.
