@@ -348,6 +348,8 @@ def test_release_promise_requires_licence_and_first_run_model_evidence(
         "document-summarizer": "b" * 40,
         "invoice-processor": "c" * 40,
         "connect-contracts": "d" * 40,
+        "connect-automate": "e" * 40,
+        "document-ocr": "f" * 40,
     }
 
     def evidence_for(condition):
@@ -705,6 +707,8 @@ def test_each_release_gate_requires_platform_installed_observations():
         "document-summarizer": "b" * 40,
         "invoice-processor": "c" * 40,
         "connect-contracts": "d" * 40,
+        "connect-automate": "e" * 40,
+        "document-ocr": "f" * 40,
     }
     records = []
     for condition in release_task["conditions"]:

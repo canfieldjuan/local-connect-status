@@ -156,10 +156,29 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
     root = Path(__file__).resolve().parent.parent
     catalogue = json.loads((root / "catalogue.json").read_text())
     edited_by_b8 = {"xapp.accept_ew_to_ip"}
+    # Contract 09 edits one note (a prose key, so the semantic fingerprint is unchanged) and adds
+    # checks that did not exist before slice 3: no old record can carry a whole-dict value for them.
+    note_edited_by_contract_09 = {"manual.ew_live_calendar"}
+    added_by_contract_09 = {
+        "manual.ew_live_calendar_windows",
+        *(f"manual.auto_{name}_{os}" for name in ("pdf_summary", "invoice_digest") for os in ("linux", "windows")),
+        *(f"manual.bundle_{stem}_{os}" for stem in ("download", "licence_online", "without_licence", "privacy")
+          for os in ("linux", "windows")),
+        *(f"manual.{app}_shared_runtime_{os}" for app in ("ew", "ds", "ip") for os in ("linux", "windows")),
+        "release.issues.automate",
+        "release.issues.ocr",
+    }
     reconfigured = {"ew.pytest.entitlement"}
     values = set(CHECK_FINGERPRINT_ALIASES.values())
+    assert added_by_contract_09 <= set(catalogue["checks"])
     for check_id, check in catalogue["checks"].items():
         semantic = check_fingerprint(check)
+        if check_id in added_by_contract_09:
+            # Genuinely new: no pre-slice-3 whole-dict value can resolve to it.  Its semantic value
+            # may equal another manual check's (same runner, repo and platform, a different note);
+            # evidence is selected by check id first, so the two never cross-bind.
+            assert whole_check_fingerprint(check) not in CHECK_FINGERPRINT_ALIASES, check_id
+            continue
         if check_id in reconfigured:
             old = {**check, "args": ["tests/test_entitlement.py"]}
             assert check_fingerprint(old) in values
@@ -167,7 +186,7 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
             assert whole_check_fingerprint(check) not in CHECK_FINGERPRINT_ALIASES
             continue
         assert semantic in values, check_id
-        if check_id in edited_by_b8:
+        if check_id in edited_by_b8 | note_edited_by_contract_09:
             # its whole-dict value moved with the note; the frozen key is the pre-edit one
             assert whole_check_fingerprint(check) not in CHECK_FINGERPRINT_ALIASES
         else:

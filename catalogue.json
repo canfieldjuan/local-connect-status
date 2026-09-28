@@ -2,15 +2,20 @@
   "catalogue_version": 1,
   "title": "Local Connect capability catalogue",
   "release": {
-    "target": "Linux and Windows app releases, followed by the Local Connect bundle",
+    "target": "The Local Connect bundle download for Linux and Windows. Each app may also be released on its own.",
     "required_platforms": [
       "linux",
       "windows"
     ],
     "automate_scope": {
-      "decision": "deferred until after the first public release",
-      "note": "Automate remains visible on the dashboard, but unattended rules and scheduled workflows do not block the first releases. They can ship in later releases while the manual Connect handoffs remain supported.",
-      "required_for_first_release": false
+      "decision": "in the first release: the three cross-app automations",
+      "note": "The bundle is not ready for release until each automation is demonstrated installed on Linux and Windows, together with every automated check its task names.",
+      "required_for_first_release": true,
+      "tasks": [
+        "ew.meeting_suggestions_and_confirmed_write",
+        "automate.unattended_pdf_summary",
+        "automate.invoice_intake_and_digest"
+      ]
     },
     "issue_gate": {
       "milestone": "First Public Release",
@@ -40,6 +45,14 @@
     },
     "connect-contracts": {
       "github": "canfieldjuan/connect-contracts",
+      "ci_workflows": []
+    },
+    "connect-automate": {
+      "github": "canfieldjuan/connect-automate",
+      "ci_workflows": []
+    },
+    "document-ocr": {
+      "github": "canfieldjuan/document-ocr",
       "ci_workflows": []
     }
   },
@@ -287,7 +300,7 @@
       "runner": "manual_observation",
       "repo": "eom-email-watcher",
       "platform": "linux",
-      "note": "Live Microsoft consent, proposal and confirmed write against a real tenant. Recorded in docs/CONTRACTS.md acceptance appendix."
+      "note": "Live Microsoft consent, proposal and confirmed write against a real tenant, on the installed app. Recorded in docs/CONTRACTS.md acceptance appendix."
     },
     "inspect.ew_automation_rules": {
       "runner": "source_inspection",
@@ -434,6 +447,230 @@
       "platform": "n/a",
       "milestone": "First Public Release",
       "note": "Record every open Connect Contracts issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "manual.ew_live_calendar_windows": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "windows",
+      "note": "On the installed Windows app: live Microsoft consent, proposal and confirmed write against a real tenant, as manual.ew_live_calendar does on Linux."
+    },
+    "manual.auto_pdf_summary_linux": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "With the installed Linux apps and a licence granting connect.automations: define a rule once (this sender, any PDF). A matching mail's PDF is summarized with no click and the notification carries the summary; at least one matching mail carries a scanned PDF with no text layer, summarized through OCR; a non-matching mail is not handed over."
+    },
+    "manual.auto_invoice_digest_linux": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "With the installed Linux apps and a licence granting connect.automations: define a vendor-and-bill rule. Each matching bill is filed into the ledger with no click; at least one is a scanned PDF with no text layer, filed through OCR; a busy provider leaves a bill queued and it then completes; the scheduled digest lists what arrived and what is due; nothing is paid."
+    },
+    "manual.auto_pdf_summary_windows": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "With the installed Windows apps and a licence granting connect.automations: define a rule once (this sender, any PDF). A matching mail's PDF is summarized with no click and the notification carries the summary; at least one matching mail carries a scanned PDF with no text layer, summarized through OCR; a non-matching mail is not handed over."
+    },
+    "manual.auto_invoice_digest_windows": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "With the installed Windows apps and a licence granting connect.automations: define a vendor-and-bill rule. Each matching bill is filed into the ledger with no click; at least one is a scanned PDF with no text layer, filed through OCR; a busy provider leaves a bill queued and it then completes; the scheduled digest lists what arrived and what is due; nothing is paid."
+    },
+    "manual.bundle_download_linux": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Linux: One bundle download installs the three apps and the shared runtime (the model host and the OCR provider), with exactly one model copy and no configuration. Each app's first launch uses that one server: one model file on disk, one server process. Document Summarizer and Invoice Processor each read a scanned PDF with no text layer."
+    },
+    "manual.bundle_download_windows": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Windows: One bundle download installs the three apps and the shared runtime (the model host and the OCR provider), with exactly one model copy and no configuration. Each app's first launch uses that one server: one model file on disk, one server process. Document Summarizer and Invoice Processor each read a scanned PDF with no text layer."
+    },
+    "manual.bundle_licence_online_linux": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Linux: The apps obtain and keep a valid licence online as the licensing model in invoice-processor#94 (private) specifies, from first launch onward, without user configuration. All three apps verify it locally under entitlement v1 (connect.capability_exchange, connect.automations), and the handoffs and automations are active in all three."
+    },
+    "manual.bundle_licence_online_windows": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Windows: The apps obtain and keep a valid licence online as the licensing model in invoice-processor#94 (private) specifies, from first launch onward, without user configuration. All three apps verify it locally under entitlement v1 (connect.capability_exchange, connect.automations), and the handoffs and automations are active in all three."
+    },
+    "manual.bundle_without_licence_linux": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Linux: With no valid licence (expired or absent): each app's standalone flow and all user data keep working, and Document Summarizer and Invoice Processor still read a scanned PDF with no text layer. One-click handoffs and the automations stop, each showing a plain message. Importing a hand-signed offline licence restores them without going online."
+    },
+    "manual.bundle_without_licence_windows": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Windows: With no valid licence (expired or absent): each app's standalone flow and all user data keep working, and Document Summarizer and Invoice Processor still read a scanned PDF with no text layer. One-click handoffs and the automations stop, each showing a plain message. Importing a hand-signed offline licence restores them without going online."
+    },
+    "manual.bundle_privacy_linux": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "linux",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Linux: While the automation demonstrations (including a scan) and the online licence behaviour run, every outbound connection of the installed apps, model host and OCR provider is recorded. Every destination is one the privacy promise in invoice-processor#94 (private) allows, and no request carries document content. The artifact is the capture and its destination summary."
+    },
+    "manual.bundle_privacy_windows": {
+      "runner": "manual_observation",
+      "repo": "connect-contracts",
+      "platform": "windows",
+      "participants": [
+        "eom-email-watcher",
+        "document-summarizer",
+        "invoice-processor",
+        "document-ocr",
+        "connect-contracts"
+      ],
+      "note": "On Windows: While the automation demonstrations (including a scan) and the online licence behaviour run, every outbound connection of the installed apps, model host and OCR provider is recorded. Every destination is one the privacy promise in invoice-processor#94 (private) allows, and no request carries document content. The artifact is the capture and its destination summary."
+    },
+    "manual.ew_shared_runtime_linux": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "note": "On Linux, on a machine without the shared runtime: install only Email Watcher; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. On a machine that already has the runtime, installing Email Watcher reuses it, with no second model copy."
+    },
+    "manual.ew_shared_runtime_windows": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "windows",
+      "note": "On Windows, on a machine without the shared runtime: install only Email Watcher; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. On a machine that already has the runtime, installing Email Watcher reuses it, with no second model copy."
+    },
+    "manual.ds_shared_runtime_linux": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "participants": [
+        "document-summarizer",
+        "document-ocr"
+      ],
+      "note": "On Linux, on a machine without the shared runtime: install only Document Summarizer; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. That setup includes the OCR provider, and the demonstration reads a scanned PDF with no text layer without a licence. On a machine that already has the runtime, installing Document Summarizer reuses it, with no second model copy."
+    },
+    "manual.ds_shared_runtime_windows": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "windows",
+      "participants": [
+        "document-summarizer",
+        "document-ocr"
+      ],
+      "note": "On Windows, on a machine without the shared runtime: install only Document Summarizer; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. That setup includes the OCR provider, and the demonstration reads a scanned PDF with no text layer without a licence. On a machine that already has the runtime, installing Document Summarizer reuses it, with no second model copy."
+    },
+    "manual.ip_shared_runtime_linux": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "participants": [
+        "invoice-processor",
+        "document-ocr"
+      ],
+      "note": "On Linux, on a machine without the shared runtime: install only Invoice Processor; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. That setup includes the OCR provider, and the demonstration reads a scanned PDF with no text layer without a licence. On a machine that already has the runtime, installing Invoice Processor reuses it, with no second model copy."
+    },
+    "manual.ip_shared_runtime_windows": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "windows",
+      "participants": [
+        "invoice-processor",
+        "document-ocr"
+      ],
+      "note": "On Windows, on a machine without the shared runtime: install only Invoice Processor; at first launch it sets up the shared runtime and model with no configuration, and its primary flow completes on it. That setup includes the OCR provider, and the demonstration reads a scanned PDF with no text layer without a licence. On a machine that already has the runtime, installing Invoice Processor reuses it, with no second model copy."
+    },
+    "release.issues.automate": {
+      "runner": "github_issues",
+      "repo": "connect-automate",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Connect Automate issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "release.issues.ocr": {
+      "runner": "github_issues",
+      "repo": "document-ocr",
+      "platform": "n/a",
+      "milestone": "First Public Release",
+      "note": "Record every open Document OCR issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
     }
   },
   "tasks": [
@@ -517,6 +754,13 @@
           "kind": "installed_demo",
           "check": "manual.ew_live_calendar",
           "proves": "A person observed consent, proposal and a confirmed write against a real tenant."
+        },
+        {
+          "id": "ew.live_calendar_demo_windows",
+          "kind": "installed_demo",
+          "check": "manual.ew_live_calendar_windows",
+          "platform": "windows",
+          "proves": "A person observed consent, proposal and a confirmed write against a real tenant on the installed Windows app."
         }
       ],
       "depends_on": [
@@ -745,6 +989,20 @@
           "kind": "source_inspection",
           "check": "inspect.ew_automation_rules",
           "proves": "A person can define a sender-and-attachment rule for this flow."
+        },
+        {
+          "id": "auto.pdf_summary_installed_linux",
+          "kind": "installed_demo",
+          "check": "manual.auto_pdf_summary_linux",
+          "platform": "linux",
+          "proves": "On the installed Linux apps, a rule the person defined once summarizes a matching mail's PDF with no click, including a scanned PDF read through OCR, and leaves a non-matching mail alone."
+        },
+        {
+          "id": "auto.pdf_summary_installed_windows",
+          "kind": "installed_demo",
+          "check": "manual.auto_pdf_summary_windows",
+          "platform": "windows",
+          "proves": "On the installed Windows apps, a rule the person defined once summarizes a matching mail's PDF with no click, including a scanned PDF read through OCR, and leaves a non-matching mail alone."
         }
       ],
       "depends_on": [
@@ -756,6 +1014,12 @@
             "src/eom_email_watcher/automation/**",
             "pyproject.toml",
             "uv.lock"
+          ]
+        },
+        {
+          "repo": "connect-automate",
+          "paths": [
+            "src/connect_automate/automate/**"
           ]
         }
       ]
@@ -779,6 +1043,20 @@
           "kind": "source_inspection",
           "check": "inspect.ew_queue_scheduler",
           "proves": "The desktop schedules Connect queue pumping without a manual click."
+        },
+        {
+          "id": "auto.invoice_digest_installed_linux",
+          "kind": "installed_demo",
+          "check": "manual.auto_invoice_digest_linux",
+          "platform": "linux",
+          "proves": "On the installed Linux apps, a vendor-and-bill rule files each matching bill with no click, including a scanned PDF read through OCR, survives a busy provider, and a scheduled digest lists what arrived and what is due."
+        },
+        {
+          "id": "auto.invoice_digest_installed_windows",
+          "kind": "installed_demo",
+          "check": "manual.auto_invoice_digest_windows",
+          "platform": "windows",
+          "proves": "On the installed Windows apps, a vendor-and-bill rule files each matching bill with no click, including a scanned PDF read through OCR, survives a busy provider, and a scheduled digest lists what arrived and what is due."
         }
       ],
       "depends_on": [
@@ -797,6 +1075,12 @@
           "repo": "invoice-processor",
           "paths": [
             "src/invoice_processor/connect/**"
+          ]
+        },
+        {
+          "repo": "connect-automate",
+          "paths": [
+            "src/connect_automate/automate/**"
           ]
         }
       ]
@@ -843,6 +1127,20 @@
           "check": "manual.ew_windows_install",
           "platform": "windows",
           "proves": "The current Email Watcher artifact installs through the chosen distribution path and completes its primary flow on Windows."
+        },
+        {
+          "id": "rel.ew_shared_runtime_linux",
+          "kind": "installed_demo",
+          "check": "manual.ew_shared_runtime_linux",
+          "platform": "linux",
+          "proves": "On Linux, Email Watcher installed alone sets up the shared runtime with no configuration, and reuses an existing one with no second model copy."
+        },
+        {
+          "id": "rel.ew_shared_runtime_windows",
+          "kind": "installed_demo",
+          "check": "manual.ew_shared_runtime_windows",
+          "platform": "windows",
+          "proves": "On Windows, Email Watcher installed alone sets up the shared runtime with no configuration, and reuses an existing one with no second model copy."
         },
         {
           "id": "rel.published_ew",
@@ -896,6 +1194,20 @@
           "check": "manual.ds_windows_install",
           "platform": "windows",
           "proves": "The current Document Summarizer artifact installs through the chosen distribution path and completes a cited-summary flow on Windows."
+        },
+        {
+          "id": "rel.ds_shared_runtime_linux",
+          "kind": "installed_demo",
+          "check": "manual.ds_shared_runtime_linux",
+          "platform": "linux",
+          "proves": "On Linux, Document Summarizer installed alone sets up the shared runtime and OCR, reading a scanned PDF without a licence, with no configuration, and reuses an existing one with no second model copy."
+        },
+        {
+          "id": "rel.ds_shared_runtime_windows",
+          "kind": "installed_demo",
+          "check": "manual.ds_shared_runtime_windows",
+          "platform": "windows",
+          "proves": "On Windows, Document Summarizer installed alone sets up the shared runtime and OCR, reading a scanned PDF without a licence, with no configuration, and reuses an existing one with no second model copy."
         },
         {
           "id": "rel.published_ds",
@@ -964,6 +1276,20 @@
           "proves": "The current Invoice Processor artifact installs through the chosen distribution path, completes its primary flow, and preserves its ledger on Windows."
         },
         {
+          "id": "rel.ip_shared_runtime_linux",
+          "kind": "installed_demo",
+          "check": "manual.ip_shared_runtime_linux",
+          "platform": "linux",
+          "proves": "On Linux, Invoice Processor installed alone sets up the shared runtime and OCR, reading a scanned PDF without a licence, with no configuration, and reuses an existing one with no second model copy."
+        },
+        {
+          "id": "rel.ip_shared_runtime_windows",
+          "kind": "installed_demo",
+          "check": "manual.ip_shared_runtime_windows",
+          "platform": "windows",
+          "proves": "On Windows, Invoice Processor installed alone sets up the shared runtime and OCR, reading a scanned PDF without a licence, with no configuration, and reuses an existing one with no second model copy."
+        },
+        {
           "id": "rel.published_ip",
           "kind": "release_artifact",
           "check": "release.github.ip",
@@ -997,8 +1323,8 @@
       "app": "bundle",
       "layer": "release",
       "title": "Release the three-app Local Connect bundle",
-      "promise": "The packaged apps discover each other locally, hand PDFs and bills across Connect on Linux and Windows, keep busy work retryable, enforce the local entitlement, and uninstall without leaving a callable provider.",
-      "human_involvement": "Run the packaged cross-app demonstrations on both platforms. Automate rules and scheduled workflows remain a later release.",
+      "promise": "The packaged apps discover each other locally, hand PDFs and bills across Connect on Linux and Windows, keep busy work retryable, enforce the local entitlement, and uninstall without leaving a callable provider. One download installs them with the shared model runtime and OCR; the three automations work installed on both platforms; a scanned PDF is read with or without a licence; the licence behaves as the licensing model specifies; and nothing leaves the computer except what the privacy promise allows.",
+      "human_involvement": "Run the installed bundle, automation, licence and privacy demonstrations on both platforms.",
       "conditions": [
         {
           "id": "rel.bundle_pdf_contract",
@@ -1071,6 +1397,118 @@
           "proves": "Packaged Windows apps discover Invoice Processor, return a grounded ledger entry with a retryable busy state, and stop exposing the provider after uninstall."
         },
         {
+          "id": "rel.bundle_auto1_extraction",
+          "kind": "automated_test",
+          "check": "ew.pytest.scheduling",
+          "platform": "linux",
+          "proves": "Automation 1: extracted times trace to source quotes, and the calendar write is transactional."
+        },
+        {
+          "id": "rel.bundle_auto1_gated",
+          "kind": "automated_test",
+          "check": "ew.pytest.automation",
+          "platform": "linux",
+          "proves": "Automation 1 runs only with both licence features and reaches a durable confirmation preview."
+        },
+        {
+          "id": "rel.bundle_auto1_linux",
+          "kind": "installed_demo",
+          "check": "manual.ew_live_calendar",
+          "platform": "linux",
+          "proves": "Automation 1 is demonstrated on the installed Linux app against a real tenant."
+        },
+        {
+          "id": "rel.bundle_auto1_windows",
+          "kind": "installed_demo",
+          "check": "manual.ew_live_calendar_windows",
+          "platform": "windows",
+          "proves": "Automation 1 is demonstrated on the installed Windows app against a real tenant."
+        },
+        {
+          "id": "rel.bundle_auto2_linux",
+          "kind": "installed_demo",
+          "check": "manual.auto_pdf_summary_linux",
+          "platform": "linux",
+          "proves": "Automation 2 is demonstrated on the installed Linux apps, including a scanned PDF read through OCR."
+        },
+        {
+          "id": "rel.bundle_auto2_windows",
+          "kind": "installed_demo",
+          "check": "manual.auto_pdf_summary_windows",
+          "platform": "windows",
+          "proves": "Automation 2 is demonstrated on the installed Windows apps, including a scanned PDF read through OCR."
+        },
+        {
+          "id": "rel.bundle_auto3_linux",
+          "kind": "installed_demo",
+          "check": "manual.auto_invoice_digest_linux",
+          "platform": "linux",
+          "proves": "Automation 3 is demonstrated on the installed Linux apps, including a scanned PDF read through OCR."
+        },
+        {
+          "id": "rel.bundle_auto3_windows",
+          "kind": "installed_demo",
+          "check": "manual.auto_invoice_digest_windows",
+          "platform": "windows",
+          "proves": "Automation 3 is demonstrated on the installed Windows apps, including a scanned PDF read through OCR."
+        },
+        {
+          "id": "rel.bundle_download_linux",
+          "kind": "installed_demo",
+          "check": "manual.bundle_download_linux",
+          "platform": "linux",
+          "proves": "On Linux: One bundle download installs the three apps, the model host, the OCR provider and one model copy, and Document Summarizer and Invoice Processor each read a scanned PDF."
+        },
+        {
+          "id": "rel.bundle_download_windows",
+          "kind": "installed_demo",
+          "check": "manual.bundle_download_windows",
+          "platform": "windows",
+          "proves": "On Windows: One bundle download installs the three apps, the model host, the OCR provider and one model copy, and Document Summarizer and Invoice Processor each read a scanned PDF."
+        },
+        {
+          "id": "rel.bundle_licence_online_linux",
+          "kind": "installed_demo",
+          "check": "manual.bundle_licence_online_linux",
+          "platform": "linux",
+          "proves": "On Linux: The apps obtain and keep a valid licence online as the licensing model in invoice-processor#94 (private) specifies, verified locally by all three."
+        },
+        {
+          "id": "rel.bundle_licence_online_windows",
+          "kind": "installed_demo",
+          "check": "manual.bundle_licence_online_windows",
+          "platform": "windows",
+          "proves": "On Windows: The apps obtain and keep a valid licence online as the licensing model in invoice-processor#94 (private) specifies, verified locally by all three."
+        },
+        {
+          "id": "rel.bundle_without_licence_linux",
+          "kind": "installed_demo",
+          "check": "manual.bundle_without_licence_linux",
+          "platform": "linux",
+          "proves": "On Linux: Without a valid licence, standalone use, user data and reading a scanned PDF keep working; handoffs and automations stop plainly; a hand-signed offline licence restores them."
+        },
+        {
+          "id": "rel.bundle_without_licence_windows",
+          "kind": "installed_demo",
+          "check": "manual.bundle_without_licence_windows",
+          "platform": "windows",
+          "proves": "On Windows: Without a valid licence, standalone use, user data and reading a scanned PDF keep working; handoffs and automations stop plainly; a hand-signed offline licence restores them."
+        },
+        {
+          "id": "rel.bundle_privacy_linux",
+          "kind": "installed_demo",
+          "check": "manual.bundle_privacy_linux",
+          "platform": "linux",
+          "proves": "On Linux: Every outbound connection during the automation and licence demonstrations goes only where the privacy promise in invoice-processor#94 (private) allows, and none carries document content."
+        },
+        {
+          "id": "rel.bundle_privacy_windows",
+          "kind": "installed_demo",
+          "check": "manual.bundle_privacy_windows",
+          "platform": "windows",
+          "proves": "On Windows: Every outbound connection during the automation and licence demonstrations goes only where the privacy promise in invoice-processor#94 (private) allows, and none carries document content."
+        },
+        {
           "id": "rel.bundle_published_ew",
           "kind": "release_artifact",
           "check": "release.github.ew",
@@ -1111,6 +1549,18 @@
           "kind": "issue_gate",
           "check": "release.issues.contracts",
           "proves": "Connect Contracts has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_automate_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.automate",
+          "proves": "Connect Automate has no open issue blocking the bundle release."
+        },
+        {
+          "id": "rel.bundle_ocr_issue_gate",
+          "kind": "issue_gate",
+          "check": "release.issues.ocr",
+          "proves": "Document OCR has no open issue blocking the bundle release."
         }
       ],
       "depends_on": [
@@ -1146,6 +1596,22 @@
             "schemas/**",
             "fixtures/**",
             "adr/**"
+          ]
+        },
+        {
+          "repo": "connect-automate",
+          "paths": [
+            "src/connect_automate/**",
+            "pyproject.toml",
+            "uv.lock"
+          ]
+        },
+        {
+          "repo": "document-ocr",
+          "paths": [
+            "src/document_ocr/**",
+            "pyproject.toml",
+            "uv.lock"
           ]
         }
       ]

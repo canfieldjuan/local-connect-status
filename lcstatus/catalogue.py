@@ -74,6 +74,49 @@ def depends_on_problems(depends_on: Any, cat: dict[str, Any]) -> list[str]:
     return problems
 
 
+def automation_set_problems(cat: dict[str, Any]) -> list[str]:
+    """The first release's automation set (contract 09 B6).  One place names it:
+    `release.automate_scope.tasks`.  The bundle row must carry every proving check of every
+    automation, and each automation needs an installed demonstration on every required
+    platform, so a proof added to an automation can never silently fail to block the release."""
+    scope = cat.get("release", {}).get("automate_scope") or {}
+    if scope.get("required_for_first_release") is not True:
+        return []
+    tasks = {t.get("id"): t for t in cat.get("tasks", [])}
+    names = scope.get("tasks")
+    if (
+        not isinstance(names, list) or not names
+        or any(not isinstance(n, str) for n in names) or len(set(names)) != len(names)
+    ):
+        return ["automate_scope.tasks must be a non-empty list of distinct task ids"]
+    problems = [
+        f"automate_scope names {name!r}, which is not an automate task"
+        for name in names
+        if name not in tasks or tasks[name].get("layer") != "automate"
+    ]
+    bundles = [t for t in cat.get("tasks", []) if t.get("layer") == "release" and t.get("app") == "bundle"]
+    if len(bundles) != 1:
+        return problems + [f"expected exactly one bundle release row, found {len(bundles)}"]
+    carried = {c.get("check") for c in bundles[0].get("conditions", [])}
+    checks = cat.get("checks", {})
+    for name in names:
+        task = tasks.get(name)
+        if task is None or task.get("layer") != "automate":
+            continue
+        for c in task.get("conditions", []):
+            if c.get("kind") != "source_inspection" and c.get("check") not in carried:
+                problems.append(f"bundle release row does not carry {c.get('check')} from {name}")
+        demo_platforms = {
+            c.get("platform") or checks.get(c.get("check"), {}).get("platform")
+            for c in task.get("conditions", [])
+            if c.get("kind") == "installed_demo"
+        }
+        for platform in cat.get("release", {}).get("required_platforms", []):
+            if platform not in demo_platforms:
+                problems.append(f"automation {name} has no installed demonstration on {platform}")
+    return problems
+
+
 def load(path: Path) -> dict[str, Any]:
     cat = json.loads(Path(path).read_text(encoding="utf-8"))
     problems: list[str] = []
@@ -145,6 +188,7 @@ def load(path: Path) -> dict[str, Any]:
                     problems.append(
                         f"condition {c['id']}: {c.get('kind')!r} cannot use {runner!r} runner"
                     )
+    problems.extend(automation_set_problems(cat))
     if problems:
         raise ValueError("catalogue invalid:\n  " + "\n  ".join(problems))
     return cat
