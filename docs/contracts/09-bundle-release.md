@@ -1,15 +1,16 @@
 # Contract 09 — The first release is the Local Connect bundle, with its automations and its licence
 
-Status: **proposed 2026-09-27**, awaiting the operator's acceptance. This is release step 3 of
+Status: **proposed 2026-09-27, revision 2**, awaiting the operator's acceptance. This is release step 3 of
 invoice-processor#94 (private): the operator's decision of 2026-09-27 and its cross-session order of
-operations.
+operations. Revision 2 adds `document-ocr` after the operator's decision that reading a scanned PDF needs no
+licence and is part of the shared runtime (#94).
 
 Commercial terms are private until launch and are not stated anywhere in this repository. Where a
 condition depends on them, it cites "the licensing model in invoice-processor#94 (private)".
 
 Scope:
 - `catalogue.json`: the release block; new installed-demo conditions on the three automation tasks and the
-  four release rows; one repository; and the new checks those need;
+  four release rows; two repositories; and the new checks those need;
 - `lcstatus/catalogue.py`: one automation-set validation;
 - `docs/RELEASE_CONTRACT.md`, README, tests.
 
@@ -29,6 +30,11 @@ Out of scope: rules, fingerprints, render code, and every product repository.
   - **The privacy promise:** the user's emails, invoices and documents are processed on their computer and
     never uploaded. The apps go online only for the destinations the promise names (#94), never with
     document contents.
+  - **Reading a scanned PDF needs no licence, and is part of the shared runtime** (#94, answering the review of this
+    contract's revision 1).
+    - The OCR provider installs with the bundle, or with any single app that needs it.
+    - A local application's OCR request needs no licence.
+    - Handoffs and automations stay licensed.
 - **The release definition says the opposite in five places.**
   - `docs/RELEASE_CONTRACT.md:3`: "Automate rules and scheduled workflows are planned for later releases
     and do not block the first public release."
@@ -57,6 +63,17 @@ Out of scope: rules, fingerprints, render code, and every product repository.
   - None of them asks for the bundle download, the shared runtime, the online licence, behaviour without a
     licence, the offline licence, or the privacy promise.
   - The app release rows likewise do not ask that an app installed alone sets up the shared runtime.
+- **Scanned PDFs are read only by `document-ocr`, which the release definition leaves out.**
+  - Document Summarizer consumes it over Connect (`src-tauri/src/connect/ocr_consumer.rs:36-38`:
+    `document-ocr`, `document.ocr` 1.0). Invoice Processor does too, through its `ocr-providers` and
+    `ocr-recoveries` (`desktop/src-tauri/src/lib.rs:74,86`).
+  - Its endpoint refuses a caller without the Connect entitlement (`src/document_ocr/server.py:76-82`,
+    `NOT_ENTITLED`). So without a licence, neither app can read a scan today, even standalone.
+  - Its contract keeps Windows out of scope (`docs/contracts/DOCUMENT-OCR-V1.md:19`).
+  - It is not a catalogue repository, and it has no "First Public Release" milestone: `gh api
+    repos/canfieldjuan/document-ocr/milestones?state=all` listed none on 2026-09-27.
+  - As revision 1 was written, a demonstration of automation 2 or 3 could pass using only PDFs that
+    already carry text, without ever reading a scan.
 - **The automation code's repository has no issue gate.**
   - Automations 2 and 3 are built in Email Watcher and `connect-automate` (#94, codex step 4).
   - `connect-automate` is not a catalogue repository: contract 08 D3 deferred it because nothing then
@@ -84,20 +101,23 @@ B2. **Automation tasks: an installed demonstration on each platform.**
 | task | new condition | check (new) | repo · participants | platform |
 |---|---|---|---|---|
 | 1 | `ew.live_calendar_demo_windows` | `manual.ew_live_calendar_windows` | eom-email-watcher | windows |
-| 2 | `auto.pdf_summary_installed_linux` | `manual.auto_pdf_summary_linux` | document-summarizer · EW, DS, contracts | linux |
-| 2 | `auto.pdf_summary_installed_windows` | `manual.auto_pdf_summary_windows` | document-summarizer · EW, DS, contracts | windows |
-| 3 | `auto.invoice_digest_installed_linux` | `manual.auto_invoice_digest_linux` | invoice-processor · EW, IP, contracts | linux |
-| 3 | `auto.invoice_digest_installed_windows` | `manual.auto_invoice_digest_windows` | invoice-processor · EW, IP, contracts | windows |
+| 2 | `auto.pdf_summary_installed_linux` | `manual.auto_pdf_summary_linux` | document-summarizer · EW, DS, OCR, contracts | linux |
+| 2 | `auto.pdf_summary_installed_windows` | `manual.auto_pdf_summary_windows` | document-summarizer · EW, DS, OCR, contracts | windows |
+| 3 | `auto.invoice_digest_installed_linux` | `manual.auto_invoice_digest_linux` | invoice-processor · EW, IP, OCR, contracts | linux |
+| 3 | `auto.invoice_digest_installed_windows` | `manual.auto_invoice_digest_windows` | invoice-processor · EW, IP, OCR, contracts | windows |
 
 What each demonstration asserts, stated in each condition's `proves` and each check's `note`:
 - **Task 1:** the Linux demonstration's steps, on the installed Windows app.
 - **Task 2:** with the installed apps and a licence granting `connect.automations`:
   - the person defines a rule once ("this sender, any PDF");
   - a matching mail's PDF is summarized with no click, and the notification carries the summary;
+  - at least one matching mail carries a scanned PDF with no text layer, and it is summarized through
+    OCR;
   - a non-matching mail is not handed over.
 - **Task 3:** under the same conditions:
   - the person defines a vendor-and-bill rule;
   - each matching bill is filed into the ledger with no click;
+  - at least one matching bill is a scanned PDF with no text layer, and it is filed through OCR;
   - a busy provider leaves the bill queued, and it then completes;
   - the scheduled digest lists what arrived and what is due;
   - nothing is paid, and review before payment stays with the person.
@@ -120,39 +140,50 @@ with connect and app rows:
 | `rel.bundle_auto3_linux` / `_windows` | `manual.auto_invoice_digest_linux` / `_windows` | installed_demo | each |
 
 *The product*: new `manual_observation` checks anchored on `connect-contracts`.
-- Each declares the participants `eom-email-watcher`, `document-summarizer`, `invoice-processor` and
-  `connect-contracts`.
+- Each declares the participants `eom-email-watcher`, `document-summarizer`, `invoice-processor`,
+  `document-ocr` and `connect-contracts`.
 - There is one check per platform (`…_linux`, `…_windows`), each backing a condition of the same stem.
 
 What a person observes on a clean machine, stated in `proves` and `note`:
 
 | condition stem | observed |
 |---|---|
-| `rel.bundle_download` | One bundle download installs the three apps, the shared runtime and model host, and exactly one model copy, with no configuration. Each app's first launch uses that one server: one model file on disk, one server process. |
+| `rel.bundle_download` | One bundle download installs the three apps and the shared runtime (the model host and the OCR provider), with exactly one model copy and no configuration. Each app's first launch uses that one server: one model file on disk, one server process. Document Summarizer and Invoice Processor each read a scanned PDF with no text layer. |
 | `rel.bundle_licence_online` | The apps obtain and keep a valid licence online as the licensing model in invoice-processor#94 (private) specifies, from first launch onward, without user configuration. All three apps verify it locally under entitlement v1 (`connect.capability_exchange`, `connect.automations`), and the handoffs and automations are active in all three. |
-| `rel.bundle_without_licence` | With no valid licence (expired or absent): each app's standalone flow and all user data keep working. One-click handoffs and the automations stop, each showing a plain message. Importing a hand-signed offline licence restores them without going online. |
-| `rel.bundle_privacy` | While the automation demonstrations and the online licence behaviour run, every outbound connection of the installed apps, runtime and host is recorded. Every destination is one the privacy promise in invoice-processor#94 (private) allows, and no request carries document content. The artifact is the capture and its destination summary. |
+| `rel.bundle_without_licence` | With no valid licence (expired or absent): each app's standalone flow and all user data keep working, and Document Summarizer and Invoice Processor still read a scanned PDF with no text layer. One-click handoffs and the automations stop, each showing a plain message. Importing a hand-signed offline licence restores them without going online. |
+| `rel.bundle_privacy` | While the automation demonstrations, which include a scan, and the online licence behaviour run, every outbound connection of the installed apps, model host and OCR provider is recorded. Every destination is one the privacy promise in invoice-processor#94 (private) allows, and no request carries document content. The artifact is the capture and its destination summary. |
 
-*The automation code's issue gate*: `rel.bundle_automate_issue_gate`, backed by the new check
-`release.issues.automate` (`github_issues`, repo `connect-automate`, milestone "First Public Release").
+*Two new issue gates*, each backed by a new `github_issues` check with milestone "First Public Release":
+- `rel.bundle_automate_issue_gate`: check `release.issues.automate`, repo `connect-automate`;
+- `rel.bundle_ocr_issue_gate`: check `release.issues.ocr`, repo `document-ocr`.
 
 Changes to the row's other fields:
 - `human_involvement` becomes "Run the installed bundle, automation, licence and privacy demonstrations on
   both platforms."
-- `promise` gains the automation, licence and privacy clauses, with no commercial terms.
-- `depends_on` gains `connect-automate: src/connect_automate/**, pyproject.toml, uv.lock` (B5).
+- `promise` gains the automation, scanned-PDF, licence and privacy clauses, with no commercial terms.
+- `depends_on` gains two entries (B5):
+  - `connect-automate: src/connect_automate/**, pyproject.toml, uv.lock`;
+  - `document-ocr: src/document_ocr/**, pyproject.toml, uv.lock`.
 
 B4. **App release rows: an app installed alone sets up the shared runtime.**
 - Each app release row gains the condition `rel.<ew|ds|ip>_shared_runtime_linux` / `_windows`.
 - Each is backed by a new check `manual.<ew|ds|ip>_shared_runtime_linux` / `_windows`, whose repo is the
-  app itself, with no participants.
+  app itself.
+  - Email Watcher's check declares no participants: it reads no scans.
+  - Document Summarizer's and Invoice Processor's checks declare the app and `document-ocr` as
+    participants.
 - The claim:
   - On a machine without the shared runtime, installing only this app sets up the runtime and model at
     first launch, with no configuration, and its primary flow completes on it.
-  - On a machine that already has the runtime, installing this app reuses it, with no second model copy.
+  - For Document Summarizer and Invoice Processor, that setup includes the OCR provider, and the demo
+    includes reading a scanned PDF with no text layer, without a licence.
+  - On a machine that already has the runtime, installing this app reuses it, including the OCR provider
+    where present, with no second model copy.
 - Existing conditions and their evidence are untouched.
 
-B5. **`connect-automate` becomes a catalogue repository.**
+B5. **Two repositories join the catalogue: `connect-automate` and `document-ocr`.**
+
+`connect-automate`:
 - It is added as `repos["connect-automate"] = {"github": "canfieldjuan/connect-automate", "ci_workflows": []}`,
   shaped like `connect-contracts`: no local check runs in it.
 - `automate.unattended_pdf_summary` and `automate.invoice_intake_and_digest` add
@@ -162,6 +193,14 @@ B5. **`connect-automate` becomes a catalogue repository.**
 - Evidence binding does not change. Released Email Watcher runs the connect-automate commit pinned in its
   `pyproject.toml`/`uv.lock`, and those files stay mapped (contract 08 D3). The new repository adds only
   its head, its change stream and its issue gate.
+
+`document-ocr`:
+- It is added as `repos["document-ocr"] = {"github": "canfieldjuan/document-ocr", "ci_workflows": []}`. No
+  local check runs in it.
+- It is a participant wherever a demonstration reads a scan (B2, B3, B4), so a change to it makes those
+  demonstrations "changed since demonstrated".
+- It is private, as `invoice-processor` already is. Its head, commit subjects and First Public Release
+  issue titles appear on the page the same way (D14).
 
 B6. **The automation set is validated.** `catalogue.load` refuses the catalogue, naming the fault, when
 `release.automate_scope.required_for_first_release` is `true` and any of the following holds:
@@ -183,11 +222,12 @@ B7. **`docs/RELEASE_CONTRACT.md`** is rewritten to state B1–B5 as the release 
   - online, per the licensing model in #94 (private);
   - without a licence, what stops and what always keeps working;
   - the offline licence;
+- reading a scanned PDF is part of each app's standalone use, with no licence;
 - the privacy promise's first sentence, and its destination list by reference to #94;
 - the bundle is released only when its download is published (the condition arrives with the installer
   repository, D4).
 
-It states no commercial terms. Its issue-gate section names five repositories, and "Automate work" leaves
+It states no commercial terms. Its issue-gate section names six repositories, and "Automate work" leaves
 the list of deferrable work.
 
 B8. **README.**
@@ -209,7 +249,9 @@ catalogues.
 I2. **No label rises at merge.** The expected page changes are exactly:
 - the new conditions read `no_evidence`;
 - the automation-scope banner text changes;
-- the bundle row's issue gate now includes `connect-automate`'s milestone.
+- the bundle row's issue gate now includes `connect-automate`'s and `document-ocr`'s milestones. Until
+  `document-ocr` has one, that gate reads **unavailable** (contract 05), so the bundle's readiness fails
+  closed.
 
 This is verified live, read-only, before merge. The branch's derivation over the live store and state is
 compared task by task with the served page. Every other difference is a defect.
@@ -218,8 +260,9 @@ I3. **One place names the automation set:** `release.automate_scope.tasks`. What
 derived from those tasks' conditions (B6). A proof added to an automation task but not carried by the
 bundle fails the catalogue load; it never silently fails to block the release.
 
-I4. **A bundle-level demonstration is bound to all four product revisions.** A change in any participant
-makes it "changed since demonstrated" (the existing participant rule, `rules._matches_current`).
+I4. **A bundle-level demonstration is bound to all five product repositories' revisions.** A change in any
+participant makes it "changed since demonstrated" (the existing participant rule,
+`rules._matches_current`).
 
 I5. **No commercial terms in this repository.** No catalogue text, contract, README or test states commercial terms:
 prices, licence periods or payment terms. A test scans the tracked text files for these (settling
@@ -237,15 +280,19 @@ test 5).
 | `connect-automate`'s milestone is renamed or deleted | its gate is **unavailable**, and the bundle's readiness fails closed (contract 05) |
 | the `connect-automate` fetch fails | a source failure, as for every repository; its gate and head are not current |
 | an automation demonstration is recorded with a hand-signed licence before the licence service exists | admitted for the automation condition, which asks for a licence granting `connect.automations`, not how it was issued; `rel.bundle_licence_online_*` stays `no_evidence` |
-| a bundle demonstration is recorded, then any of the four repositories moves | "changed since demonstrated" (I4) |
+| a bundle demonstration is recorded, then any of the five repositories moves | "changed since demonstrated" (I4) |
+| an automation 2 or 3 demonstration uses only PDFs that already carry text | it does not meet the condition's claim, which names a scanned PDF read through OCR, so it must not be recorded as a pass |
+| `document-ocr` has no Windows runtime yet | every Windows demonstration that reads a scan stays `no_evidence` until codex's Windows port (#94, codex step 6). The claim is not weakened for Windows (D13) |
+| `document-ocr` still refuses an unlicensed local request | `rel.bundle_without_licence_*` and the Document Summarizer and Invoice Processor shared-runtime demos cannot pass until codex's OCR exemption lands (#94, codex step 5) |
+| `document-ocr` has no "First Public Release" milestone | its gate is **unavailable**, and the bundle's readiness fails closed (contract 05) |
 | the three apps are published before the installer repository exists | the bundle cannot be ready, because the `rel.bundle_download_*` demos are required. "Released" needs ready, so it cannot be reached until those pass; D4 adds the download's publication condition with that repository |
 | an old record for a shared check (e.g. `ew.pytest.automation`) predates the new bundle condition | it does not name the new condition, so it does not prove it. The first tick after merge runs `ew.pytest.scheduling` and `ew.pytest.automation` once, because a condition added to a check changes its run key (contract 07 B1) |
 
 ## Concurrency model
 
 Unchanged. The first tick after merge does the following, under `data/.lock`:
-- clones the `connect-automate` mirror (`Mirrors.ensure`);
-- reads that repository's head and issue gate;
+- clones the `connect-automate` and `document-ocr` mirrors (`Mirrors.ensure`);
+- reads their heads and issue gates;
 - runs the two shared pytest checks once (contract 07 B1).
 
 `record_observation.py` writes the new manual checks like any other, holding the lock (contract 08 B5).
@@ -259,7 +306,11 @@ Unit (`uv run pytest`):
    - the automation set is exactly the three task ids;
    - the bundle row carries every automation check;
    - the `download`, `licence_online`, `without_licence` and `privacy` demos exist on both platforms;
-   - the issue checks are the five gates;
+   - the product demos' participants are the five repositories;
+   - `document-ocr` is a participant of the automation 2 and 3 demos, and of Document Summarizer's and
+     Invoice Processor's shared-runtime demos;
+   - those conditions' claims, and `rel.bundle_without_licence`'s, name a scanned PDF;
+   - the issue checks are the six gates;
    - each app row has shared-runtime demos on both platforms;
    - the entitlement checks are unchanged.
 2. `test_catalogue_rejects_an_automation_set_the_bundle_does_not_carry` breaks the committed catalogue on
@@ -283,12 +334,13 @@ Live, read-only, before merge (reported on the PR):
 - I1: fingerprint equality for every id on `origin/main`.
 - I2: the branch's derivation over the live store and state, compared task by task with the served
   `site/status.json`; the only differences are the expected ones.
-- Every new `depends_on` pattern matches a file at `connect-automate`'s head (contract 08's mapping check).
+- Every new `depends_on` pattern matches a file at `connect-automate`'s and `document-ocr`'s heads
+  (contract 08's mapping check).
 
 Settle, after merge: the first tick shows:
 - the new conditions as `no_evidence`;
-- a `connect-automate` head row;
-- the bundle's issue gate reading the five milestones;
+- `connect-automate` and `document-ocr` head rows;
+- the bundle's issue gate reading the six milestones, or **unavailable** while `document-ocr` has none;
 - no new source failure.
 
 ## Decisions
@@ -300,7 +352,7 @@ D1. **The automation set is named once, and the bundle carries it by sharing che
   task from its own conditions alone.
 - The validator gives the same guarantee: drift is a load error, and nothing in the rules changes.
 
-D2. **Bundle-level checks are anchored on `connect-contracts`, with all four product repositories as
+D2. **Bundle-level checks are anchored on `connect-contracts`, with all five product repositories as
 participants.**
 - These demonstrations are about the bundle, not one app. `connect-contracts` holds what the bundle
   shares: entitlement v1, and the canonical runtime profile of MODEL-SETUP revision 8 MS-SHARE-5.
@@ -344,17 +396,38 @@ D8. **Automated tests for automations 2 and 3 are required once their tasks name
 - Until then, the bundle's bar for those two automations is their installed demonstrations on both
   platforms.
 
-D9. **Without a licence, both licensed features stop (the operator's answer, #94).** One-click handoffs
-(`connect.capability_exchange`) and the automations (`connect.automations`) stop. Standalone use and user
-data always keep working. No entitlement change is needed.
+D9. **Without a licence, both licensed features stop (the operator's answer, #94).**
+- One-click handoffs (`connect.capability_exchange`) and the automations (`connect.automations`) stop.
+- Standalone use and user data always keep working, and standalone use includes reading a scanned PDF
+  (D11).
+- The entitlement format does not change. Exempting local OCR requests from the Connect entitlement is
+  codex's ADR (#94, codex step 5).
 
 D10. **Privacy destinations are the operator's wording (#94).** The condition checks the capture against the
 destination list in the operator's wording. That list covers model downloads and the software that runs
 them (our llama.cpp build and NVIDIA's CUDA libraries), updates, and the licence service.
 
+D11. **Reading a scan is part of the shared runtime and needs no licence (the operator's decision, #94).**
+- The bundle download installs the OCR provider, and so does a single app that needs it (B3, B4).
+- Revision 1 had left OCR out entirely. The review of revision 1 found the gap: without OCR, automations 2
+  and 3 cannot read a scanned bill, and standalone use cannot read one without a licence.
+
+D12. **`document-ocr` is a participant wherever a demonstration reads a scan.** The OCR provider's
+revision decides whether a scan is read, so a change to it must reopen those demonstrations. Email
+Watcher's shared-runtime demo reads no scan, so it does not name `document-ocr`.
+
+D13. **Windows demonstrations wait for OCR on Windows; they are not weakened.**
+- The first release is Linux and Windows (#94), and `document-ocr` is Linux-only today.
+- A Windows demonstration that skipped the scan would prove less than its Linux twin. Instead, it waits
+  for codex's Windows port.
+
+D14. **A private repository on the page.** `document-ocr` is private, as `invoice-processor` is. Its head,
+commit subjects and release-milestone issue titles show on the page the same way. Commercial terms must
+therefore stay out of both repositories' commit subjects and First Public Release issue titles too.
+
 ## Estimated diff
 
-- `catalogue.json`: ~390 lines (20 new checks, 28 new conditions, one repository, release block).
+- `catalogue.json`: ~420 lines (21 new checks, 29 new conditions, two repositories, release block).
 - `catalogue.py`: ~40 lines.
 - Tests: ~210 lines.
 - `RELEASE_CONTRACT.md`: ~45 lines.
