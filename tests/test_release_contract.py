@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -80,34 +81,265 @@ def _gate_record(catalogue: dict, task: dict, verdict: str, issues: list[dict] |
     )
 
 
-def test_accepted_contract_splits_app_and_bundle_release_and_defers_automate():
-    catalogue = load(ROOT / "catalogue.json")
+AUTOMATIONS = [
+    "ew.meeting_suggestions_and_confirmed_write",
+    "automate.unattended_pdf_summary",
+    "automate.invoice_intake_and_digest",
+]
+BUNDLE_REPOS = {
+    "eom-email-watcher", "document-summarizer", "invoice-processor", "document-ocr", "connect-contracts",
+}
+PRODUCT_STEMS = ("download", "licence_online", "without_licence", "privacy")
+# Contract 09 B3: what the bundle row gains, beyond its 17 original conditions.
+BUNDLE_ADDED = {
+    "rel.bundle_auto1_extraction", "rel.bundle_auto1_gated", "rel.bundle_auto1_linux", "rel.bundle_auto1_windows",
+    *(f"rel.bundle_auto{n}_{os}" for n in (2, 3) for os in ("linux", "windows")),
+    *(f"rel.bundle_{stem}_{os}" for stem in PRODUCT_STEMS for os in ("linux", "windows")),
+    "rel.bundle_automate_issue_gate", "rel.bundle_ocr_issue_gate",
+}
+HEADS = {
+    "eom-email-watcher": "a" * 40, "document-summarizer": "b" * 40, "invoice-processor": "c" * 40,
+    "connect-contracts": "d" * 40, "connect-automate": "e" * 40, "document-ocr": "f" * 40,
+}
 
-    assert catalogue["release"]["automate_scope"]["required_for_first_release"] is False
+
+def _passing_record(catalogue: dict, condition: dict) -> Record:
+    """A record exactly as the writers build one for this condition at HEADS."""
+    check = catalogue["checks"][condition["check"]]
+    repo = check["repo"]
+    kind = condition["kind"]
+    return Record(
+        kind=kind, repo=repo, revision=HEADS[repo], verdict="pass",
+        platform=condition.get("platform", check.get("platform", "n/a")),
+        condition_ids=[condition["id"]],
+        participants={name: HEADS[name] for name in check.get("participants", [])},
+        source={
+            "check": condition["check"],
+            "check_fingerprint": check_fingerprint(check),
+            "condition_fingerprints": {condition["id"]: condition_fingerprint(condition)},
+        },
+        detail={"milestone": "First Public Release", "issues": []} if kind == "issue_gate" else {},
+        executed=1 if kind in ("automated_test", "ci_run") else None,
+        failed=0 if kind in ("automated_test", "ci_run") else None,
+    )
+
+
+def _broken_catalogue(tmp_path: Path, mutate) -> Path:
+    catalogue = json.loads((ROOT / "catalogue.json").read_text())
+    mutate(catalogue)
+    path = tmp_path / "catalogue.json"
+    path.write_text(json.dumps(catalogue))
+    return path
+
+
+def test_first_release_is_the_bundle_with_its_automations():
+    catalogue = load(ROOT / "catalogue.json")
+    scope = catalogue["release"]["automate_scope"]
+    assert scope["required_for_first_release"] is True
+    assert scope["tasks"] == AUTOMATIONS
     assert catalogue["release"]["issue_gate"]["milestone"] == "First Public Release"
-    release_tasks = {task["id"]: task for task in catalogue["tasks"] if task["layer"] == "release"}
-    assert set(release_tasks) == {
-        "release.email_watcher",
-        "release.document_summarizer",
-        "release.invoice_processor",
+    tasks = {task["id"]: task for task in catalogue["tasks"]}
+    checks = catalogue["checks"]
+    release_tasks = {tid for tid, task in tasks.items() if task["layer"] == "release"}
+    assert release_tasks == {
+        "release.email_watcher", "release.document_summarizer", "release.invoice_processor",
         "release.local_connect_bundle",
     }
-    email_conditions = {condition["id"] for condition in release_tasks["release.email_watcher"]["conditions"]}
-    assert "rel.ew_windows_installer_demo" in email_conditions
-    issue_checks = {
-        condition["check"]
-        for condition in release_tasks["release.local_connect_bundle"]["conditions"]
-        if condition["kind"] == "issue_gate"
-    }
+    bundle = {condition["id"]: condition for condition in tasks["release.local_connect_bundle"]["conditions"]}
+    carried = {condition["check"] for condition in bundle.values()}
+    for name in AUTOMATIONS:
+        for condition in tasks[name]["conditions"]:
+            if condition["kind"] != "source_inspection":
+                assert condition["check"] in carried, (name, condition["check"])
+    for stem in PRODUCT_STEMS:
+        for os in ("linux", "windows"):
+            condition = bundle[f"rel.bundle_{stem}_{os}"]
+            assert condition["kind"] == "installed_demo" and condition["platform"] == os
+            assert set(checks[condition["check"]]["participants"]) == BUNDLE_REPOS
+    # A scan is read wherever contract 09 says so, and OCR's revision is bound to it.
+    scanning = [
+        *(f"auto.pdf_summary_installed_{os}" for os in ("linux", "windows")),
+        *(f"auto.invoice_digest_installed_{os}" for os in ("linux", "windows")),
+        *(f"rel.{app}_shared_runtime_{os}" for app in ("ds", "ip") for os in ("linux", "windows")),
+        "rel.bundle_without_licence_linux", "rel.bundle_without_licence_windows",
+    ]
+    by_id = {c["id"]: c for task in tasks.values() for c in task["conditions"]}
+    for condition_id in scanning:
+        condition = by_id[condition_id]
+        assert "scanned PDF" in condition["proves"], condition_id
+        assert "document-ocr" in checks[condition["check"]]["participants"], condition_id
+    assert "participants" not in checks["manual.ew_shared_runtime_linux"]
+    for app, task_id in (("ew", "release.email_watcher"), ("ds", "release.document_summarizer"),
+                         ("ip", "release.invoice_processor")):
+        ids = {c["id"] for c in tasks[task_id]["conditions"]}
+        assert {f"rel.{app}_shared_runtime_linux", f"rel.{app}_shared_runtime_windows"} <= ids
+    issue_checks = {c["check"] for c in bundle.values() if c["kind"] == "issue_gate"}
     assert issue_checks == {
         "release.issues.ew", "release.issues.ds", "release.issues.ip", "release.issues.contracts",
+        "release.issues.automate", "release.issues.ocr",
     }
-    entitlement_checks = {
-        condition["check"]
-        for condition in release_tasks["release.local_connect_bundle"]["conditions"]
-        if "entitlement" in condition["id"]
-    }
+    entitlement_checks = {c["check"] for cid, c in bundle.items() if "entitlement" in cid}
     assert entitlement_checks == {"ew.pytest.entitlement", "ds.cargo.lib", "ip.pytest.entitlement"}
+    assert {"connect-automate", "document-ocr"} <= set(catalogue["repos"])
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda c: c["release"]["automate_scope"].pop("tasks"), "non-empty list of distinct task ids"),
+        (lambda c: c["release"]["automate_scope"].__setitem__("tasks", []), "non-empty list of distinct task ids"),
+        (lambda c: c["release"]["automate_scope"].__setitem__("tasks", AUTOMATIONS + AUTOMATIONS[:1]),
+         "non-empty list of distinct task ids"),
+        (lambda c: c["release"]["automate_scope"].__setitem__("tasks", ["no.such.task"]), "not an automate task"),
+        (lambda c: c["release"]["automate_scope"].__setitem__("tasks", ["release.email_watcher"]),
+         "not an automate task"),
+        (lambda c: c.__setitem__("tasks", [t for t in c["tasks"] if t["id"] != "release.local_connect_bundle"]),
+         "exactly one bundle release row, found 0"),
+        (lambda c: next(t for t in c["tasks"] if t["id"] == "release.local_connect_bundle")["conditions"].__setitem__(
+            slice(None),
+            [x for x in next(t for t in c["tasks"] if t["id"] == "release.local_connect_bundle")["conditions"]
+             if x["check"] != "manual.auto_pdf_summary_windows"]),
+         "does not carry manual.auto_pdf_summary_windows from automate.unattended_pdf_summary"),
+        (lambda c: next(t for t in c["tasks"] if t["id"] == "automate.invoice_intake_and_digest")["conditions"].__setitem__(
+            slice(None),
+            [x for x in next(t for t in c["tasks"] if t["id"] == "automate.invoice_intake_and_digest")["conditions"]
+             if x["id"] != "auto.invoice_digest_installed_windows"]),
+         "automate.invoice_intake_and_digest has no installed demonstration on windows"),
+    ],
+)
+def test_catalogue_rejects_an_automation_set_the_bundle_does_not_carry(tmp_path: Path, mutate, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        load(_broken_catalogue(tmp_path, mutate))
+
+
+def test_an_automation_set_is_checked_only_when_required(tmp_path: Path):
+    assert load(ROOT / "catalogue.json")  # the committed catalogue passes
+
+    def not_required(catalogue):
+        catalogue["release"]["automate_scope"]["required_for_first_release"] = False
+        catalogue["release"]["automate_scope"].pop("tasks")
+        bundle = next(t for t in catalogue["tasks"] if t["id"] == "release.local_connect_bundle")
+        bundle["conditions"] = [c for c in bundle["conditions"] if not c["id"].startswith("rel.bundle_auto")]
+
+    assert load(_broken_catalogue(tmp_path, not_required))
+
+    def second_bundle(catalogue):
+        bundle = next(t for t in catalogue["tasks"] if t["id"] == "release.local_connect_bundle")
+        twin = json.loads(json.dumps(bundle))
+        twin["id"] = "release.twin"
+        for condition in twin["conditions"]:
+            condition["id"] = "twin." + condition["id"]
+        catalogue["tasks"].append(twin)
+
+    with pytest.raises(ValueError, match="exactly one bundle release row, found 2"):
+        load(_broken_catalogue(tmp_path, second_bundle))
+
+
+def test_an_automated_condition_added_to_an_automation_must_be_carried(tmp_path: Path):
+    def add(check_id):
+        def mutate(catalogue):
+            task = next(t for t in catalogue["tasks"] if t["id"] == "automate.unattended_pdf_summary")
+            task["conditions"].append({
+                "id": "auto.rule_unit", "kind": "automated_test", "check": check_id, "proves": "a unit test",
+            })
+        return mutate
+
+    # a check the bundle row does not carry is refused ...
+    with pytest.raises(ValueError, match="does not carry ew.pytest.notify from automate.unattended_pdf_summary"):
+        load(_broken_catalogue(tmp_path, add("ew.pytest.notify")))
+    # ... and one it already carries (automation 1's) is accepted
+    assert load(_broken_catalogue(tmp_path, add("ew.pytest.automation")))
+
+
+def test_old_bundle_evidence_does_not_make_the_new_bundle_ready():
+    catalogue = load(ROOT / "catalogue.json")
+    bundle = next(t for t in catalogue["tasks"] if t["id"] == "release.local_connect_bundle")
+    proving = [c for c in bundle["conditions"] if c["kind"] != "release_artifact"]
+    original = [c for c in proving if c["id"] not in BUNDLE_ADDED]
+    assert len(original) + 3 == 17  # the 17 original conditions include 3 release artifacts
+    records = [_passing_record(catalogue, c) for c in original]
+    status = task_status(bundle, records, HEADS, catalogue, catalogue["release"])
+    assert status.maturity not in ("ready for release", "released")
+    unmet = {c.condition["id"] for c in status.conditions
+             if c.state != "satisfied" and c.condition["kind"] != "release_artifact"}
+    assert unmet == BUNDLE_ADDED
+
+    records += [_passing_record(catalogue, c) for c in proving if c["id"] in BUNDLE_ADDED]
+    ready = task_status(bundle, records, HEADS, catalogue, catalogue["release"])
+    assert ready.maturity == "ready for release"
+
+
+def test_an_automation_demo_record_satisfies_both_rows():
+    catalogue = load(ROOT / "catalogue.json")
+    check_id = "manual.auto_pdf_summary_linux"
+    check = catalogue["checks"][check_id]
+    # record_observation.py names every condition that uses the check (scripts/record_observation.py)
+    conditions = [c for t in catalogue["tasks"] for c in t["conditions"] if c["check"] == check_id]
+    assert {c["id"] for c in conditions} == {"auto.pdf_summary_installed_linux", "rel.bundle_auto2_linux"}
+    record = Record(
+        kind="installed_demo", repo=check["repo"], revision=HEADS[check["repo"]], verdict="pass",
+        platform="linux", condition_ids=[c["id"] for c in conditions],
+        participants={name: HEADS[name] for name in check["participants"]},
+        source={
+            "type": "manual_observation", "check": check_id, "check_fingerprint": check_fingerprint(check),
+            "condition_fingerprints": {c["id"]: condition_fingerprint(c) for c in conditions},
+        },
+    )
+    tasks = {t["id"]: t for t in catalogue["tasks"]}
+    for task_id, condition_id in (("automate.unattended_pdf_summary", "auto.pdf_summary_installed_linux"),
+                                  ("release.local_connect_bundle", "rel.bundle_auto2_linux")):
+        status = task_status(tasks[task_id], [record], HEADS, catalogue, catalogue["release"])
+        state = next(c.state for c in status.conditions if c.condition["id"] == condition_id)
+        assert state == "satisfied", (task_id, state)
+
+
+# Contract 09 I5: commercial terms are private until launch (invoice-processor#94).
+CURRENCY = re.compile(
+    r"(?<![\w$])[$\u20ac\u00a3]\s?\d[\d,]*(?:\.\d+)?(?![\w\"'})])"
+    r"|\b\d+(?:\.\d+)?\s?(?:USD|EUR|GBP|dollars?|euros?)\b"
+    r"|\bper (?:month|year|seat|user)\b|/(?:mo|month|yr|year)\b",
+    re.I,
+)
+PERIOD = re.compile(r"\b\d+[- ]?(?:days?|months?)\b", re.I)
+SCANNED = ("catalogue.json", "README.md", "AGENTS.md", "docs", "lcstatus", "scripts", "systemd", "tests")
+
+
+def commercial_terms(text: str) -> list[str]:
+    return [m.group(0) for rx in (CURRENCY, PERIOD) for m in rx.finditer(text)]
+
+
+def test_no_commercial_terms_in_the_repository():
+    import subprocess
+
+    files = subprocess.run(["git", "ls-files", *SCANNED], cwd=ROOT, capture_output=True, text=True,
+                           check=True).stdout.split()
+    assert "catalogue.json" in files and "docs/RELEASE_CONTRACT.md" in files
+    found = {}
+    for name in files:
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if hits := commercial_terms(text):
+            found[name] = hits
+    assert found == {}
+
+
+@pytest.mark.parametrize(
+    ("line", "caught"),
+    [
+        ("The plan costs " + "$" + "12 a seat.", True),
+        ("Pay 9.99 " + "USD" + " now.", True),
+        ("Billed per " + "month.", True),
+        ("A 30" + "-day window.", True),
+        ("Renews every 12" + " months.", True),
+        ('HERE="$(cd "$(dirname "$' + '0")" && pwd)"', False),
+        ("The server stops 10 to 12 seconds after the last lease.", False),
+        ("Automation 2 is demonstrated on the installed Linux apps.", False),
+    ],
+)
+def test_the_commercial_terms_scan_catches_each_kind(line: str, caught: bool):
+    assert bool(commercial_terms(line)) is caught
 
 
 def test_catalogue_rejects_missing_or_mismatched_issue_gate_contract(tmp_path: Path):

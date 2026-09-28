@@ -193,8 +193,8 @@ Routine Document Summarizer evidence remains its GitHub Actions run for the exac
   not observe.
 - Treat an issue count as completion evidence. Issues explain why a release is blocked; checks,
   installed demonstrations, and published artifacts prove release state.
-- Require Automate for the first public release. Automate remains tracked, but its unattended
-  rules and scheduled workflows are explicitly deferred to later releases.
+- State commercial terms. They are private until launch (contract 09 I5), and a test scans the
+  catalogue, docs, code and tests for prices and licence periods.
 
 ## What the tests prove
 
@@ -238,6 +238,9 @@ test that would fail if the dashboard could be fooled that way:
 | accept a malformed dependency list | `test_catalogue_rejects_malformed_depends_on` |
 | stop a tick on a file name that is not UTF-8, or list paths in a different form from the change record | `test_listing_and_diff_print_paths_in_one_form` |
 | let the observation script write while a collection runs, judge its collapse against a store read before the lock, or let either program drop its lock early | `test_observation_waits_for_the_collection_lock_and_reads_the_store_after_it`, `test_the_collector_and_the_helper_share_one_lock`, `test_observation_holds_the_lock_while_it_reads_and_writes_the_store`, `test_the_collector_holds_the_lock_while_it_reads_its_sources` |
+| call the bundle ready without the automations, the bundle download, the licence behaviour, OCR or the privacy capture, or let an automation's proof drop off the bundle row | `test_first_release_is_the_bundle_with_its_automations`, `test_old_bundle_evidence_does_not_make_the_new_bundle_ready`, `test_catalogue_rejects_an_automation_set_the_bundle_does_not_carry`, `test_an_automated_condition_added_to_an_automation_must_be_carried`, `test_an_automation_set_is_checked_only_when_required` |
+| need two observations for one automation demonstration | `test_an_automation_demo_record_satisfies_both_rows` |
+| publish a commercial term | `test_no_commercial_terms_in_the_repository`, `test_the_commercial_terms_scan_catches_each_kind` |
 
 Two runs cannot interleave: the collector takes an exclusive lock on `data/.lock`, and a
 baseline write waits for a running collection to finish rather than racing it. So does
