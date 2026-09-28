@@ -79,8 +79,17 @@ def automation_set_problems(cat: dict[str, Any]) -> list[str]:
     `release.automate_scope.tasks`.  The bundle row must carry every proving check of every
     automation, and each automation needs an installed demonstration on every required
     platform, so a proof added to an automation can never silently fail to block the release."""
-    scope = cat.get("release", {}).get("automate_scope") or {}
-    if scope.get("required_for_first_release") is not True:
+    scope = cat.get("release", {}).get("automate_scope")
+    if scope is None:
+        return []
+    if not isinstance(scope, dict):
+        return ["automate_scope must be an object"]
+    required = scope.get("required_for_first_release")
+    # A type slip must never switch the requirement off silently: only a real JSON boolean, or
+    # an absent / null flag (not decided), is accepted.
+    if required is not None and not isinstance(required, bool):
+        return [f"automate_scope.required_for_first_release must be true or false, got {required!r}"]
+    if required is not True:
         return []
     tasks = {t.get("id"): t for t in cat.get("tasks", [])}
     names = scope.get("tasks")
