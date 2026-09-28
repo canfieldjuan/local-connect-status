@@ -70,8 +70,9 @@ Out of scope: rules, fingerprints, render code, and every product repository.
   - Its endpoint refuses a caller without the Connect entitlement (`src/document_ocr/server.py:76-82`,
     `NOT_ENTITLED`). So without a licence, neither app can read a scan today, even standalone.
   - Its contract keeps Windows out of scope (`docs/contracts/DOCUMENT-OCR-V1.md:19`).
-  - It is not a catalogue repository, and it has no "First Public Release" milestone: `gh api
-    repos/canfieldjuan/document-ocr/milestones?state=all` listed none on 2026-09-27.
+  - It is not a catalogue repository. It had no "First Public Release" milestone when revision 2 was
+    written. The operator had milestone #1 created on 2026-09-28: `gh api
+    repos/canfieldjuan/document-ocr/milestones?state=all` lists it, open, with 0 open issues.
   - As revision 1 was written, a demonstration of automation 2 or 3 could pass using only PDFs that
     already carry text, without ever reading a scan.
 - **The automation code's repository has no issue gate.**
@@ -249,9 +250,8 @@ catalogues.
 I2. **No label rises at merge.** The expected page changes are exactly:
 - the new conditions read `no_evidence`;
 - the automation-scope banner text changes;
-- the bundle row's issue gate now includes `connect-automate`'s and `document-ocr`'s milestones. Until
-  `document-ocr` has one, that gate reads **unavailable** (contract 05), so the bundle's readiness fails
-  closed.
+- the bundle row's issue gate now includes `connect-automate`'s and `document-ocr`'s milestones. Both
+  exist (created 2026-09-27 and 2026-09-28), so the gate reads real data from the first tick.
 
 This is verified live, read-only, before merge. The branch's derivation over the live store and state is
 compared task by task with the served page. Every other difference is a defect.
@@ -284,7 +284,7 @@ test 5).
 | an automation 2 or 3 demonstration uses only PDFs that already carry text | it does not meet the condition's claim, which names a scanned PDF read through OCR, so it must not be recorded as a pass |
 | `document-ocr` has no Windows runtime yet | every Windows demonstration that reads a scan stays `no_evidence` until codex's Windows port (#94, codex step 6). The claim is not weakened for Windows (D13) |
 | `document-ocr` still refuses an unlicensed local request | `rel.bundle_without_licence_*` and the Document Summarizer and Invoice Processor shared-runtime demos cannot pass until codex's OCR exemption lands (#94, codex step 5) |
-| `document-ocr` has no "First Public Release" milestone | its gate is **unavailable**, and the bundle's readiness fails closed (contract 05) |
+| `document-ocr`'s milestone is renamed or deleted | its gate is **unavailable**, and the bundle's readiness fails closed (contract 05) |
 | the three apps are published before the installer repository exists | the bundle cannot be ready, because the `rel.bundle_download_*` demos are required. "Released" needs ready, so it cannot be reached until those pass; D4 adds the download's publication condition with that repository |
 | an old record for a shared check (e.g. `ew.pytest.automation`) predates the new bundle condition | it does not name the new condition, so it does not prove it. The first tick after merge runs `ew.pytest.scheduling` and `ew.pytest.automation` once, because a condition added to a check changes its run key (contract 07 B1) |
 
@@ -340,7 +340,7 @@ Live, read-only, before merge (reported on the PR):
 Settle, after merge: the first tick shows:
 - the new conditions as `no_evidence`;
 - `connect-automate` and `document-ocr` head rows;
-- the bundle's issue gate reading the six milestones, or **unavailable** while `document-ocr` has none;
+- the bundle's issue gate reading all six milestones;
 - no new source failure.
 
 ## Decisions
