@@ -212,6 +212,32 @@ def test_catalogue_rejects_an_automation_set_the_bundle_does_not_carry(tmp_path:
         load(_broken_catalogue(tmp_path, mutate))
 
 
+@pytest.mark.parametrize("flag", ["true", 1, 0, "yes", "", [], {}])
+def test_a_non_boolean_requirement_flag_is_refused_not_ignored(tmp_path: Path, flag):
+    def mutate(catalogue):
+        catalogue["release"]["automate_scope"]["required_for_first_release"] = flag
+        # the same edit that a real `true` refuses (a missing Windows demo) must not slip through
+        task = next(t for t in catalogue["tasks"] if t["id"] == "automate.unattended_pdf_summary")
+        task["conditions"] = [c for c in task["conditions"] if c["id"] != "auto.pdf_summary_installed_windows"]
+
+    with pytest.raises(ValueError, match="required_for_first_release must be true or false"):
+        load(_broken_catalogue(tmp_path, mutate))
+
+
+@pytest.mark.parametrize("flag", [None, False])
+def test_an_undecided_or_false_flag_skips_the_automation_set(tmp_path: Path, flag):
+    def mutate(catalogue):
+        catalogue["release"]["automate_scope"]["required_for_first_release"] = flag
+        catalogue["release"]["automate_scope"].pop("tasks")
+
+    assert load(_broken_catalogue(tmp_path, mutate))
+
+
+def test_a_malformed_automate_scope_is_refused(tmp_path: Path):
+    with pytest.raises(ValueError, match="automate_scope must be an object"):
+        load(_broken_catalogue(tmp_path, lambda c: c["release"].__setitem__("automate_scope", "required")))
+
+
 def test_an_automation_set_is_checked_only_when_required(tmp_path: Path):
     assert load(ROOT / "catalogue.json")  # the committed catalogue passes
 
