@@ -1,6 +1,6 @@
 # Contract 09 — The first release is the Local Connect bundle, with its automations and its licence
 
-Status: **proposed 2026-09-27, revision 2**, awaiting the operator's acceptance. This is release step 3 of
+Status: **accepted 2026-09-28, revision 2** (operator: "Accepted 09"). This is release step 3 of
 invoice-processor#94 (private): the operator's decision of 2026-09-27 and its cross-session order of
 operations. Revision 2 adds `document-ocr` after the operator's decision that reading a scanned PDF needs no
 licence and is part of the shared runtime (#94).
