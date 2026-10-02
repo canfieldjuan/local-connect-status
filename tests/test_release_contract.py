@@ -323,7 +323,8 @@ def test_an_automation_demo_record_satisfies_both_rows():
 CURRENCY = re.compile(
     r"(?<![\w$])[$\u20ac\u00a3]\s?\d[\d,]*(?:\.\d+)?(?![\w\"'})])"
     r"|\b\d+(?:\.\d+)?\s?(?:USD|EUR|GBP|dollars?|euros?)\b"
-    r"|\bper (?:month|year|seat|user)\b|/(?:mo|month|yr|year)\b",
+    r"|\bper (?:month|year|seat|user)\b|/(?:mo|month|yr|year)\b"
+    r"|\bstr(?:ipe)\b",
     re.I,
 )
 PERIOD = re.compile(r"\b\d+[- ]?(?:days?|months?)\b", re.I)
@@ -359,6 +360,7 @@ def test_no_commercial_terms_in_the_repository():
         ("Billed per " + "month.", True),
         ("A 30" + "-day window.", True),
         ("Renews every 12" + " months.", True),
+        ("Checkout through " + "Str" + "ipe.", True),
         ('HERE="$(cd "$(dirname "$' + '0")" && pwd)"', False),
         ("The server stops 10 to 12 seconds after the last lease.", False),
         ("Automation 2 is demonstrated on the installed Linux apps.", False),
