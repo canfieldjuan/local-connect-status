@@ -197,6 +197,44 @@ def load(path: Path) -> dict[str, Any]:
                     problems.append(
                         f"condition {c['id']}: {c.get('kind')!r} cannot use {runner!r} runner"
                     )
+    for app, row in cat.get("apps", {}).items():
+        config = row.get("promotion")
+        if config is None:
+            continue
+        prefix = f"app {app}: promotion "
+        if row.get("repo") not in cat.get("repos", {}):
+            problems.append(prefix + "repository is unknown")
+        for field in ("programs", "shipped_paths", "automated_checks", "pin_sources"):
+            if not isinstance(config.get(field), list) or not config[field]:
+                problems.append(prefix + f"{field} must be a non-empty list")
+        programs = config.get("programs", [])
+        if any(not isinstance(p, str) or not Path(p).is_absolute() for p in programs) or len(programs) != len(set(programs)):
+            problems.append(prefix + "programs must be distinct absolute paths")
+        limit = config.get("lag_limit", {}).get("days")
+        if type(limit) is not int or limit != 7:
+            problems.append(prefix + "lag_limit.days must retain the accepted seven-day limit")
+        smoke = config.get("smoke", {}).get("argv")
+        if not isinstance(smoke, list) or not smoke or smoke[0] not in programs:
+            problems.append(prefix + "smoke must name a listed installed program")
+        for check_id in config.get("automated_checks", []) + [config.get("smoke_check")] + [
+                gate.get("check") for gate in config.get("standing_gates", [])]:
+            check = checks.get(check_id, {})
+            if check.get("repo") != row.get("repo"):
+                problems.append(prefix + f"unknown or wrong-repository gate {check_id}")
+        for check_id in config.get("automated_checks", []):
+            if checks.get(check_id, {}).get("runner") not in {"pytest", "cargo_lib", "ci_job"}:
+                problems.append(prefix + "automated gate must execute tests or CI")
+        if checks.get(config.get("smoke_check"), {}).get("runner") != "manual_observation":
+            problems.append(prefix + "smoke is recorded by a human")
+        for source in config.get("pin_sources", []):
+            if source.get("format") not in {"uv", "cargo", "contracts"} or not source.get("path"):
+                problems.append(prefix + "invalid pin source")
+        for gate in config.get("standing_gates", []):
+            if not gate.get("paths"):
+                problems.append(prefix + "standing gate needs trigger paths")
+    for group in cat.get("promotion_sets", []):
+        if not group or len(set(group)) != len(group) or any(app not in cat.get("apps", {}) for app in group):
+            problems.append("promotion set must name distinct catalogue apps")
     problems.extend(automation_set_problems(cat))
     if problems:
         raise ValueError("catalogue invalid:\n  " + "\n  ".join(problems))

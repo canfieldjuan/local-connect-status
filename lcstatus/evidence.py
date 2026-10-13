@@ -37,6 +37,8 @@ KINDS = (
     "issue_gate",           # open release-milestone issues observed through GitHub
     "release_artifact",     # a published release the public can download
     "collection_failure",   # a source could not be read; the absence of data is data
+    "promotion",            # human attestation of a gated main build actually installed
+    "installed_observation", # read-only installed program hashes and exact-revision lock facts
 )
 
 VERDICTS = ("pass", "fail", "skip", "unavailable", "pending", "partial", "unknown", "inconclusive")
@@ -312,7 +314,7 @@ class Record:
             key["old"] = self.detail.get("old")
             if self.kind == "change":
                 key["commits_complete"] = self.detail.get("commits_complete", True)
-        elif self.kind in ("issue_gate", "release_artifact"):
+        elif self.kind in ("issue_gate", "release_artifact", "promotion", "installed_observation"):
             key["summary"] = self.summary
             key["detail"] = self.detail
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()

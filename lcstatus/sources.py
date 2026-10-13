@@ -111,6 +111,35 @@ class Mirrors:
         r = _run(["git", "-C", str(self.path(repo)), "log", "-1", "--format=%cI", sha])
         return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
 
+    def main_first_parent(self, repo: str) -> Failure | list[str]:
+        r = _run(["git", "--no-replace-objects", "-C", str(self.path(repo)),
+                  "rev-list", "--first-parent", "refs/heads/main"])
+        if r.returncode:
+            return Failure("main_ancestry", r.stderr.strip()[-200:] or "main history unavailable")
+        return r.stdout.splitlines()
+
+    def first_parent_merges(self, repo: str, old: str, new: str) -> Failure | list[dict[str, Any]]:
+        history = self.main_first_parent(repo)
+        if isinstance(history, Failure):
+            return history
+        if old not in history or new not in history or history.index(old) < history.index(new):
+            return Failure("main_ancestry", "promotion is not an ancestor on main first-parent history")
+        r = _run(["git", "--no-replace-objects", "-C", str(self.path(repo)), "log",
+                  "--first-parent", "--merges", "--reverse", "--format=%H%x00%cI", f"{old}..{new}"])
+        if r.returncode:
+            return Failure("promotion_history", r.stderr.strip()[-200:])
+        result = []
+        for line in r.stdout.splitlines():
+            sha, when = line.split("\x00")
+            # Compare the merge tree with its first parent, not the branch's commits.
+            paths = _run(["git", "--no-replace-objects", "-C", str(self.path(repo)),
+                          "diff", "--name-only", "-z", f"{sha}^1", sha])
+            if paths.returncode:
+                return Failure("promotion_history", paths.stderr.strip()[-200:])
+            result.append({"sha": sha, "committed_at": when,
+                           "paths": [p for p in paths.stdout.split("\x00") if p]})
+        return result
+
     def changed_files(self, repo: str, old: str, new: str) -> Failure | list[str]:
         r = _run(["git", "-C", str(self.path(repo)), *QUOTED_PATHS, "diff", "--name-only", f"{old}..{new}"])
         if r.returncode != 0:

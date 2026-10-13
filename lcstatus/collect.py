@@ -24,6 +24,7 @@ from . import catalogue as catmod
 from .change import assess, uncovered_patterns
 from .evidence import Record, Store, atomic_write, collection_lock, now_iso
 from .render import render_all
+from .promotion import installed_observation
 from .rules import task_status
 from .sources import Failure, GitHub, Mirrors, Revision, is_full_sha
 from .verify import (
@@ -391,6 +392,12 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             for r in runner.ci_jobs(repo, rev, checks, cond_map):
                 store_result(store, failures, r)
+
+        # Read only bytes and owned mirrors. Smoke remains a human gate, never a tick action.
+        for app, row in cat.get("apps", {}).items():
+            if "promotion" in row:
+                store_result(store, failures, installed_observation(
+                    app, row, cat, store.all(), mirrors, gh, heads))
 
         state["heads"].update(heads)
         state["change_baselines"] = change_baselines
