@@ -172,27 +172,18 @@ Out of scope:
 2. **Lag limit: seven days** for the oldest unpromoted shipped merge. `security` and `data-loss` labels go
    red at once.
 
-## Proposed amendment — first promotion rollback (pending decision)
+## Accepted amendment — first promotion starting point
 
-This proposal is not accepted and does not authorize implementation.
+Accepted by the operator on 2026-10-13 before implementation (PR #22).
 
-P1 requires the rollback package to be the previously promoted package. The one-time backfill
-creates the first promotion records, so neither app has a previously promoted package. The
-contract does not define how that first record supplies its rollback fields.
-
-Proposed decision:
-
-- For an app and platform with no earlier promotion record, permit the retained package whose
-  program bytes match the current install to serve as the bootstrap rollback package. Record its
-  path and independently computed sha256, and explicitly mark the rollback as bootstrap evidence.
-- This permission applies only to the first promotion record. Later records must name the retained
-  package from the previous promotion; the bootstrap rule cannot replace that requirement.
-- All main first-parent, package/program hash, exact-revision gate, installed smoke, participant
-  and human observation requirements remain mandatory. Bootstrap is not a gate waiver and is
-  never public release evidence.
-- Neither the collector nor the recorder installs or reinstalls a package. Rollback remains an
-  operator action.
-
-Alternative: require the operator to identify a distinct retained and qualified rollback package
-for the initial record, with an explicit contract rule for admitting it before any promotion exists.
-Until the decision is accepted, no bootstrap recording behavior is implemented and no backfill is run.
+- The first promotion record per app uses the package currently installed as its own fallback,
+  with its retained path and independently computed sha256. Mark the fallback explicitly as a
+  starting point. There is no earlier promotion to supply a previous install.
+- Every later record must name the real previous install and its retained fallback package.
+  Starting-point treatment cannot replace that requirement.
+- There is no exception for missing results. If the dashboard evidence store does not have the
+  exact revision's passing test and required gate results, the recorder refuses and writes no
+  promotion. The app stays `unrecorded install` until a properly checked build is installed.
+- All main first-parent, package/program hash, installed smoke, participant and human observation
+  requirements remain mandatory. A starting point is not a gate waiver or public release evidence.
+- Neither collector nor recorder installs or reinstalls software; rollback remains an operator action.
