@@ -114,7 +114,8 @@ def revision_pins(mirrors: Any, repo: str, revision: str, config: dict[str, Any]
                 values.setdefault(key, []).append(pin)
         elif source["format"] == "contracts":
             doc = json.loads(text)
-            if not is_full_sha(doc.get("commit")) or not isinstance(doc.get("files"), dict):
+            if (not is_full_sha(doc.get("commit")) or not isinstance(doc.get("files"), dict)
+                    or doc.get("repository") != "canfieldjuan/connect-contracts"):
                 raise ValueError(f"{path}: invalid contracts pin")
             values.setdefault("connect-contracts", []).append(doc["commit"])
             for name, entry in doc["files"].items():
@@ -122,6 +123,15 @@ def revision_pins(mirrors: Any, repo: str, revision: str, config: dict[str, Any]
                 if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
                     raise ValueError(f"{path}: invalid schema digest")
                 values.setdefault("schema:" + name, []).append(digest)
+                schema_text = mirrors.show("connect-contracts", doc["commit"], entry["source_path"])
+                if schema_text is None or hashlib.sha256(schema_text.encode()).hexdigest() != digest:
+                    raise ValueError(f"{path}: pinned schema is missing or has a hash mismatch")
+                schema = json.loads(schema_text)
+                protocol = schema.get("properties", {}).get("protocol_version", {}).get("const")
+                if protocol is not None:
+                    if type(protocol) is not int:
+                        raise ValueError(f"{path}: pinned protocol must be an integer")
+                    values.setdefault("protocol", []).append(str(protocol))
         else:
             raise ValueError(f"unknown pin format: {source['format']}")
     return {"values": {key: sorted(set(pins)) for key, pins in values.items()}, "locks": locks}

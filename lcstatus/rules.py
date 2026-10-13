@@ -49,7 +49,11 @@ PROVING_VERDICT = ("pass",)
 
 def shipped_path(path: str, globs: list[str]) -> bool:
     # The shipped surface excludes evidence and tests even if a broad catalogue glob includes it.
-    if path.startswith(("docs/", "contracts/", "tests/", "test/", "plans/")) or path.endswith((".md", ".rst")):
+    segments = path.split("/")
+    filename = segments[-1]
+    if (set(segments[:-1]) & {"docs", "contracts", "tests", "test", "plans"}
+            or path.endswith((".md", ".rst")) or ".test." in filename
+            or filename.startswith("test_") or filename.endswith("_test.py")):
         return False
     return any(fnmatchcase(path, pattern) for pattern in globs)
 

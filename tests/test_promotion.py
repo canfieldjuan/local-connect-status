@@ -116,6 +116,12 @@ def rows(f):
     return Store(f.data / "records.jsonl").all()
 
 
+def gates_at(f, revision):
+    gates = [Record(**{**json.loads(gate.to_json()), "revision": revision, "record_id": ""}) for gate in f.gates]
+    Store(f.data / "records.jsonl").add_all(gates)
+    return [gate.record_id for gate in gates]
+
+
 def observe(f):
     snapshot = installed_observation("fixture", f.cat["apps"]["fixture"], f.cat,
                                      rows(f), f.mirrors, f.gh, {"fixture": git(f.work, "rev-parse", "main")})
@@ -135,6 +141,7 @@ def test_p1_four_refusals_write_nothing(fixture, refusal, capsys):
         branch_revision = git(f.work, "rev-parse", "HEAD")
         git(f.mirrors.path("fixture"), "fetch", "origin")
         changes["participant"] = ["fixture=" + branch_revision]
+        changes["gate_record"] = gates_at(f, branch_revision)
     elif refusal == "other_revision":
         wrong = Record(**{**json.loads(f.gates[0].to_json()), "revision": "b" * 40, "record_id": ""})
         Store(f.data / "records.jsonl").add(wrong)
@@ -156,7 +163,9 @@ def test_p1_second_parent_revision_is_not_main_first_parent(fixture):
     git(f.work, "switch", "main"); git(f.work, "merge", "--no-ff", "side", "-m", "merge")
     git(f.mirrors.path("fixture"), "fetch", "origin")
     before = (f.data / "records.jsonl").read_bytes()
-    assert record(f, participant=["fixture=" + side]) == 2
+    ids = gates_at(f, side)
+    before = (f.data / "records.jsonl").read_bytes()
+    assert record(f, participant=["fixture=" + side], gate_record=ids) == 2
     assert (f.data / "records.jsonl").read_bytes() == before
 
 
@@ -245,6 +254,9 @@ def test_folder_name_never_supplies_promotion(fixture):
     # The package sits in an evidence directory named as a promotional assertion. No P1 exists.
     folder = f.root / "promoted-c698339"; folder.mkdir()
     f.pkg.rename(folder / f.pkg.name)
+    f.install.rename(folder / "program")
+    f.install = folder / "program"
+    f.config["programs"] = [str(f.install)]
     status = observe(f)
     assert status["label"] == "unrecorded install" and status["color"] == "red"
 
@@ -261,7 +273,8 @@ def merge(f, path, date="2026-10-12T12:00:00+00:00"):
 
 def test_p4_first_parent_shipped_merges_exclude_docs_contracts_tests(fixture):
     f = fixture; assert record(f) == 0
-    for path in ("docs/manual.md", "contracts/protocol.json", "tests/test_app.py"):
+    for path in ("docs/manual.md", "contracts/protocol.json", "tests/test_app.py",
+                 "desktop/test/runtime.test.ts", "src/docs/notes.md"):
         merge(f, path)
     # Even a broad shipped glob cannot count evidence-only merges.
     f.config["shipped_paths"] = ["**"]
@@ -411,6 +424,28 @@ def test_pin_sources_require_full_locked_git_sha(fixture):
             return '[[package]]\nname="connect-automate"\nsource={git="https://example.invalid/sdk#main"}\n'
     with pytest.raises(ValueError, match="exact locked revision"):
         revision_pins(Inexact(), "fixture", f.revision, f.config)
+
+
+def test_p5_contract_schema_and_protocol_pins_are_data_not_folder_labels(fixture):
+    import hashlib
+    f = fixture
+    schema = json.dumps({"properties": {"protocol_version": {"const": 2}}})
+    pin = json.dumps({"repository": "canfieldjuan/connect-contracts", "commit": PIN,
+                      "files": {"schema.json": {"source_path": "misleading-v1/schema.json",
+                                                "sha256": hashlib.sha256(schema.encode()).hexdigest()}}})
+    class Locks:
+        def show(self, repo, revision, path):
+            assert revision in (f.revision, PIN)
+            return pin if repo == "fixture" else schema
+    config = {"pin_sources": [{"format": "contracts", "path": "pin.json"}]}
+    pins = revision_pins(Locks(), "fixture", f.revision, config)
+    assert pins["values"]["protocol"] == ["2"]
+    assert pins["values"]["connect-contracts"] == [PIN]
+    class Changed(Locks):
+        def show(self, repo, revision, path):
+            return pin if repo == "fixture" else schema + " "
+    with pytest.raises(ValueError, match="hash mismatch"):
+        revision_pins(Changed(), "fixture", f.revision, config)
 
 
 def test_collector_tick_and_render_only_preserve_installed_observation(fixture, monkeypatch):
