@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from .evidence import Record, now_iso
+from .evidence import Record, now_iso, check_fingerprint, condition_fingerprint_map
 from .sources import Failure, is_full_sha
 
 
@@ -137,6 +137,18 @@ def revision_pins(mirrors: Any, repo: str, revision: str, config: dict[str, Any]
     return {"values": {key: sorted(set(pins)) for key, pins in values.items()}, "locks": locks}
 
 
+def observation_attribution(app: str, row: dict[str, Any], catalogue: dict[str, Any]) -> dict[str, Any]:
+    conditions = row["promotion"]["conditions"]
+    check_id = conditions[0]["check"]
+    ids = [condition["id"] for condition in conditions]
+    return {"condition_ids": ids,
+            "source": {"type": "installed_program_hashes", "app": app, "check": check_id,
+                       "check_fingerprint": check_fingerprint(catalogue["checks"][check_id]),
+                       "condition_fingerprints": condition_fingerprint_map(catalogue, ids),
+                       "promotion_config": check_fingerprint(row["promotion"]),
+                       "set_config": check_fingerprint({"sets": catalogue.get("promotion_sets", [])})}}
+
+
 def installed_observation(app: str, row: dict[str, Any], catalogue: dict[str, Any],
                           records: list[Record], mirrors: Any, github: Any,
                           heads: dict[str, str], *, platform: str = "linux") -> Record:
@@ -175,5 +187,5 @@ def installed_observation(app: str, row: dict[str, Any], catalogue: dict[str, An
                 detail["merges"] = history
     return Record(kind="installed_observation", repo=row["repo"], revision=revision,
                   verdict="unavailable" if observed["errors"] or detail.get("pin_error") or detail.get("history_error") else "pass",
-                  platform=platform, source={"type": "installed_program_hashes", "app": app},
+                  platform=platform, **observation_attribution(app, row, catalogue),
                   recorded_at=now_iso(), detail=detail)

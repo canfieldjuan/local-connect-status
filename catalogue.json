@@ -119,9 +119,27 @@
           "days": 7
         },
         "conditions": [
-          "installed_program_hashes",
-          "first_parent_shipped_lag",
-          "coupled_revision_locks"
+          {
+            "id": "promotion.email-watcher.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.email-watcher.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.email-watcher.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
         ]
       }
     },
@@ -164,9 +182,27 @@
           "days": 7
         },
         "conditions": [
-          "installed_program_hashes",
-          "first_parent_shipped_lag",
-          "coupled_revision_locks"
+          {
+            "id": "promotion.document-summarizer.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.document-summarizer.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.document-summarizer.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
         ]
       }
     },
@@ -242,9 +278,27 @@
           "days": 7
         },
         "conditions": [
-          "installed_program_hashes",
-          "first_parent_shipped_lag",
-          "coupled_revision_locks"
+          {
+            "id": "promotion.invoice-processor.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.invoice-processor.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.invoice-processor.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
         ]
       }
     },
@@ -288,9 +342,27 @@
           "days": 7
         },
         "conditions": [
-          "installed_program_hashes",
-          "first_parent_shipped_lag",
-          "coupled_revision_locks"
+          {
+            "id": "promotion.document-ocr.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.document-ocr.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.document-ocr.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
         ]
       }
     }
@@ -932,6 +1004,34 @@
       "repo": "invoice-processor",
       "platform": "linux",
       "note": "CERTIFICATE-EXTRACT section 8.1: exact final-build native same-input COI parity, exhaustive record/provenance comparison, replay/restart/projection and shutdown. A person records retained receipts; this repository never runs the GPU gate."
+    },
+    "promotion.observe.email-watcher": {
+      "runner": "installed_observation",
+      "repo": "eom-email-watcher",
+      "app": "email-watcher",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.document-summarizer": {
+      "runner": "installed_observation",
+      "repo": "document-summarizer",
+      "app": "document-summarizer",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.invoice-processor": {
+      "runner": "installed_observation",
+      "repo": "invoice-processor",
+      "app": "invoice-processor",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.document-ocr": {
+      "runner": "installed_observation",
+      "repo": "document-ocr",
+      "app": "document-ocr",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
     }
   },
   "tasks": [

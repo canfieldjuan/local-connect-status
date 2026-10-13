@@ -343,6 +343,8 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if runner_kind == "manual_observation":
                 continue   # only a person records these, via scripts/record_observation.py
+            if runner_kind == "installed_observation":
+                continue   # one shared read-only snapshot per app below, never a product runner
             if args.no_local or not wanted(cid, chk):
                 continue
             declared = catmod.declared_participants(chk)

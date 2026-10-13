@@ -18,6 +18,7 @@ RUNNERS = (
     "github_issues",
     "github_release",
     "source_inspection",
+    "installed_observation",
 )
 LAYERS = ("standalone", "connect", "automate", "release")
 KIND_RUNNERS = {
@@ -27,7 +28,28 @@ KIND_RUNNERS = {
     "issue_gate": {"github_issues"},
     "release_artifact": {"github_release"},
     "source_inspection": {"source_inspection"},
+    "installed_observation": {"installed_observation"},
 }
+
+
+def all_conditions(cat: dict[str, Any]):
+    for task in cat.get("tasks", []):
+        yield from task.get("conditions", [])
+    for row in cat.get("apps", {}).values():
+        yield from row.get("promotion", {}).get("conditions", [])
+
+
+def condition_problems(condition: dict[str, Any], checks: dict[str, Any]) -> list[str]:
+    problems = []
+    if condition.get("kind") not in KINDS:
+        problems.append(f"condition {condition['id']}: unknown kind {condition.get('kind')!r}")
+    if condition.get("check") not in checks:
+        problems.append(f"condition {condition['id']}: unknown check {condition.get('check')!r}")
+    else:
+        runner = checks[condition["check"]].get("runner")
+        if runner not in KIND_RUNNERS.get(condition.get("kind"), set()):
+            problems.append(f"condition {condition['id']}: {condition.get('kind')!r} cannot use {runner!r} runner")
+    return problems
 
 
 def declared_participants(check: dict[str, Any]) -> list[str]:
@@ -187,21 +209,30 @@ def load(path: Path) -> dict[str, Any]:
             if c["id"] in seen_conds:
                 problems.append(f"duplicate condition id {c['id']}")
             seen_conds.add(c["id"])
-            if c.get("kind") not in KINDS:
-                problems.append(f"condition {c['id']}: unknown kind {c.get('kind')!r}")
-            if c.get("check") not in checks:
-                problems.append(f"condition {c['id']}: unknown check {c.get('check')!r}")
-            else:
-                runner = checks[c["check"]].get("runner")
-                if runner not in KIND_RUNNERS.get(c.get("kind"), set()):
-                    problems.append(
-                        f"condition {c['id']}: {c.get('kind')!r} cannot use {runner!r} runner"
-                    )
+            problems.extend(condition_problems(c, checks))
     for app, row in cat.get("apps", {}).items():
         config = row.get("promotion")
         if config is None:
             continue
         prefix = f"app {app}: promotion "
+        conditions = config.get("conditions", [])
+        if (not isinstance(conditions, list) or len(conditions) != 3
+                or any(not isinstance(c, dict) or not c.get("id") for c in conditions)):
+            problems.append(prefix + "needs checked install, lag and coupled conditions")
+        else:
+            if {c.get("aspect") for c in conditions} != {"install", "lag", "coupled"}:
+                problems.append(prefix + "conditions must cover install, lag and coupled")
+            for c in conditions:
+                if c["id"] in seen_conds:
+                    problems.append(f"duplicate condition id {c['id']}")
+                seen_conds.add(c["id"])
+                problems.extend(condition_problems(c, checks))
+                check = checks.get(c.get("check"), {})
+                if (c.get("kind") != "installed_observation" or check.get("runner") != "installed_observation"
+                        or check.get("repo") != row.get("repo") or check.get("app") != app):
+                    problems.append(prefix + "condition needs its app's installed observation check")
+            if len({c.get("check") for c in conditions}) != 1:
+                problems.append(prefix + "conditions must use the one installed snapshot check")
         if row.get("repo") not in cat.get("repos", {}):
             problems.append(prefix + "repository is unknown")
         for field in ("programs", "shipped_paths", "automated_checks", "pin_sources"):

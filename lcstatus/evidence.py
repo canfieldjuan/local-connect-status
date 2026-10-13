@@ -102,11 +102,11 @@ def condition_fingerprint_map(
     catalogue: dict[str, Any], condition_ids: Iterable[str],
 ) -> dict[str, str]:
     """Fingerprints for the named conditions in a loaded catalogue."""
+    from .catalogue import all_conditions
     wanted = set(condition_ids)
     return {
         condition["id"]: condition_fingerprint(condition)
-        for task in catalogue.get("tasks", [])
-        for condition in task.get("conditions", [])
+        for condition in all_conditions(catalogue)
         if condition["id"] in wanted
     }
 

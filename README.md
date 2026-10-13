@@ -313,6 +313,11 @@ matching P1 record means P5 is unavailable. A failed lock read is a source failu
 Coupling is `clear` only when at least two installed members share a key that was compared. Without
 a shared key it is `not compared`, rendered neutral; this does not block `current` and never claims
 compatibility. An agreeing comparison is green; a disagreement remains red until the set record.
+Each installed, lag and coupled assertion is a catalogue condition backed by the app's one
+`installed_observation` check. The snapshot carries the check, condition and input fingerprints;
+records without those attributions or under an older catalogue cannot support a current assertion.
+Standing-gate selection uses the union of every path touched since the previous promotion,
+including paths that were changed and then restored, rather than only the endpoint tree diff.
 
 A person records the catalogue's installed smoke and standing gates with the existing
 `--check ... --participant repo=FULL_SHA --verdict pass --platform linux --artifact RECEIPT

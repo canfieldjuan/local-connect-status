@@ -136,7 +136,14 @@ def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: 
         if "promotion" not in row:
             continue
         observations = [r for r in records if r.kind == "installed_observation"
-                        and r.detail.get("app") == app and r.platform == platform]
+                        and r.detail.get("app") == app and r.platform == platform
+                        and r.source.get("promotion_config") == check_fingerprint(row["promotion"])
+                        and r.source.get("set_config") == check_fingerprint({"sets": catalogue.get("promotion_sets", [])})
+                        and all(c["id"] in r.condition_ids
+                                and r.source.get("check") == c["check"]
+                                and resolve_check_fingerprint(record_check_fingerprint(r)) == check_fingerprint(catalogue["checks"][c["check"]])
+                                and record_condition_fingerprint(r, c["id"]) == condition_fingerprint(c)
+                                for c in row["promotion"]["conditions"])]
         snapshot = max(enumerate(observations), key=lambda p: (instant_key(p[1].recorded_at), p[0]))[1] if observations else None
         observed = snapshot.detail["installed"] if snapshot else {"hashes": {}, "missing": [], "errors": {"observation": "no installed observation"}}
         history = promotion_records(app, row, records, platform)
@@ -213,6 +220,8 @@ def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: 
                 statuses[app]["color"] = "red"
     for item in statuses.values():
         item["current"] = item["label"] == "promoted" and item["lag"] == "current" and item["coupled"] in ("clear", "not compared") and not item["errors"]
+        item["conditions"] = [{**condition, "state": item[condition["aspect"]] if condition["aspect"] != "install" else item["label"]}
+                              for condition in catalogue["apps"][item["app"]]["promotion"]["conditions"]]
     return list(statuses.values())
 
 

@@ -176,6 +176,10 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
         "promotion.smoke.document-summarizer",
         "promotion.smoke.document-ocr",
         "promotion.gate.ip_coi",
+        "promotion.observe.email-watcher",
+        "promotion.observe.invoice-processor",
+        "promotion.observe.document-summarizer",
+        "promotion.observe.document-ocr",
     }
     reconfigured = {"ew.pytest.entitlement"}
     values = set(CHECK_FINGERPRINT_ALIASES.values())

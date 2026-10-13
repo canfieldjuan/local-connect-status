@@ -140,6 +140,21 @@ class Mirrors:
                            "paths": [p for p in paths.stdout.split("\x00") if p]})
         return result
 
+    def touched_files(self, repo: str, old: str, new: str) -> Failure | list[str]:
+        """Union every path touched in the range, retaining changed-then-restored gate triggers."""
+        revisions = _run(["git", "--no-replace-objects", "-C", str(self.path(repo)),
+                          "rev-list", f"{old}..{new}"])
+        if revisions.returncode:
+            return Failure("touched_files", revisions.stderr.strip()[-200:])
+        touched: set[str] = set()
+        for sha in revisions.stdout.splitlines():
+            result = _run(["git", "--no-replace-objects", "-C", str(self.path(repo)), "show",
+                           "--format=", "--name-only", "-z", "--diff-merges=first-parent", sha])
+            if result.returncode:
+                return Failure("touched_files", result.stderr.strip()[-200:])
+            touched.update(path for path in result.stdout.split("\x00") if path)
+        return sorted(touched)
+
     def changed_files(self, repo: str, old: str, new: str) -> Failure | list[str]:
         r = _run(["git", "-C", str(self.path(repo)), *QUOTED_PATHS, "diff", "--name-only", f"{old}..{new}"])
         if r.returncode != 0:

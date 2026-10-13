@@ -16,7 +16,7 @@ import pytest
 from lcstatus import collect
 from lcstatus.catalogue import load
 from lcstatus.evidence import Record, Store, check_fingerprint
-from lcstatus.promotion import installed_observation, installed_programs, package_programs, revision_pins
+from lcstatus.promotion import installed_observation, installed_programs, package_programs, revision_pins, observation_attribution
 from lcstatus.render import render_all
 from lcstatus.rules import installed_statuses, matching_promotion, required_promotion_checks, task_status
 from lcstatus.sources import Failure, Mirrors
@@ -54,6 +54,16 @@ class GitHub:
                  "labels": [{"name": n} for n in self.labels.get(sha, [])]}]
 
 
+def checked_observation_config(cat, app):
+    row = cat["apps"][app]
+    check = "observe." + app
+    cat["checks"][check] = {"runner": "installed_observation", "repo": row["repo"], "app": app, "platform": "linux"}
+    row["promotion"]["conditions"] = [
+        {"id": app + "." + aspect, "kind": "installed_observation", "check": check,
+         "aspect": aspect, "proves": "Fixture " + aspect}
+        for aspect in ("install", "lag", "coupled")]
+
+
 @pytest.fixture
 def fixture(tmp_path):
     work = tmp_path / "product"; work.mkdir()
@@ -84,6 +94,7 @@ source = {{ git = "https://github.com/canfieldjuan/connect-automate?rev={PIN}#{P
                       "smoke": {"runner": "manual_observation", "repo": "fixture", "platform": "linux"},
                       "standing": {"runner": "manual_observation", "repo": "fixture", "platform": "linux"}},
            "tasks": [], "promotion_sets": [["fixture"]]}
+    checked_observation_config(cat, "fixture")
     data = tmp_path / "data"; data.mkdir()
     store = Store(data / "records.jsonl")
     gates = []
@@ -333,15 +344,19 @@ def test_p5_disagreement_on_all_participants_clears_with_one_set_record(fixture)
     second_row["name"] = "Second"; second_row["repo"] = "second"
     f.cat["apps"]["second"] = second_row
     f.cat["promotion_sets"] = [["fixture", "second"]]
+    checked_observation_config(f.cat, "second")
     member = json.loads(json.dumps(first.detail["members"]["fixture"])); member["repo"] = "second"
+    member["config"] = check_fingerprint(second_row["promotion"])
     second = Record(kind="promotion", repo="second", revision="b" * 40, participants={"second": "b" * 40},
                     verdict="pass", platform="linux", recorded_at=NOW,
                     source={"observed_by": "Fixture human"}, detail={"members": {"second": member}})
     observed = installed_programs([str(f.install)])
     a = Record(kind="installed_observation", repo="fixture", revision=f.revision, verdict="pass", platform="linux",
+               **observation_attribution("fixture", f.cat["apps"]["fixture"], f.cat),
                detail={"app": "fixture", "installed": observed, "promotion_id": first.record_id,
                        "pins": {"values": {"sdk": [PIN]}}, "merges": []})
     b = Record(kind="installed_observation", repo="second", revision="b" * 40, verdict="pass", platform="linux",
+               **observation_attribution("second", second_row, f.cat),
                detail={"app": "second", "installed": observed, "promotion_id": second.record_id,
                        "pins": {"values": {"sdk": ["b" * 40]}}, "merges": []})
     mismatched = installed_statuses(f.cat, [first, second, a, b], at=NOW)
@@ -371,6 +386,7 @@ def test_p5_comparison_twins(fixture, case, expected, color):
     second_row["promotion"]["programs"] = [str(second_program)]
     f.cat["apps"]["second"] = second_row
     f.cat["promotion_sets"] = [["fixture", "second"]]
+    checked_observation_config(f.cat, "second")
     second_installed = installed_programs([str(second_program)])
     member = json.loads(json.dumps(first.detail["members"]["fixture"]))
     member.update(repo="second", revision="b" * 40,
@@ -385,6 +401,7 @@ def test_p5_comparison_twins(fixture, case, expected, color):
             {"protocol": ["2"]} if case == "no_shared_key" else {}))
     snapshots = [Record(kind="installed_observation", repo=repo, revision=promotion.participants[repo],
                         verdict="pass", platform="linux",
+                        **observation_attribution(app, f.cat["apps"][app], f.cat),
                         detail={"app": app, "installed": installed, "promotion_id": promotion.record_id,
                                 "pins": {"values": pins}, "merges": []})
                  for app, repo, promotion, installed, pins in (
@@ -468,6 +485,57 @@ def test_standing_gate_trigger_and_catalogue_are_valid(fixture):
     assert "standing" in required_promotion_checks(f.config, ["src/app.py"])
     path = f.root / "catalogue.json"; path.write_text(json.dumps(f.cat)); load(path)
     assert package_programs(f.pkg, [str(f.install)]) == installed_programs([str(f.install)])["hashes"]
+
+
+@pytest.mark.parametrize("damage", ["condition_fingerprint", "check_fingerprint", "condition_id", "input_fingerprint"])
+def test_installed_claims_require_checked_condition_attribution(fixture, damage):
+    f = fixture; assert record(f) == 0
+    snapshot = installed_observation("fixture", f.cat["apps"]["fixture"], f.cat, rows(f),
+                                     f.mirrors, f.gh, {"fixture": f.revision})
+    assert installed_statuses(f.cat, rows(f) + [snapshot], at=NOW)[0]["label"] == "promoted"
+    if damage == "condition_fingerprint": snapshot.source["condition_fingerprints"]["fixture.install"] = "bad"
+    elif damage == "check_fingerprint": snapshot.source["check_fingerprint"] = "bad"
+    elif damage == "condition_id": snapshot.condition_ids.remove("fixture.install")
+    else: snapshot.source["promotion_config"] = "bad"
+    status = installed_statuses(f.cat, rows(f) + [snapshot], at=NOW)[0]
+    assert status["label"] == "unavailable" and not status["current"]
+    assert len(status["conditions"]) == 3
+
+
+def test_catalogue_rejects_unchecked_or_wrong_kind_promotion_conditions(fixture):
+    f = fixture; path = f.root / "catalogue.json"
+    valid = json.loads(json.dumps(f.cat))
+    valid["apps"]["fixture"]["promotion"]["conditions"] = ["unconsumed string"]
+    path.write_text(json.dumps(valid))
+    with pytest.raises(ValueError, match="needs checked"):
+        load(path)
+    valid = json.loads(json.dumps(f.cat))
+    valid["apps"]["fixture"]["promotion"]["conditions"][0]["kind"] = "installed_demo"
+    path.write_text(json.dumps(valid))
+    with pytest.raises(ValueError, match="cannot use"):
+        load(path)
+
+
+def test_p3_changed_then_restored_paths_still_require_standing_gate(fixture):
+    f = fixture; assert record(f) == 0
+    baseline = f.revision
+    original = (f.work / "src" / "app.py").read_text()
+    merge(f, "src/app.py")
+    git(f.work, "switch", "-c", "restore")
+    (f.work / "src" / "app.py").write_text(original)
+    git(f.work, "commit", "-am", "restore")
+    git(f.work, "switch", "main"); git(f.work, "merge", "--no-ff", "restore", "-m", "merge restore")
+    f.revision = git(f.work, "rev-parse", "main")
+    git(f.mirrors.path("fixture"), "fetch", "origin")
+    assert f.mirrors.changed_files("fixture", baseline, f.revision) == []
+    assert "src/app.py" in f.mirrors.touched_files("fixture", baseline, f.revision)
+    ids = gates_at(f, f.revision)
+    without_standing = [r.record_id for r in rows(f)
+                        if r.record_id in ids and r.source["check"] != "standing"]
+    before = (f.data / "records.jsonl").read_bytes()
+    assert record(f, gate_record=without_standing, rollback_package=["fixture=" + str(f.pkg)]) == 2
+    assert (f.data / "records.jsonl").read_bytes() == before
+    assert record(f, gate_record=ids, rollback_package=["fixture=" + str(f.pkg)]) == 0
 
 
 def test_pin_sources_require_full_locked_git_sha(fixture):

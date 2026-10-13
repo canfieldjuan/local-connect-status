@@ -147,7 +147,7 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
                 old = previous.participants[repo]
                 if old not in main or revision not in main or main.index(old) < main.index(revision):
                     raise ValueError("promotion cannot precede the previous promotion on main")
-                paths = mirrors.changed_files(repo, old, revision)
+                paths = mirrors.touched_files(repo, old, revision)
             if isinstance(paths, Failure):
                 raise ValueError(paths.why)
             installed = installed_programs(config["programs"])
