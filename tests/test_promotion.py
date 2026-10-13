@@ -355,6 +355,59 @@ def test_p5_disagreement_on_all_participants_clears_with_one_set_record(fixture)
     assert all(s["coupled"] == "clear" and s["current"] for s in cleared)
 
 
+@pytest.mark.parametrize(("case", "expected", "color"), [
+    ("agree", "clear", "green"),
+    ("disagree", "coupled-set mismatch", "red"),
+    ("no_shared_key", "not compared", "neutral"),
+    ("empty_locks", "not compared", "neutral"),
+])
+def test_p5_comparison_twins(fixture, case, expected, color):
+    f = fixture; assert record(f) == 0
+    first = next(r for r in rows(f) if r.kind == "promotion")
+    second_program = f.root / "second-fake-install" / "program"
+    second_program.parent.mkdir(); second_program.write_bytes(b"second-program")
+    second_row = json.loads(json.dumps(f.cat["apps"]["fixture"]))
+    second_row.update(name="Second", repo="second")
+    second_row["promotion"]["programs"] = [str(second_program)]
+    f.cat["apps"]["second"] = second_row
+    f.cat["promotion_sets"] = [["fixture", "second"]]
+    second_installed = installed_programs([str(second_program)])
+    member = json.loads(json.dumps(first.detail["members"]["fixture"]))
+    member.update(repo="second", revision="b" * 40,
+                  config=check_fingerprint(second_row["promotion"]),
+                  program_hashes=second_installed["hashes"])
+    second = Record(kind="promotion", repo="second", revision="b" * 40, participants={"second": "b" * 40},
+                    verdict="pass", platform="linux", source={"observed_by": "Fixture human"},
+                    detail={"members": {"second": member}})
+    left = {} if case == "empty_locks" else {"sdk": [PIN]}
+    right = {"sdk": [PIN]} if case == "agree" else (
+        {"sdk": ["b" * 40]} if case == "disagree" else (
+            {"protocol": ["2"]} if case == "no_shared_key" else {}))
+    snapshots = [Record(kind="installed_observation", repo=repo, revision=promotion.participants[repo],
+                        verdict="pass", platform="linux",
+                        detail={"app": app, "installed": installed, "promotion_id": promotion.record_id,
+                                "pins": {"values": pins}, "merges": []})
+                 for app, repo, promotion, installed, pins in (
+                     ("fixture", "fixture", first, installed_programs([str(f.install)]), left),
+                     ("second", "second", second, second_installed, right))]
+    records = [first, second, *snapshots]
+    statuses = installed_statuses(f.cat, records, at=NOW)
+    assert all(s["coupled"] == expected and s["coupled_color"] == color for s in statuses)
+    assert all(s["current"] == (case != "disagree") for s in statuses)
+    site = f.root / "site"
+    render_all(site, f.cat, [], records, {}, [], {"last_run_at": NOW}, {})
+    assert expected in (site / "dashboard.html").read_text()
+    assert f"{expected} ({color})" in (site / "report.md").read_text()
+    assert all(s["coupled_color"] == color for s in json.loads((site / "status.json").read_text())["installed_apps"])
+
+
+def test_p5_single_installed_member_is_not_a_comparison(fixture):
+    f = fixture; assert record(f) == 0
+    status = observe(f)
+    assert status["coupled"] == "not compared"
+    assert status["coupled_color"] == "neutral" and status["current"]
+
+
 def test_superseded_and_collection_lock_for_atomic_sets(fixture, monkeypatch):
     f = fixture; assert record(f) == 0
     assert record(f, rollback_package=["fixture=" + str(f.pkg)]) == 0

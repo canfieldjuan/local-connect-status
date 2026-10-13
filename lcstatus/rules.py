@@ -146,6 +146,7 @@ def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: 
                                 "errors": dict(observed["errors"]), "revision": None,
                                 "promotion_id": None, "superseded": [], "lag": "unavailable",
                                 "merges": [], "oldest_age_days": None, "coupled": "unavailable",
+                                "coupled_color": "red",
                                 "current": False, "color": "red"}
         if observed["errors"]:
             item["label"] = "unavailable"
@@ -159,7 +160,8 @@ def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: 
             selected[app] = match
             snapshots[app] = snapshot
             item.update(label="promoted", revision=match.participants[row["repo"]],
-                        promotion_id=match.record_id, color="green", coupled="clear",
+                        promotion_id=match.record_id, color="green", coupled="not compared",
+                        coupled_color="neutral",
                         superseded=[r.record_id for r in history if r.record_id != match.record_id])
             if snapshot.detail.get("promotion_id") != match.record_id:
                 item["errors"]["observation"] = "installed facts predate this promotion record; collect again"
@@ -182,29 +184,35 @@ def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: 
                     item["color"] = "red" if stale else "amber"
             else:
                 item["color"] = "red"
-                item["coupled"] = "blocked" if "pin_error" in item["errors"] else "clear"
+                if "pin_error" in item["errors"]:
+                    item["coupled"] = "blocked"
+                    item["coupled_color"] = "red"
         statuses[app] = item
     # A disagreement is determined only from explicit shared locked identities, not names of
     # evidence directories. One atomic P1 set record has to cover all currently installed bytes.
     for group in catalogue.get("promotion_sets", []):
         members = [app for app in group if app in selected]
-        values: dict[str, set[tuple[str, ...]]] = {}
+        values: dict[str, dict[str, tuple[str, ...]]] = {}
         for app in members:
             for key, pins in statuses[app].get("pins", {}).get("values", {}).items():
-                values.setdefault(key, set()).add(tuple(pins))
-        disagreement = any(len(pins) > 1 or any(len(p) > 1 for p in pins) for pins in values.values())
-        if not disagreement:
+                values.setdefault(key, {})[app] = tuple(pins)
+        compared = {key: pins for key, pins in values.items() if len(pins) >= 2}
+        if not compared:
             continue
+        members = [app for app in members if any(app in pins for pins in compared.values())]
+        disagreement = any(len(set(pins.values())) > 1 or any(len(p) > 1 for p in pins.values())
+                           for pins in compared.values())
         same_set = len({selected[app].record_id for app in members}) == 1
         set_record = selected[members[0]]
         covered = same_set and all(
             catalogue["apps"][app]["repo"] in set_record.participants for app in members)
         for app in members:
-            statuses[app]["coupled"] = "clear" if covered else "coupled-set mismatch"
-            if not covered:
+            statuses[app]["coupled"] = "clear" if not disagreement or covered else "coupled-set mismatch"
+            statuses[app]["coupled_color"] = "green" if not disagreement or covered else "red"
+            if disagreement and not covered:
                 statuses[app]["color"] = "red"
     for item in statuses.values():
-        item["current"] = item["label"] == "promoted" and item["lag"] == "current" and item["coupled"] == "clear" and not item["errors"]
+        item["current"] = item["label"] == "promoted" and item["lag"] == "current" and item["coupled"] in ("clear", "not compared") and not item["errors"]
     return list(statuses.values())
 
 

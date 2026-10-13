@@ -310,6 +310,9 @@ locks through the owned bare mirror. Current main's locks never stand in for the
 locks. Explicit shared locked identities are compared across the catalogue's coupled sets; a known
 disagreement is red until one atomic set record covers those installed participant revisions. No
 matching P1 record means P5 is unavailable. A failed lock read is a source failure, never clearance.
+Coupling is `clear` only when at least two installed members share a key that was compared. Without
+a shared key it is `not compared`, rendered neutral; this does not block `current` and never claims
+compatibility. An agreeing comparison is green; a disagreement remains red until the set record.
 
 A person records the catalogue's installed smoke and standing gates with the existing
 `--check ... --participant repo=FULL_SHA --verdict pass --platform linux --artifact RECEIPT

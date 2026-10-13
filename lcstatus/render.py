@@ -211,7 +211,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
                 lag += f" (oldest age: {app['oldest_age_days']:.2f} days)"
             detail = json.dumps({"hashes": app["hashes"], "missing": app["missing"],
                                  "errors": app["errors"], "superseded": app["superseded"]}, sort_keys=True)
-            w(f"| {markdown_cell(app['name'])} | {markdown_cell(label)} ({app['color']}) | {markdown_cell(lag)} | {markdown_cell(app['coupled'])} | {markdown_cell(detail)} |")
+            w(f"| {markdown_cell(app['name'])} | {markdown_cell(label)} ({app['color']}) | {markdown_cell(lag)} | {markdown_cell(app['coupled'])} ({app['coupled_color']}) | {markdown_cell(detail)} |")
         w("")
     sc = p["release"]["automate_scope"]
     w("## First-release automation scope")
@@ -350,8 +350,9 @@ function render(view){
   if(p.installed_apps&&p.installed_apps.length){
     h+=`<h2>Installed builds</h2><div class="grid">${p.installed_apps.filter(a=>view==='overview'||view==='release'||a.app===view).map(a=>{
       const cls={red:'p-bad',amber:'p-warn',green:'p-ok',neutral:'p-mute'}[a.color];
+      const couplingCls={red:'p-bad',green:'p-ok',neutral:'p-mute'}[a.coupled_color];
       const prs=a.merges.flatMap(m=>m.prs||[]).map(n=>'#'+n).join(', ');
-      return `<div class="card"><h3>${esc(a.name)}</h3><p><span class="pill ${cls}">${esc(a.label)}</span>${a.revision?'<code>'+esc(a.revision)+'</code>':''}</p><p>Lag: ${esc(a.lag)} ${esc(prs)}${a.oldest_age_days!=null?' · oldest age: '+esc(a.oldest_age_days.toFixed(2))+' days':''}</p><p>Coupled set: ${esc(a.coupled)}</p><details><summary>Installed evidence</summary><pre>${esc(JSON.stringify({hashes:a.hashes,missing:a.missing,errors:a.errors,promotion_id:a.promotion_id,superseded:a.superseded},null,2))}</pre></details></div>`;
+      return `<div class="card"><h3>${esc(a.name)}</h3><p><span class="pill ${cls}">${esc(a.label)}</span>${a.revision?'<code>'+esc(a.revision)+'</code>':''}</p><p>Lag: ${esc(a.lag)} ${esc(prs)}${a.oldest_age_days!=null?' · oldest age: '+esc(a.oldest_age_days.toFixed(2))+' days':''}</p><p>Coupled set: <span class="pill ${couplingCls}">${esc(a.coupled)}</span></p><details><summary>Installed evidence</summary><pre>${esc(JSON.stringify({hashes:a.hashes,missing:a.missing,errors:a.errors,promotion_id:a.promotion_id,superseded:a.superseded},null,2))}</pre></details></div>`;
     }).join('')}</div>`;
   }
   const show = view==='overview'? p.tasks : view==='release' ? p.tasks.filter(t=>t.layer==='release') : p.tasks.filter(t=>t.app===view);
