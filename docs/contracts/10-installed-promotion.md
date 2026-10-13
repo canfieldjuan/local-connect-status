@@ -171,3 +171,28 @@ Out of scope:
 1. **Cadence: accepted.** Promote as proven; publish when all proven.
 2. **Lag limit: seven days** for the oldest unpromoted shipped merge. `security` and `data-loss` labels go
    red at once.
+
+## Proposed amendment — first promotion rollback (pending decision)
+
+This proposal is not accepted and does not authorize implementation.
+
+P1 requires the rollback package to be the previously promoted package. The one-time backfill
+creates the first promotion records, so neither app has a previously promoted package. The
+contract does not define how that first record supplies its rollback fields.
+
+Proposed decision:
+
+- For an app and platform with no earlier promotion record, permit the retained package whose
+  program bytes match the current install to serve as the bootstrap rollback package. Record its
+  path and independently computed sha256, and explicitly mark the rollback as bootstrap evidence.
+- This permission applies only to the first promotion record. Later records must name the retained
+  package from the previous promotion; the bootstrap rule cannot replace that requirement.
+- All main first-parent, package/program hash, exact-revision gate, installed smoke, participant
+  and human observation requirements remain mandatory. Bootstrap is not a gate waiver and is
+  never public release evidence.
+- Neither the collector nor the recorder installs or reinstalls a package. Rollback remains an
+  operator action.
+
+Alternative: require the operator to identify a distinct retained and qualified rollback package
+for the initial record, with an explicit contract rule for admitting it before any promotion exists.
+Until the decision is accepted, no bootstrap recording behavior is implemented and no backfill is run.
