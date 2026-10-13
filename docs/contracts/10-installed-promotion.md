@@ -187,3 +187,30 @@ Accepted by the operator on 2026-10-13 before implementation (PR #22).
 - All main first-parent, package/program hash, installed smoke, participant and human observation
   requirements remain mandatory. A starting point is not a gate waiver or public release evidence.
 - Neither collector nor recorder installs or reinstalls software; rollback remains an operator action.
+
+## Proposed amendment — unavailable installed pin data (pending decision)
+
+This proposal is not accepted and does not authorize implementation.
+
+P5 requires SDK, protocol and schema pins read from the installed package's lock data. Read-only
+archive inspection of the retained Invoice Processor `c698339` and Email Watcher `d36d6c6`
+packages found no standalone lock file: their payloads contain respectively nine and four regular
+files, consisting of programs, desktop/icon assets and, for Invoice Processor, systemd units.
+No claim is made about metadata embedded inside their executable payloads.
+
+Before coding P5's source adapter, identify the installed lock location or embedded format and
+its mapping to SDK revision, protocol version, schema identity and participant repositories.
+If no readable installed lock data exists, the proposed decision is:
+
+- Preserve the P2 result derived from installed program hashes, and report the P5 condition as
+  `unavailable`, blocking an overall `current` claim. Missing lock data never proves that an
+  installed app has no coupled pins or that a set is compatible.
+- A set record cannot clear unavailable pin evidence. It clears a known disagreement only when
+  the installed participants and their readable pins are covered by that one record.
+- Never substitute a folder name, source tree, commit title, or operator prose for installed
+  pin data. The collector and recorder never change a product package to create that evidence.
+- Fixture packages carry explicit lock data for the P5 disagreement/set-record tests. Real
+  package changes, if needed, remain outside this goal and require separate operator action.
+
+Alternative: supply the existing readable installed lock source and format, retaining the accepted
+P5 behavior without this amendment. Implementation is paused pending that decision.
