@@ -1,7 +1,7 @@
 # Contract 10 — What is installed is a recorded promotion, and the dashboard shows it
 
-Status: **proposed 2026-10-13, revision 1**. It needs operator acceptance before any implementation
-commit, and it needs the two operator decisions listed at the end.
+Status: **accepted 2026-10-13, revision 1** (operator: "I accept contract 10, 7 day lag limit").
+Both operator decisions are made: the two-tier cadence is accepted, and the lag limit is 7 days.
 
 Contract 09 and `docs/RELEASE_CONTRACT.md` define the *public* release, which is a GitHub release
 with installers. They say nothing about what runs on the operator's own machine. This contract adds
@@ -94,7 +94,7 @@ after the promoted revision that touch shipped paths. Merges that touch only doc
 do not count. The shipped path globs are per app in the catalogue.
 - **current**: there are no such merges.
 - **behind**: amber. It shows the PR numbers and the age of the oldest.
-- **stale**: red. The oldest unpromoted shipped merge is older than the lag limit (operator decision 2),
+- **stale**: red. The oldest unpromoted shipped merge is older than the 7-day lag limit (operator decision 2),
   or the merge is labelled `security` or `data-loss`. Those two labels go red at once.
 
 **P5 — Coupled sets are recorded together.**
@@ -166,9 +166,8 @@ Out of scope:
 | Mutations | Each must fail a test: count docs-only merges; accept hash mismatch; label from folder name; skip the main-ancestry check |
 | Backfill | The two real records are written; the live dashboard shows Invoice Processor and Email Watcher `promoted`/`behind` and the other two `unrecorded install` |
 
-## Operator decisions needed
+## Operator decisions (made 2026-10-13)
 
-1. **Cadence.** Accept the two-tier rule above (promote as proven, publish when all proven), or choose
-   promotion only at milestones.
-2. **Lag limit** for red. Proposed: **7 days** for the oldest unpromoted shipped merge. `security` and
-   `data-loss` labels go red at once.
+1. **Cadence: accepted.** Promote as proven; publish when all proven.
+2. **Lag limit: 7 days** for the oldest unpromoted shipped merge. `security` and `data-loss` labels go
+   red at once.
