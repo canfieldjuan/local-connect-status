@@ -569,6 +569,35 @@ def test_p5_contract_schema_and_protocol_pins_are_data_not_folder_labels(fixture
         revision_pins(Changed(), "fixture", f.revision, config)
 
 
+def test_p5_contracts_pin_members_that_are_not_json_are_hashed_not_parsed(fixture):
+    """The real Invoice Processor pin lists a README and Python oracles beside the schemas."""
+    import hashlib
+    f = fixture
+    files = {
+        "v2/job.schema.json": json.dumps({"properties": {"protocol_version": {"const": 2}}}),
+        "fixtures/README.md": "# conformance fixtures\n",
+        "tests/oracle.py": "import json\n",
+        "fixtures/golden.json": json.dumps([{"case": 1}]),
+    }
+    digest = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    pin = json.dumps({"repository": "canfieldjuan/connect-contracts", "commit": PIN,
+                      "files": {name: {"source_path": name, "sha256": digest(text)}
+                                for name, text in files.items()}})
+    class Locks:
+        def show(self, repo, revision, path):
+            return pin if repo == "fixture" else files[path]
+    config = {"pin_sources": [{"format": "contracts", "path": "pin.json"}]}
+    pins = revision_pins(Locks(), "fixture", f.revision, config)
+    assert pins["values"]["protocol"] == ["2"]
+    assert {k for k in pins["values"] if k.startswith("schema:")} == {"schema:" + n for n in files}
+    files["fixtures/golden.json"] = "not json"
+    pin = json.dumps({"repository": "canfieldjuan/connect-contracts", "commit": PIN,
+                      "files": {name: {"source_path": name, "sha256": digest(text)}
+                                for name, text in files.items()}})
+    with pytest.raises(ValueError, match="pinned JSON member is malformed"):
+        revision_pins(Locks(), "fixture", f.revision, config)
+
+
 def test_collector_tick_and_render_only_preserve_installed_observation(fixture, monkeypatch):
     f = fixture; assert record(f) == 0
     path = f.root / "catalogue.json"; path.write_text(json.dumps(f.cat))

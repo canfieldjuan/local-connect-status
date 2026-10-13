@@ -126,8 +126,16 @@ def revision_pins(mirrors: Any, repo: str, revision: str, config: dict[str, Any]
                 schema_text = mirrors.show("connect-contracts", doc["commit"], entry["source_path"])
                 if schema_text is None or hashlib.sha256(schema_text.encode()).hexdigest() != digest:
                     raise ValueError(f"{path}: pinned schema is missing or has a hash mismatch")
-                schema = json.loads(schema_text)
-                protocol = schema.get("properties", {}).get("protocol_version", {}).get("const")
+                # A contracts pin also carries non-JSON members (README, conformance oracles):
+                # every member is hash-verified, but only JSON members can declare a protocol.
+                if not entry["source_path"].endswith(".json"):
+                    continue
+                try:
+                    schema = json.loads(schema_text)
+                except ValueError:
+                    raise ValueError(f"{path}: pinned JSON member is malformed: {name}") from None
+                protocol = (schema.get("properties", {}).get("protocol_version", {}).get("const")
+                            if isinstance(schema, dict) else None)
                 if protocol is not None:
                     if type(protocol) is not int:
                         raise ValueError(f"{path}: pinned protocol must be an integer")
