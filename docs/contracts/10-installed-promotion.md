@@ -101,7 +101,8 @@ do not count. The shipped path globs are per app in the catalogue.
 - A promotion record lists every participant revision.
 - When an app's installed revision pins another app's interface, the dashboard shows red until a single
   set record covers all participants. Pins include the SDK revision, protocol version and contract
-  schemas, read from the installed package's lock data.
+  schemas, read through the matching P1 record's exact revision locks in the owned bare mirrors
+  (accepted amendment below).
 
 **P6 — Goals name their finish line.** A Codex goal states either "merged to main" or
 "promoted `<app>` to `<revision>`". Oversight verifies a "promoted" claim only against a P1 record and a
@@ -188,29 +189,19 @@ Accepted by the operator on 2026-10-13 before implementation (PR #22).
   requirements remain mandatory. A starting point is not a gate waiver or public release evidence.
 - Neither collector nor recorder installs or reinstalls software; rollback remains an operator action.
 
-## Proposed amendment — unavailable installed pin data (pending decision)
+## Accepted amendment — pins through the recorded revision
 
-This proposal is not accepted and does not authorize implementation.
+Accepted by the operator on 2026-10-13 before implementation (PR #22,
+operator acceptance in comment 6154153726). This supersedes the pending unavailable-installed-lock
+proposal.
 
-P5 requires SDK, protocol and schema pins read from the installed package's lock data. Read-only
-archive inspection of the retained Invoice Processor `c698339` and Email Watcher `d36d6c6`
-packages found no standalone lock file: their payloads contain respectively nine and four regular
-files, consisting of programs, desktop/icon assets and, for Invoice Processor, systemd units.
-No claim is made about metadata embedded inside their executable payloads.
-
-Before coding P5's source adapter, identify the installed lock location or embedded format and
-its mapping to SDK revision, protocol version, schema identity and participant repositories.
-If no readable installed lock data exists, the proposed decision is:
-
-- Preserve the P2 result derived from installed program hashes, and report the P5 condition as
-  `unavailable`, blocking an overall `current` claim. Missing lock data never proves that an
-  installed app has no coupled pins or that a set is compatible.
-- A set record cannot clear unavailable pin evidence. It clears a known disagreement only when
-  the installed participants and their readable pins are covered by that one record.
-- Never substitute a folder name, source tree, commit title, or operator prose for installed
-  pin data. The collector and recorder never change a product package to create that evidence.
-- Fixture packages carry explicit lock data for the P5 disagreement/set-record tests. Real
-  package changes, if needed, remain outside this goal and require separate operator action.
-
-Alternative: supply the existing readable installed lock source and format, retaining the accepted
-P5 behavior without this amendment. Implementation is paused pending that decision.
+- P5 reads SDK, protocol and schema pins from the lock files (`uv.lock`, `Cargo.lock` and the
+  `connect-contracts` pins) at the exact revision named in the app's matching P1 promotion record,
+  through the owned bare mirrors at that revision.
+- The evidence chain is installed program hashes -> matching P1 record -> full revision -> lock
+  data at that revision. The record's human observation attests the build. Current main's locks
+  cannot substitute for the recorded revision's locks.
+- P5 is `unavailable` only when the app has no matching P1 record. Folder names, commit titles and
+  prose never provide pin evidence.
+- A known disagreement is red on every coupled participant until one set record covers them.
+  Product packaging, installation and the live dashboard checkout remain outside this goal.
