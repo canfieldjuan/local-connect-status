@@ -59,15 +59,312 @@
   "apps": {
     "email-watcher": {
       "name": "Email Watcher",
-      "repo": "eom-email-watcher"
+      "repo": "eom-email-watcher",
+      "promotion": {
+        "programs": [
+          "/usr/bin/eom-email-watcher-desktop",
+          "/usr/bin/eom-mail-engine"
+        ],
+        "shipped_paths": [
+          "src/**",
+          "desktop/**",
+          "packaging/**",
+          "scripts/build*",
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "smoke": {
+          "argv": [
+            "/usr/bin/eom-mail-engine"
+          ],
+          "stdin": {
+            "protocol": 1,
+            "operation": "health.get",
+            "config_path": "$EOM_SMOKE_CONFIG",
+            "payload": {}
+          },
+          "expected": {
+            "ok": true
+          }
+        },
+        "automated_checks": [
+          "ew.ci.test",
+          "ew.ci.desktop",
+          "ew.pytest.connect_v2",
+          "ew.pytest.connect_v1",
+          "ew.pytest.queue_retry",
+          "ew.pytest.adapters",
+          "ew.pytest.notify",
+          "ew.pytest.scheduling",
+          "ew.pytest.automation",
+          "ew.pytest.entitlement"
+        ],
+        "pin_sources": [
+          {
+            "path": "uv.lock",
+            "format": "uv",
+            "dependencies": {
+              "connect-automate": "connect-automate"
+            }
+          },
+          {
+            "path": "desktop/src-tauri/Cargo.lock",
+            "format": "cargo",
+            "dependencies": {}
+          }
+        ],
+        "smoke_check": "promotion.smoke.email-watcher",
+        "standing_gates": [],
+        "lag_limit": {
+          "days": 7
+        },
+        "conditions": [
+          {
+            "id": "promotion.email-watcher.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.email-watcher.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.email-watcher.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.email-watcher",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
+        ]
+      }
     },
     "document-summarizer": {
       "name": "Document Summarizer",
-      "repo": "document-summarizer"
+      "repo": "document-summarizer",
+      "promotion": {
+        "programs": [
+          "/usr/bin/document-summarizer"
+        ],
+        "shipped_paths": [
+          "src/**",
+          "src-tauri/**",
+          "scripts/**",
+          "package.json",
+          "package-lock.json"
+        ],
+        "smoke": {
+          "argv": [
+            "/usr/bin/document-summarizer"
+          ],
+          "expected": {
+            "observation": "window launches"
+          }
+        },
+        "automated_checks": [
+          "ds.ci.rust",
+          "ds.cargo.lib"
+        ],
+        "pin_sources": [
+          {
+            "path": "src-tauri/Cargo.lock",
+            "format": "cargo",
+            "dependencies": {}
+          }
+        ],
+        "smoke_check": "promotion.smoke.document-summarizer",
+        "standing_gates": [],
+        "lag_limit": {
+          "days": 7
+        },
+        "conditions": [
+          {
+            "id": "promotion.document-summarizer.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.document-summarizer.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.document-summarizer.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-summarizer",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
+        ]
+      }
     },
     "invoice-processor": {
       "name": "Invoice Processor",
-      "repo": "invoice-processor"
+      "repo": "invoice-processor",
+      "promotion": {
+        "programs": [
+          "/usr/bin/invoice-processor-desktop",
+          "/usr/bin/invoice-processor-engine",
+          "/usr/bin/local-connect-model-host"
+        ],
+        "shipped_paths": [
+          "src/**",
+          "desktop/**",
+          "scripts/build*",
+          "scripts/sidecar_entry.py",
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "smoke": {
+          "argv": [
+            "/usr/bin/invoice-processor-engine",
+            "runtime-check"
+          ],
+          "expected": {
+            "exit_code": 0
+          }
+        },
+        "automated_checks": [
+          "ip.pytest.all"
+        ],
+        "pin_sources": [
+          {
+            "path": "uv.lock",
+            "format": "uv",
+            "dependencies": {
+              "connect-automate": "connect-automate"
+            }
+          },
+          {
+            "path": "desktop/src-tauri/Cargo.lock",
+            "format": "cargo",
+            "dependencies": {}
+          },
+          {
+            "path": "tests/connect_fixtures/fixed_parameters_v1/pin.json",
+            "format": "contracts"
+          }
+        ],
+        "smoke_check": "promotion.smoke.invoice-processor",
+        "standing_gates": [
+          {
+            "check": "promotion.gate.ip_coi",
+            "paths": [
+              "src/invoice_processor/certificate/**",
+              "src/invoice_processor/connect/**",
+              "src/invoice_processor/extract.py",
+              "src/invoice_processor/pipeline.py",
+              "src/invoice_processor/verify.py",
+              "src/invoice_processor/setup/**",
+              "src/invoice_processor/entitlement/**",
+              "pyproject.toml",
+              "uv.lock",
+              "desktop/**",
+              "scripts/build_desktop_sidecar.py",
+              "scripts/sidecar_entry.py",
+              "tests/connect_fixtures/fixed_parameters_v1/pin.json"
+            ]
+          }
+        ],
+        "lag_limit": {
+          "days": 7
+        },
+        "conditions": [
+          {
+            "id": "promotion.invoice-processor.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.invoice-processor.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.invoice-processor.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.invoice-processor",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
+        ]
+      }
+    },
+    "document-ocr": {
+      "name": "Document OCR",
+      "repo": "document-ocr",
+      "promotion": {
+        "programs": [
+          "/usr/bin/document-ocr"
+        ],
+        "shipped_paths": [
+          "src/**",
+          "packaging/**",
+          "scripts/build_linux_package.py",
+          "scripts/package_entry.py",
+          "pyproject.toml",
+          "uv.lock"
+        ],
+        "smoke": {
+          "argv": [
+            "/usr/bin/document-ocr",
+            "--help"
+          ],
+          "expected": {
+            "exit_code": 0
+          }
+        },
+        "automated_checks": [
+          "ocr.pytest.all"
+        ],
+        "pin_sources": [
+          {
+            "path": "uv.lock",
+            "format": "uv",
+            "dependencies": {}
+          }
+        ],
+        "smoke_check": "promotion.smoke.document-ocr",
+        "standing_gates": [],
+        "lag_limit": {
+          "days": 7
+        },
+        "conditions": [
+          {
+            "id": "promotion.document-ocr.install",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "install",
+            "proves": "Observe installed program hashes and match a recorded promotion."
+          },
+          {
+            "id": "promotion.document-ocr.lag",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "lag",
+            "proves": "Observe shipped first-parent merge lag after the matched promoted revision."
+          },
+          {
+            "id": "promotion.document-ocr.coupled",
+            "kind": "installed_observation",
+            "check": "promotion.observe.document-ocr",
+            "aspect": "coupled",
+            "proves": "Compare shared exact-promoted-revision lock pins across installed participants."
+          }
+        ]
+      }
     }
   },
   "checks": {
@@ -671,6 +968,70 @@
       "platform": "n/a",
       "milestone": "First Public Release",
       "note": "Record every open Document OCR issue in the exact First Public Release milestone; API failure is unavailable, never an empty gate."
+    },
+    "ocr.pytest.all": {
+      "runner": "pytest",
+      "repo": "document-ocr",
+      "args": [],
+      "platform": "linux"
+    },
+    "promotion.smoke.email-watcher": {
+      "runner": "manual_observation",
+      "repo": "eom-email-watcher",
+      "platform": "linux",
+      "note": "Operator observes the catalogue promotion smoke on the installed build at this exact revision. Recorder never executes this command."
+    },
+    "promotion.smoke.invoice-processor": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "note": "Operator observes the catalogue promotion smoke on the installed build at this exact revision. Recorder never executes this command."
+    },
+    "promotion.smoke.document-summarizer": {
+      "runner": "manual_observation",
+      "repo": "document-summarizer",
+      "platform": "linux",
+      "note": "Operator observes the catalogue promotion smoke on the installed build at this exact revision. Recorder never executes this command."
+    },
+    "promotion.smoke.document-ocr": {
+      "runner": "manual_observation",
+      "repo": "document-ocr",
+      "platform": "linux",
+      "note": "Operator observes the catalogue promotion smoke on the installed build at this exact revision. Recorder never executes this command."
+    },
+    "promotion.gate.ip_coi": {
+      "runner": "manual_observation",
+      "repo": "invoice-processor",
+      "platform": "linux",
+      "note": "CERTIFICATE-EXTRACT section 8.1: exact final-build native same-input COI parity, exhaustive record/provenance comparison, replay/restart/projection and shutdown. A person records retained receipts; this repository never runs the GPU gate."
+    },
+    "promotion.observe.email-watcher": {
+      "runner": "installed_observation",
+      "repo": "eom-email-watcher",
+      "app": "email-watcher",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.document-summarizer": {
+      "runner": "installed_observation",
+      "repo": "document-summarizer",
+      "app": "document-summarizer",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.invoice-processor": {
+      "runner": "installed_observation",
+      "repo": "invoice-processor",
+      "app": "invoice-processor",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "promotion.observe.document-ocr": {
+      "runner": "installed_observation",
+      "repo": "document-ocr",
+      "app": "document-ocr",
+      "platform": "linux",
+      "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
     }
   },
   "tasks": [
@@ -1616,5 +1977,13 @@
         }
       ]
     }
+  ],
+  "promotion_sets": [
+    [
+      "email-watcher",
+      "invoice-processor",
+      "document-summarizer",
+      "document-ocr"
+    ]
   ]
 }

@@ -37,6 +37,8 @@ KINDS = (
     "issue_gate",           # open release-milestone issues observed through GitHub
     "release_artifact",     # a published release the public can download
     "collection_failure",   # a source could not be read; the absence of data is data
+    "promotion",            # human attestation of a gated main build actually installed
+    "installed_observation", # read-only installed program hashes and exact-revision lock facts
 )
 
 VERDICTS = ("pass", "fail", "skip", "unavailable", "pending", "partial", "unknown", "inconclusive")
@@ -100,11 +102,11 @@ def condition_fingerprint_map(
     catalogue: dict[str, Any], condition_ids: Iterable[str],
 ) -> dict[str, str]:
     """Fingerprints for the named conditions in a loaded catalogue."""
+    from .catalogue import all_conditions
     wanted = set(condition_ids)
     return {
         condition["id"]: condition_fingerprint(condition)
-        for task in catalogue.get("tasks", [])
-        for condition in task.get("conditions", [])
+        for condition in all_conditions(catalogue)
         if condition["id"] in wanted
     }
 
@@ -312,7 +314,7 @@ class Record:
             key["old"] = self.detail.get("old")
             if self.kind == "change":
                 key["commits_complete"] = self.detail.get("commits_complete", True)
-        elif self.kind in ("issue_gate", "release_artifact"):
+        elif self.kind in ("issue_gate", "release_artifact", "promotion", "installed_observation"):
             key["summary"] = self.summary
             key["detail"] = self.detail
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
@@ -341,6 +343,8 @@ class Record:
             for name in ("type", "check", "collector_code", "repo_config")
             if name in self.source
         }
+        if self.kind == "installed_observation":
+            stable_source["app"] = self.source.get("app")
         fingerprint = resolve_check_fingerprint(record_check_fingerprint(self))
         if fingerprint is not None:
             stable_source["check_fingerprint"] = fingerprint
@@ -350,7 +354,7 @@ class Record:
         key = {
             "kind": self.kind,
             "repo": self.repo,
-            "revision": self.revision,
+            "revision": "" if self.kind == "installed_observation" else self.revision,
             "platform": self.platform,
             "condition_ids": sorted(self.condition_ids),
             "source": stable_source,

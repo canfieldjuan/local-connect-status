@@ -33,6 +33,8 @@ A demo whose participants' revisions no longer match current heads is shown, but
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from typing import Any
 
 from .catalogue import declared_participants, participants_required
@@ -43,6 +45,184 @@ from .evidence import (
 
 AUTOMATED = ("automated_test", "ci_run")
 PROVING_VERDICT = ("pass",)
+
+
+def shipped_path(path: str, globs: list[str]) -> bool:
+    # The shipped surface excludes evidence and tests even if a broad catalogue glob includes it.
+    segments = path.split("/")
+    filename = segments[-1]
+    if (set(segments[:-1]) & {"docs", "contracts", "tests", "test", "plans"}
+            or path.endswith((".md", ".rst")) or ".test." in filename
+            or filename.startswith("test_") or filename.endswith("_test.py")):
+        return False
+    return any(fnmatchcase(path, pattern) for pattern in globs)
+
+
+def promotion_records(app: str, row: dict[str, Any], records: list[Record], platform: str) -> list[Record]:
+    return [r for r in records if r.kind == "promotion" and r.verdict == "pass"
+            and r.platform == platform and row["repo"] in r.participants
+            and r.source.get("observed_by", "").strip()
+            and app in r.detail.get("members", {})
+            and r.detail["members"][app].get("config") == check_fingerprint(row["promotion"])]
+
+
+def matching_promotion(app: str, row: dict[str, Any], records: list[Record], observed: dict[str, Any],
+                       platform: str = "linux") -> Record | None:
+    if observed.get("missing") or observed.get("errors") or not observed.get("hashes"):
+        return None
+    candidates = [r for r in promotion_records(app, row, records, platform)
+                  if r.detail["members"][app].get("program_hashes") == observed["hashes"]
+                  and set(observed["hashes"]) == set(row["promotion"]["programs"])]
+    if not candidates:
+        return None
+    return max(enumerate(candidates), key=lambda pair: (instant_key(pair[1].recorded_at), pair[0]))[1]
+
+
+def required_promotion_checks(config: dict[str, Any], paths: list[str]) -> list[str]:
+    checks = list(config["automated_checks"]) + [config["smoke_check"]]
+    for gate in config["standing_gates"]:
+        if any(fnmatchcase(path, pattern) for path in paths for pattern in gate["paths"]):
+            checks.append(gate["check"])
+    return list(dict.fromkeys(checks))
+
+
+def validate_promotion_member(app: str, row: dict[str, Any], revision: str, main_history: list[str],
+                              package_hashes: dict[str, str], observed: dict[str, Any],
+                              gate_ids: list[str], paths: list[str], records: list[Record],
+                              catalogue: dict[str, Any], participants: dict[str, str],
+                              platform: str) -> None:
+    """P1/P3's admission owner; every refusal happens before Store.add in the recorder."""
+    if revision not in main_history:
+        raise ValueError("revision is not on main first-parent history")
+    if (observed["missing"] or observed["errors"] or observed["hashes"] != package_hashes
+            or set(package_hashes) != set(row["promotion"]["programs"])):
+        raise ValueError("installed program/package hash mismatch")
+    by_id = {r.record_id: r for r in records}
+    if any(record_id not in by_id for record_id in gate_ids):
+        raise ValueError("missing gate record")
+    supplied = [by_id[record_id] for record_id in gate_ids]
+    for check_id in required_promotion_checks(row["promotion"], paths):
+        check = catalogue["checks"][check_id]
+        candidates = [r for r in records if r.source.get("check") == check_id
+                      and r.repo == check["repo"] and r.revision == revision
+                      and r.platform == check.get("platform", platform)
+                      and resolve_check_fingerprint(record_check_fingerprint(r)) == check_fingerprint(check)]
+        if not candidates:
+            if any(r.source.get("check") == check_id and r.revision != revision for r in supplied):
+                raise ValueError("gate record is for another revision")
+            raise ValueError(f"missing exact-revision gate: {check_id}")
+        gate = max(enumerate(candidates), key=lambda pair: (instant_key(pair[1].recorded_at), pair[0]))[1]
+        allowed_kind = "ci_run" if check["runner"] == "ci_job" else (
+            "installed_demo" if check["runner"] == "manual_observation" else "automated_test")
+        if gate.record_id not in gate_ids or gate.kind != allowed_kind or gate.verdict != "pass":
+            raise ValueError(f"missing passing latest gate record: {check_id}")
+        if gate.kind == "automated_test" and (not gate.executed or gate.failed != 0):
+            raise ValueError(f"gate executed no passing tests: {check_id}")
+        if gate.kind == "installed_demo" and not gate.source.get("observed_by", "").strip():
+            raise ValueError(f"gate is missing human observation: {check_id}")
+        if participants_required(check) and gate.participants != {
+                repo: participants.get(repo) for repo in declared_participants(check)}:
+            raise ValueError(f"gate participants do not match this promotion: {check_id}")
+
+
+def installed_statuses(catalogue: dict[str, Any], records: list[Record], *, at: str | None = None,
+                       platform: str = "linux") -> list[dict[str, Any]]:
+    """P2/P4/P5 labels, independent of every existing capability and public-release status."""
+    statuses: dict[str, dict[str, Any]] = {}
+    selected: dict[str, Record] = {}
+    snapshots: dict[str, Record] = {}
+    now = instant_key(at)[1] if at else datetime.now(timezone.utc).timestamp()
+    for app, row in catalogue.get("apps", {}).items():
+        if "promotion" not in row:
+            continue
+        observations = [r for r in records if r.kind == "installed_observation"
+                        and r.detail.get("app") == app and r.platform == platform
+                        and r.source.get("promotion_config") == check_fingerprint(row["promotion"])
+                        and r.source.get("set_config") == check_fingerprint({"sets": catalogue.get("promotion_sets", [])})
+                        and all(c["id"] in r.condition_ids
+                                and r.source.get("check") == c["check"]
+                                and resolve_check_fingerprint(record_check_fingerprint(r)) == check_fingerprint(catalogue["checks"][c["check"]])
+                                and record_condition_fingerprint(r, c["id"]) == condition_fingerprint(c)
+                                for c in row["promotion"]["conditions"])]
+        snapshot = max(enumerate(observations), key=lambda p: (instant_key(p[1].recorded_at), p[0]))[1] if observations else None
+        observed = snapshot.detail["installed"] if snapshot else {"hashes": {}, "missing": [], "errors": {"observation": "no installed observation"}}
+        history = promotion_records(app, row, records, platform)
+        match = matching_promotion(app, row, records, observed, platform)
+        item: dict[str, Any] = {"app": app, "name": row["name"], "platform": platform,
+                                "hashes": observed["hashes"], "missing": observed["missing"],
+                                "errors": dict(observed["errors"]), "revision": None,
+                                "promotion_id": None, "superseded": [], "lag": "unavailable",
+                                "merges": [], "oldest_age_days": None, "coupled": "unavailable",
+                                "coupled_color": "red",
+                                "current": False, "color": "red"}
+        if observed["errors"]:
+            item["label"] = "unavailable"
+        elif observed["missing"]:
+            item["label"] = "promoted build missing" if history else "not installed"
+            if not history:
+                item["color"] = "neutral"
+        elif match is None:
+            item["label"] = "unrecorded install"
+        else:
+            selected[app] = match
+            snapshots[app] = snapshot
+            item.update(label="promoted", revision=match.participants[row["repo"]],
+                        promotion_id=match.record_id, color="green", coupled="not compared",
+                        coupled_color="neutral",
+                        superseded=[r.record_id for r in history if r.record_id != match.record_id])
+            if snapshot.detail.get("promotion_id") != match.record_id:
+                item["errors"]["observation"] = "installed facts predate this promotion record; collect again"
+            for field in ("history_error", "pin_error"):
+                if snapshot.detail.get(field):
+                    item["errors"][field] = snapshot.detail[field]
+            item["pins"] = snapshot.detail.get("pins", {})
+            merges = [m for m in snapshot.detail.get("merges", [])
+                      if any(shipped_path(p, row["promotion"]["shipped_paths"]) for p in m["paths"])]
+            item["merges"] = merges
+            if not item["errors"]:
+                item["lag"] = "current"
+                if merges:
+                    oldest = min(instant_key(m["committed_at"])[1] for m in merges)
+                    age = max(0, (now - oldest) / 86400)
+                    item["oldest_age_days"] = age
+                    urgent = any(set(m.get("labels", [])) & {"security", "data-loss"} for m in merges)
+                    stale = urgent or age > row["promotion"]["lag_limit"]["days"]
+                    item["lag"] = "stale" if stale else "behind"
+                    item["color"] = "red" if stale else "amber"
+            else:
+                item["color"] = "red"
+                if "pin_error" in item["errors"]:
+                    item["coupled"] = "blocked"
+                    item["coupled_color"] = "red"
+        statuses[app] = item
+    # A disagreement is determined only from explicit shared locked identities, not names of
+    # evidence directories. One atomic P1 set record has to cover all currently installed bytes.
+    for group in catalogue.get("promotion_sets", []):
+        members = [app for app in group if app in selected]
+        values: dict[str, dict[str, tuple[str, ...]]] = {}
+        for app in members:
+            for key, pins in statuses[app].get("pins", {}).get("values", {}).items():
+                values.setdefault(key, {})[app] = tuple(pins)
+        compared = {key: pins for key, pins in values.items() if len(pins) >= 2}
+        if not compared:
+            continue
+        members = [app for app in members if any(app in pins for pins in compared.values())]
+        disagreement = any(len(set(pins.values())) > 1 or any(len(p) > 1 for p in pins.values())
+                           for pins in compared.values())
+        same_set = len({selected[app].record_id for app in members}) == 1
+        set_record = selected[members[0]]
+        covered = same_set and all(
+            catalogue["apps"][app]["repo"] in set_record.participants for app in members)
+        for app in members:
+            statuses[app]["coupled"] = "clear" if not disagreement or covered else "coupled-set mismatch"
+            statuses[app]["coupled_color"] = "green" if not disagreement or covered else "red"
+            if disagreement and not covered:
+                statuses[app]["color"] = "red"
+    for item in statuses.values():
+        item["current"] = item["label"] == "promoted" and item["lag"] == "current" and item["coupled"] in ("clear", "not compared") and not item["errors"]
+        item["conditions"] = [{**condition, "state": item[condition["aspect"]] if condition["aspect"] != "install" else item["label"]}
+                              for condition in catalogue["apps"][item["app"]]["promotion"]["conditions"]]
+    return list(statuses.values())
 
 
 @dataclass

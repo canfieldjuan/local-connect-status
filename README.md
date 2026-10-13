@@ -283,3 +283,65 @@ since verification" because nobody has re-run it.
 Also recorded during bring-up, and left in the store on purpose: a change record with a
 fabricated baseline (`41267c6b4fd8`, `0 files`) from a run where the operator-supplied sha was
 wrong. It is the reason change records now carry their origin in their identity.
+
+## Installed promotions (Contract 10)
+
+The accepted cadence is per-app promotion as proven; public publication still waits for the
+Contract 09 release evidence. A merge does not install anything. The collector reads the catalogue's
+installed program bytes on each tick, including ticks with local runners disabled. It never executes
+the listed smoke command, installs, removes, or starts product software. Render-only uses stored
+observations, so it also never reads the installed programs.
+
+The installed-build section is rendered from `lcstatus/rules.py` in all three outputs. It shows
+`promoted` with the full revision, `unrecorded install` (red), `not installed`, `unavailable`, or
+`promoted build missing` (red). A qualification build replacing a promoted program becomes an
+unrecorded install on the next tick; restoring the promoted bytes restores the matching label.
+Program hashes, missing paths, source errors, promotion record IDs and superseded record IDs remain
+visible. None of these records satisfy an existing capability, demonstration or public-release gate.
+
+Lag compares first-parent merge trees to their first parents after the promoted revision and filters
+through each app's shipped globs. Documentation, contract and test-only changes do not count. The
+oldest shipped merge makes the app amber while behind and red past the seven-day limit. GitHub PR
+labels `security` or `data-loss` make it red immediately; names and commit titles do not provide
+those labels. An unreadable history or label source blocks `current` instead of looking empty.
+
+Pins follow the accepted chain: installed hashes -> human P1 record -> full promoted revision ->
+locks through the owned bare mirror. Current main's locks never stand in for the promoted build's
+locks. Explicit shared locked identities are compared across the catalogue's coupled sets; a known
+disagreement is red until one atomic set record covers those installed participant revisions. No
+matching P1 record means P5 is unavailable. A failed lock read is a source failure, never clearance.
+Coupling is `clear` only when at least two installed members share a key that was compared. Without
+a shared key it is `not compared`, rendered neutral; this does not block `current` and never claims
+compatibility. An agreeing comparison is green; a disagreement remains red until the set record.
+Each installed, lag and coupled assertion is a catalogue condition backed by the app's one
+`installed_observation` check. The snapshot carries the check, condition and input fingerprints;
+records without those attributions or under an older catalogue cannot support a current assertion.
+Standing-gate selection uses the union of every path touched since the previous promotion,
+including paths that were changed and then restored, rather than only the endpoint tree diff.
+
+A person records the catalogue's installed smoke and standing gates with the existing
+`--check ... --participant repo=FULL_SHA --verdict pass --platform linux --artifact RECEIPT
+--summary SUMMARY --observed-at TIMESTAMP --observed-by PERSON` form. This repository does not run
+those installed checks. A failed smoke observation remains failed evidence; the operator/product
+owns reinstalling the retained fallback. No failed or missing gate can create a promotion.
+
+Use `scripts/record_observation.py --kind promotion` with one or more `--app APP`, matching full
+`--participant REPO=SHA`, one `--package APP=RETAINED_PACKAGE` per app, and the exact-revision
+`--gate-record RECORD_ID` values. Common observation fields, including a person's `--observed-by`,
+remain required. Optional `--catalogue`, `--data` and `--mirrors` select the reporting checkout's
+owned configuration/store/mirrors. Linux deb and tar payloads are hashed without extraction or
+execution. Every listed installed program must equal its regular package member; an invalid
+revision, mismatched hash, missing gate or wrong-revision gate refuses without writing evidence.
+
+For the first record per app, the retained package currently installed is its own fallback, explicitly
+marked `starting_point`. This supplies no test/gate waiver. Later records require
+`--rollback-package APP=PREVIOUS_PACKAGE`; its computed digest and program bytes must match the real
+previous install's recorded package. Each coupled promotion is one record containing all members,
+with all refusals completed before the append, under the existing collection lock.
+
+The Invoice Processor `c69833923d6398da8b1e0cb30cecb1f288793b62` and Email Watcher
+`d36d6c67ba6dc04923a388e1a261192cfb176656` backfills are operator actions using their retained
+packages. Without those exact revisions' stored test, smoke and standing-gate results the commands
+must refuse, leaving `unrecorded install`. No promotion backfills were run for this implementation.
+The live `~/Desktop/local-connect-status` dashboard checkout at `4c1d7c5` is stale; updating its
+checkout, service or records is an operator action outside this goal.

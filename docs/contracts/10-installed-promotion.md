@@ -101,7 +101,8 @@ do not count. The shipped path globs are per app in the catalogue.
 - A promotion record lists every participant revision.
 - When an app's installed revision pins another app's interface, the dashboard shows red until a single
   set record covers all participants. Pins include the SDK revision, protocol version and contract
-  schemas, read from the installed package's lock data.
+  schemas, read through the matching P1 record's exact revision locks in the owned bare mirrors
+  (accepted amendment below).
 
 **P6 — Goals name their finish line.** A Codex goal states either "merged to main" or
 "promoted `<app>` to `<revision>`". Oversight verifies a "promoted" claim only against a P1 record and a
@@ -171,3 +172,36 @@ Out of scope:
 1. **Cadence: accepted.** Promote as proven; publish when all proven.
 2. **Lag limit: seven days** for the oldest unpromoted shipped merge. `security` and `data-loss` labels go
    red at once.
+
+## Accepted amendment — first promotion starting point
+
+Accepted by the operator on 2026-10-13 before implementation (PR #22).
+
+- The first promotion record per app uses the package currently installed as its own fallback,
+  with its retained path and independently computed sha256. Mark the fallback explicitly as a
+  starting point. There is no earlier promotion to supply a previous install.
+- Every later record must name the real previous install and its retained fallback package.
+  Starting-point treatment cannot replace that requirement.
+- There is no exception for missing results. If the dashboard evidence store does not have the
+  exact revision's passing test and required gate results, the recorder refuses and writes no
+  promotion. The app stays `unrecorded install` until a properly checked build is installed.
+- All main first-parent, package/program hash, installed smoke, participant and human observation
+  requirements remain mandatory. A starting point is not a gate waiver or public release evidence.
+- Neither collector nor recorder installs or reinstalls software; rollback remains an operator action.
+
+## Accepted amendment — pins through the recorded revision
+
+Accepted by the operator on 2026-10-13 before implementation (PR #22,
+operator acceptance in comment 6154153726). This supersedes the pending unavailable-installed-lock
+proposal.
+
+- P5 reads SDK, protocol and schema pins from the lock files (`uv.lock`, `Cargo.lock` and the
+  `connect-contracts` pins) at the exact revision named in the app's matching P1 promotion record,
+  through the owned bare mirrors at that revision.
+- The evidence chain is installed program hashes -> matching P1 record -> full revision -> lock
+  data at that revision. The record's human observation attests the build. Current main's locks
+  cannot substitute for the recorded revision's locks.
+- P5 is `unavailable` only when the app has no matching P1 record. Folder names, commit titles and
+  prose never provide pin evidence.
+- A known disagreement is red on every coupled participant until one set record covers them.
+  Product packaging, installation and the live dashboard checkout remain outside this goal.

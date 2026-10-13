@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .evidence import Record, atomic_write, instant_key
-from .rules import TaskStatus
+from .rules import TaskStatus, installed_statuses
 
 MATURITY_ORDER = ["planned", "partly built", "built", "demonstrated", "ready for release", "released"]
 FRESH_LABEL = {
@@ -128,6 +128,7 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
         "heads": {repo: revs.get(repo, {"sha": sha, "committed_at": None, "subject": None}) for repo, sha in heads.items()},
         "source_failures": failures,
         "catalogue_mapping": state.get("mapping"),
+        "installed_apps": installed_statuses(cat, records, at=state.get("last_run_at")),
         "recent_changes": [
             {"repo": r.repo, "from": r.detail.get("old") or r.summary.split(" -> ")[0], "to": r.revision[:12],
              "summary": r.summary, "affected_tasks": r.task_ids, "unmapped_files": r.detail.get("unmapped_files", []),
@@ -197,6 +198,21 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
     for repo, h in p["heads"].items():
         w(f"| {repo} | `{(h['sha'] or '')[:12]}` | {h.get('subject') or '—'} |")
     w("")
+    if p.get("installed_apps"):
+        w("## Installed builds")
+        w("")
+        w("| App | Install | Lag | Coupled set | Observed hashes / source errors |")
+        w("|---|---|---|---|---|")
+        for app in p["installed_apps"]:
+            label = app["label"] + (" " + app["revision"] if app["revision"] else "")
+            prs = ", ".join("#" + str(n) for m in app["merges"] for n in m.get("prs", []))
+            lag = app["lag"] + (" " + prs if prs else "")
+            if app["oldest_age_days"] is not None:
+                lag += f" (oldest age: {app['oldest_age_days']:.2f} days)"
+            detail = json.dumps({"hashes": app["hashes"], "missing": app["missing"],
+                                 "errors": app["errors"], "superseded": app["superseded"]}, sort_keys=True)
+            w(f"| {markdown_cell(app['name'])} | {markdown_cell(label)} ({app['color']}) | {markdown_cell(lag)} | {markdown_cell(app['coupled'])} ({app['coupled_color']}) | {markdown_cell(detail)} |")
+        w("")
     sc = p["release"]["automate_scope"]
     w("## First-release automation scope")
     w("")
@@ -331,6 +347,14 @@ function render(view){
   if(stale) h+=`<div class="banner warn"><b>${stale} task(s) changed since they were last verified.</b> The last proven result stays visible; it is not a current result.</div>`;
   const sc=p.release.automate_scope; h+=`<div class="banner"><b>First-release automation scope:</b> <b>${esc(sc.decision)}</b>. ${esc(sc.note)}</div>`;
   const apps={'email-watcher':'Email Watcher','document-summarizer':'Document Summarizer','invoice-processor':'Invoice Processor'};
+  if(p.installed_apps&&p.installed_apps.length){
+    h+=`<h2>Installed builds</h2><div class="grid">${p.installed_apps.filter(a=>view==='overview'||view==='release'||a.app===view).map(a=>{
+      const cls={red:'p-bad',amber:'p-warn',green:'p-ok',neutral:'p-mute'}[a.color];
+      const couplingCls={red:'p-bad',green:'p-ok',neutral:'p-mute'}[a.coupled_color];
+      const prs=a.merges.flatMap(m=>m.prs||[]).map(n=>'#'+n).join(', ');
+      return `<div class="card"><h3>${esc(a.name)}</h3><p><span class="pill ${cls}">${esc(a.label)}</span>${a.revision?'<code>'+esc(a.revision)+'</code>':''}</p><p>Lag: ${esc(a.lag)} ${esc(prs)}${a.oldest_age_days!=null?' · oldest age: '+esc(a.oldest_age_days.toFixed(2))+' days':''}</p><p>Coupled set: <span class="pill ${couplingCls}">${esc(a.coupled)}</span></p><details><summary>Installed evidence</summary><pre>${esc(JSON.stringify({hashes:a.hashes,missing:a.missing,errors:a.errors,promotion_id:a.promotion_id,superseded:a.superseded},null,2))}</pre></details></div>`;
+    }).join('')}</div>`;
+  }
   const show = view==='overview'? p.tasks : view==='release' ? p.tasks.filter(t=>t.layer==='release') : p.tasks.filter(t=>t.app===view);
   if(view==='overview'){
     h+=`<h2>Where the code is</h2><table><thead><tr><th>Repository</th><th>Head</th><th>Commit</th></tr></thead><tbody>${Object.entries(p.heads).map(([r,x])=>`<tr><td>${esc(r)}</td><td><code>${esc((x.sha||'').slice(0,12))}</code></td><td>${esc(x.subject||'—')}</td></tr>`).join('')}</tbody></table>`;

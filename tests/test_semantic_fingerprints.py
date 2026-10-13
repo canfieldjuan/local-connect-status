@@ -168,12 +168,26 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
         "release.issues.automate",
         "release.issues.ocr",
     }
+    # Contract 10 introduces these checks; no pre-slice-3 record can carry their whole-dict values.
+    added_by_contract_10 = {
+        "ocr.pytest.all",
+        "promotion.smoke.email-watcher",
+        "promotion.smoke.invoice-processor",
+        "promotion.smoke.document-summarizer",
+        "promotion.smoke.document-ocr",
+        "promotion.gate.ip_coi",
+        "promotion.observe.email-watcher",
+        "promotion.observe.invoice-processor",
+        "promotion.observe.document-summarizer",
+        "promotion.observe.document-ocr",
+    }
     reconfigured = {"ew.pytest.entitlement"}
     values = set(CHECK_FINGERPRINT_ALIASES.values())
     assert added_by_contract_09 <= set(catalogue["checks"])
+    assert added_by_contract_10 <= set(catalogue["checks"])
     for check_id, check in catalogue["checks"].items():
         semantic = check_fingerprint(check)
-        if check_id in added_by_contract_09:
+        if check_id in added_by_contract_09 | added_by_contract_10:
             # Genuinely new: no pre-slice-3 whole-dict value can resolve to it.  Its semantic value
             # may equal another manual check's (same runner, repo and platform, a different note);
             # evidence is selected by check id first, so the two never cross-bind.
