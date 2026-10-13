@@ -343,6 +343,8 @@ class Record:
             for name in ("type", "check", "collector_code", "repo_config")
             if name in self.source
         }
+        if self.kind == "installed_observation":
+            stable_source["app"] = self.source.get("app")
         fingerprint = resolve_check_fingerprint(record_check_fingerprint(self))
         if fingerprint is not None:
             stable_source["check_fingerprint"] = fingerprint
@@ -352,7 +354,7 @@ class Record:
         key = {
             "kind": self.kind,
             "repo": self.repo,
-            "revision": self.revision,
+            "revision": "" if self.kind == "installed_observation" else self.revision,
             "platform": self.platform,
             "condition_ids": sorted(self.condition_ids),
             "source": stable_source,
