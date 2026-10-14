@@ -608,6 +608,88 @@ def test_safe_archive_python_minimum_matches_locked_environment():
     assert project['project']['requires-python'] == lock['requires-python'] == '>=3.11.4'
 
 
+@pytest.mark.parametrize('mode', ['source', 'config', 'untracked', 'deleted', 'link', 'mode', 'index'])
+@pytest.mark.parametrize('phase', ['build', 'suite'])
+def test_candidate_mutation_fails_exact_tree_gate_without_switch_and_keeps_collecting(world, mode, phase):
+    work, paths, deployer, command = world
+    old = bootstrap(world)
+    (work / '.gitignore').write_text('.cache/\n.venv/\n')
+    new = commit(work)
+    run = deployer.command
+    def mutate(args, *, cwd, **kwargs):
+        result = run(args, cwd=cwd, **kwargs)
+        target_phase = args[0] == 'uv' if phase == 'build' else args[-2:] == ['-m', 'pytest']
+        if target_phase and result.returncode == 0:
+            if mode in ('source', 'index'):
+                (cwd / 'lcstatus/collect.py').write_text('raise RuntimeError("mutated candidate")\n')
+                if mode == 'index': git(cwd, 'add', 'lcstatus/collect.py')
+            elif mode == 'config': (cwd / 'catalogue.json').write_text('{}')
+            elif mode == 'untracked':
+                (cwd / '.cache').mkdir()
+                (cwd / '.cache/importable.py').write_text('altered = True\n')
+                assert git(cwd, 'status', '--porcelain', '--untracked-files=all') == ''
+            elif mode == 'deleted': (cwd / 'result').unlink()
+            elif mode == 'link':
+                (cwd / 'result').unlink();(cwd / 'result').symlink_to('uv.lock')
+            else: (cwd / 'result').chmod(0o700)
+        return result
+    deployer.command = mutate
+    before = command.events.count('collection')
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == old and not paths.previous.exists()
+    assert command.events.count('collection') == before + 1
+    assert len(attempts(paths)) == 2
+    assert attempts(paths)[-1].revision == new
+    assert attempts(paths)[-1].detail['outcome'] == 'tests-failed'
+    assert 'exact release tree changed:' in attempts(paths)[-1].detail['reason']
+    assert not (paths.releases / new / '.release.json').exists()
+    assert not deployer.pending.exists()
+
+
+def test_passing_bootstrap_tests_that_rewrite_tracked_code_do_not_publish(world):
+    work, paths, deployer, command = world
+    (work / 'tests/test_mutation.py').write_text(
+        "from pathlib import Path\ndef test_pass_then_write():\n"
+        " assert Path('result').read_text() == 'pass'\n"
+        " Path('lcstatus/collect.py').write_text('altered = True\\n')\n")
+    new = commit(work)
+    assert deployer.tick(bootstrap=True) == 1
+    assert not paths.current.exists() and not paths.previous.exists()
+    assert len(attempts(paths)) == 1
+    assert attempts(paths)[0].revision == new
+    assert attempts(paths)[0].detail['outcome'] == 'tests-failed'
+    assert 'lcstatus/collect.py' in attempts(paths)[0].detail['reason']
+
+
+@pytest.mark.parametrize('observation', ['known', 'unavailable', 'absent', 'forged'])
+def test_manual_rollback_preserves_authenticated_main_or_unavailable_state_without_fetch(world, monkeypatch, observation):
+    work, paths, deployer, command = world
+    previous = bootstrap(world)
+    current = commit(work);assert deployer.tick(collect=True) == 0
+    command.expected_current = current
+    failed = commit(work, 'fail');assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == current
+    if observation == 'unavailable':
+        deployer.observation(None, current, error='fixture fetch unavailable')
+    elif observation == 'absent':
+        # A new fixture store represents a release with no authenticated observation history.
+        deployer.store = Store(paths.data / 'empty-fixture-records.jsonl')
+    elif observation == 'forged':
+        record = deployer.outcome(deployer.context('c' * 40, 'c' * 40, previous),
+                                  'tests-failed', 'untrusted fixture', deployed=current)
+        record.source['condition_fingerprints'] = {}
+        deployer.append(record)
+    monkeypatch.setattr(deployer, 'fetch', lambda: pytest.fail('rollback must not fetch'))
+    assert deployer.rollback() == 0
+    assert paths.current.resolve().name == previous
+    record = attempts(paths)[-1]
+    assert record.revision == current and record.detail['deployed'] == previous
+    assert record.detail['main'] == (failed if observation in ('known', 'forged') else None)
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['main'] == record.detail['main'] and code['label'] == 'rolled-back'
+    assert code['observation_error'] == ('fixture fetch unavailable' if observation == 'unavailable' else None)
+
+
 def test_interrupted_bootstrap_after_publication_finishes_one_deployed_record_without_rollback(world, monkeypatch):
     work, paths, deployer, command = world
     head = git(work, 'rev-parse', 'HEAD')

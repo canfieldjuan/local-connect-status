@@ -437,3 +437,11 @@ systemd cannot use in an executable path, before any unit is written or started.
 
 Self-deployment requires Python 3.11.4 or newer for safe archive extraction; the project and lock
 declare the same minimum.
+
+The deploy controller inventories the extracted code before build and compares bytes, types,
+permissions and symlink targets after both build and suite, before catalogue reload, release receipt
+or switch. Only root `.git` and `.venv` controller artifacts are excluded; Git ignore rules do not
+hide added code. A changed tree fails the candidate gate and keeps the running release. This guards
+against accidental mutation by our own main-branch tests; the suite runs as the same user and is
+not a security boundary against a malicious candidate. Manual rollback carries the latest
+authenticated main observation or unavailable state through the existing rules admission owner.

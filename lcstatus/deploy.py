@@ -11,6 +11,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -25,12 +26,17 @@ from .evidence import (Record, Store, atomic_write, check_fingerprint, collectio
                        condition_fingerprint_map)
 from .paths import Paths, ROOT_ENV
 from .promotion import sha256_file
+from .rules import dashboard_status
 from .sources import is_full_sha
 
 REPOSITORY = 'https://github.com/canfieldjuan/local-connect-status.git'
 
 
 class StepFailed(RuntimeError):
+    pass
+
+
+class IntegrityFailed(StepFailed):
     pass
 
 
@@ -168,11 +174,42 @@ class Deployer:
                       duration_s=max(0, time.monotonic() - context['started']),
                       detail={'outcome': outcome, 'deployed': deployed, 'main': context['head'],
                               'previous': context.get('previous'), 'test_summary': context.get('test_summary', ''),
-                              'reason': reason})
+                              'reason': reason, 'error': context.get('observation_error')})
 
     def append(self, record: Record) -> None:
         if not self.store.add(record):
             raise RuntimeError('deployment attempt was unexpectedly collapsed')
+
+    def inventory(self, tree: Path) -> dict:
+        """Exact extracted bytes/types, independent of candidate-writable Git metadata."""
+        entries = {}
+        def visit(directory):
+            for path in sorted(directory.iterdir()):
+                name = path.relative_to(tree).as_posix()
+                if name in ('.git', '.venv'):
+                    continue  # Only the controller-created root metadata/environment.
+                mode = path.lstat().st_mode
+                entry = {'mode': stat.S_IMODE(mode)}
+                if stat.S_ISLNK(mode):
+                    entry.update(type='link', target=os.readlink(path))
+                elif stat.S_ISDIR(mode):
+                    entry['type'] = 'directory'
+                elif stat.S_ISREG(mode):
+                    entry.update(type='file', sha256=sha256_file(path))
+                else:
+                    entry.update(type='special', file_type=stat.S_IFMT(mode))
+                entries[name] = entry
+                if entry['type'] == 'directory':
+                    visit(path)
+        visit(tree)
+        return entries
+
+    def verify_tree(self, tree: Path, context: dict) -> None:
+        before, after = context['tree_inventory'], self.inventory(tree)
+        changed = sorted(name for name in before.keys() | after.keys()
+                         if before.get(name) != after.get(name))
+        if changed:
+            raise IntegrityFailed('exact release tree changed: ' + ', '.join(changed))
 
     def extract(self, sha: str) -> Path:
         tree = self.paths.releases / sha
@@ -311,7 +348,9 @@ class Deployer:
         current, previous = self.pin('current'), self.pin('previous')
         if not current or not previous or current == previous:
             raise ValueError('rollback refuses: no distinct kept release')
-        context = self.context(current, current, previous)
+        observed = dashboard_status(self.cat, self.store.all())
+        context = self.context(current, observed['main'] if observed else None, previous)
+        context['observation_error'] = observed['observation_error'] if observed else None
         self.switch('current', previous)
         self.finalize(context, 'rolled-back', 'operator rollback to kept release', previous)
         return 0
@@ -349,7 +388,12 @@ class Deployer:
         tree = None
         try:
             tree = self.extract(head)
+            context['tree_inventory'] = self.inventory(tree)
             self.build(tree, context)
+            self.verify_tree(tree, context)
+        except IntegrityFailed as exc:
+            self.finalize(context, 'tests-failed', str(exc), current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         except (OSError, ValueError, StepFailed, tarfile.TarError, subprocess.TimeoutExpired) as exc:
             if tree and tree.exists():
                 shutil.rmtree(tree)
@@ -357,6 +401,10 @@ class Deployer:
             return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         try:
             passed = self.suite(tree, context)
+            self.verify_tree(tree, context)
+        except IntegrityFailed as exc:
+            passed = False
+            context['test_summary'] = str(exc)
         except (OSError, subprocess.TimeoutExpired) as exc:
             passed = False
             context['test_summary'] = f'suite could not complete: {exc}'
