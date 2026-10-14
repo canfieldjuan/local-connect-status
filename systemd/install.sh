@@ -19,8 +19,8 @@ DATA_ROOT="$(PYTHONPATH="$HERE/.." python3 - <<'PYROOT'
 import os
 from lcstatus.paths import Paths
 root = os.environ['LCSTATUS_DATA_ROOT']
-if root != root.strip() or any(ord(c) < 32 or ord(c) == 127 for c in root):
-    raise SystemExit('unit data root refuses surrounding whitespace and control characters')
+if root != root.strip() or any(ord(c) < 32 or ord(c) == 127 or c in ('\\', '"') for c in root):
+    raise SystemExit('unit data root refuses surrounding whitespace and control characters, backslash, or double quote')
 print(Paths.configured().root)
 PYROOT
 )"

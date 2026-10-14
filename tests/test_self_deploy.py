@@ -594,7 +594,7 @@ def test_published_release_persistence_error_recovers_one_truthful_deployed_reco
     assert len(command.suite_checks) == suites
 
 
-@pytest.mark.parametrize('suffix', [' ', '\t', '\n'])
+@pytest.mark.parametrize('suffix', [' ', '\t', '\n', '\\invalid', '"invalid'])
 def test_installer_refuses_unrepresentable_root_without_writing_or_starting_units(tmp_path, suffix):
     home = tmp_path / 'fixture-home'; home.mkdir()
     bins = tmp_path / 'fake-bin'; bins.mkdir()
@@ -631,3 +631,50 @@ def test_repository_release_contract_runs_unchanged_inside_an_exact_git_archive(
         assert result.returncode == 0, result.stdout + result.stderr
         assert 'passed' in result.stdout
         assert git(tree, 'status', '--porcelain') == ''
+
+
+@pytest.mark.parametrize('metadata', ['pending', 'receipt'])
+def test_prepublication_metadata_fault_is_one_env_failure_without_switch_and_kept_collection_continues(world, monkeypatch, metadata):
+    import lcstatus.deploy as module
+    work, paths, deployer, command = world
+    old = bootstrap(world); new = commit(work)
+    write = module.atomic_write
+    injected = False
+    def metadata_fault(path, text):
+        nonlocal injected
+        target = path == deployer.pending if metadata == 'pending' else path == paths.releases / new / '.release.json'
+        if target and not injected:
+            injected = True
+            raise OSError('fixture transient metadata write')
+        return write(path, text)
+    monkeypatch.setattr(module, 'atomic_write', metadata_fault)
+    collections = command.events.count('collection')
+    assert deployer.tick(collect=True) == 0
+    assert injected and paths.current.resolve().name == old
+    assert command.events.count('collection') == collections + 1
+    assert len(attempts(paths)) == 2 and attempts(paths)[-1].revision == new
+    assert attempts(paths)[-1].detail['outcome'] == 'env-failed'
+    assert 'pre-publication metadata' in attempts(paths)[-1].summary
+    assert not deployer.pending.exists()
+    assert not paths.previous.exists()
+
+
+def test_prepublication_journal_is_retained_if_terminal_persistence_also_fails(world, monkeypatch):
+    import lcstatus.deploy as module
+    work, paths, deployer, command = world
+    old = bootstrap(world); new = commit(work)
+    write = module.atomic_write
+    def receipt_fault(path, text):
+        if path == paths.releases / new / '.release.json':
+            raise OSError('fixture receipt unavailable')
+        return write(path, text)
+    def terminal_fault(record):
+        raise OSError('fixture terminal persistence unavailable')
+    monkeypatch.setattr(module, 'atomic_write', receipt_fault)
+    monkeypatch.setattr(deployer, 'append', terminal_fault)
+    with pytest.raises(OSError, match='terminal persistence'):
+        deployer.tick(collect=True)
+    assert paths.current.resolve().name == old
+    assert deployer.pending.exists()
+    assert json.loads(deployer.pending.read_text())['candidate'] == new
+    assert len(attempts(paths)) == 1

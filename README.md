@@ -424,3 +424,10 @@ commercial scan unchanged in a release; its original assertions and regex remain
 The final suite is run from the exact extracted revision as well as the fixture archive regression.
 Node and systemd-analyze must be available on this local host for the page and generated-unit
 regression gates; missing tools are explicit gate failures, never silent passes or skipped tests.
+
+
+Before release receipts are written, the pending attempt is journaled. Transient pre-publication
+metadata failure records one real-candidate environment failure without switching and continues
+collection from the kept current release; unavailable persistence propagates with any pending
+context retained. The own-unit root validator also refuses backslash/double-quote characters that
+systemd cannot use in an executable path, before any unit is written or started.

@@ -364,9 +364,15 @@ class Deployer:
             self.finalize(context, 'tests-failed', context['test_summary'], current, render=False)
             return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         self.cat = catmod.load(tree / 'catalogue.json')
-        atomic_write(tree / '.release.json', json.dumps({'revision': head, 'tests': 'pass',
-                                                       'summary': context['test_summary']}))
-        atomic_write(self.pending, json.dumps(context))
+        try:
+            # Journal recovery context before any post-suite release metadata can fail.
+            atomic_write(self.pending, json.dumps(context))
+            atomic_write(tree / '.release.json', json.dumps({'revision': head, 'tests': 'pass',
+                                                           'summary': context['test_summary']}))
+        except (OSError, ValueError) as exc:
+            self.finalize(context, 'env-failed', f'pre-publication metadata failed: {exc}',
+                          current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         if current:
             self.switch('previous', current)
             self.switch('current', head)
