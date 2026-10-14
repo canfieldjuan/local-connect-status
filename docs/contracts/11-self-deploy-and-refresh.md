@@ -178,29 +178,27 @@ and disabling this repository's remote Git deployment connection to scope. Prese
 project/deployment data and do not alter unrelated projects. An unavailable permission or
 separate irreversible remote action is reported as a remaining blocker, not as completed retirement.
 
-## Main lookup and failed-candidate visibility — proposed clarification, awaiting acceptance
+## Main lookup and failed-candidate visibility — accepted clarification (Option B)
 
-Oversight's review on `d80a30f` found that a failed main fetch was being treated as a deployment
-attempt for an empty candidate. That can leave Dashboard code red forever even after a later
-fetch confirms that the kept deployed revision is main. No candidate was obtained or attempted.
+The operator chose Option B, relayed by oversight in receipt
+`0633282bf6da44118734b0cabe2c6e28`. Acceptance is recorded as its own commit before code.
 
-Proposed Option A:
+- Fetch and lineage-read failures are typed observations, not terminal deployment attempts.
+  The code row is amber, `main not observed`, with the source reason for that tick. The last
+  confirmed head is historical, not proof of current main or its eligibility. Recovery to a
+  successful observation is retained even when it returns to an earlier head.
+- R5's accepted real-candidate rule remains: `tests-failed`, `env-failed` for a real candidate,
+  `rolled-back` and `not-descendant` stay red until a later revision deploys successfully. Moving
+  main or making an unchanged healthy observation alone does not clear a real failed attempt.
+- Candidate environment builds and full suites receive fresh per-attempt temporary data, HOME
+  and XDG roots, created and removed under the deploy cache. Only actual collection receives
+  the live root. A fixture candidate writes to its configured root to prove isolation; a mutation
+  supplying the live root must fail that test. No real live store is used for this evidence.
+- Bootstrap publication is recoverable: recovery distinguishes successful first collection
+  followed by interrupted publication/terminal append from a bootstrap that never published.
+  It records one truthful terminal outcome without claiming a rollback without a kept release.
+- A lineage-read failure after fetch is still an observation, so the retained release can collect.
+  In-place refresh preserves open installed evidence with stable app-keyed identities.
 
-- A main lookup failure is a typed observation, not a terminal `deployment` attempt. The code row
-  is amber, `main not observed`, with the lookup reason. The last confirmed revision is historical,
-  not evidence of current main. A successful lookup is retained even if it returns to an earlier
-  observation, so recovery is visible without deploying unchanged code.
-- Red applies while the last failed or rolled-back candidate is still the observed main head and
-  is undeployed. A successful lookup confirming deployed equals main is green. If main moves beyond
-  a failed candidate, the new, not-yet-attempted head is amber until its attempt finishes. This
-  replaces R5's unconditional failure persistence until a later revision deploys.
-
-Alternative Option B: adopt only lookup-failure observations and recovery, retaining R5's accepted
-rule that a real failed candidate stays red until a later successful deployment. This fixes the
-empty-candidate fetch defect but does not adopt oversight's broader candidate-scoped color rule.
-
-The operator must choose before these visibility semantics are implemented. Independently,
-candidate environment builds and suites must use fresh per-attempt data/HOME/XDG roots; only the
-actual collection may receive the live root. This is required test isolation, not a product-label
-change. The review requires a fixture that writes to the configured candidate root and a mutation
-that exposes the live root to it; real live data must never be used for that test.
+The broader Option A candidate-scoped red rule was not adopted. Non-blocking retry caching for
+failed suites is deferred; it is outside this bounded implementation.
