@@ -350,13 +350,35 @@ def test_user_unit_installer_uses_configured_root_with_spaces_and_does_not_start
     assert '--now' not in commands.read_text()
     for name in ('local-connect-status.service', 'local-connect-status-heavy.service', 'local-connect-status-web.service'):
         unit = (home / '.config/systemd/user' / name).read_text()
-        assert f'WorkingDirectory="{root}/current"' in unit
+        assert f'WorkingDirectory={root}/current' in unit
         assert f'ExecStart="{root}/current/.venv/bin/python"' in unit
         assert f'Environment="LCSTATUS_DATA_ROOT={root}"' in unit
     web = (home / '.config/systemd/user/local-connect-status-web.service').read_text()
     assert f'--directory "{root}/site" --bind 127.0.0.1' in web
     assert f'ExecStartPre=/usr/bin/mkdir -p "{root}/site"' in web
     assert not (ROOT / 'vercel.json').exists()
+    analyzer = shutil.which('systemd-analyze')
+    assert analyzer, 'systemd-analyze is required to verify the own user-unit syntax; no silent pass or skip'
+    # A static parser manager, with every home/unit/runtime/bus lookup in the fixture. No service
+    # is installed into a real user home or started. Executables exist only to satisfy parsing.
+    executable = root / 'current/.venv/bin/python'
+    executable.parent.mkdir(parents=True); executable.symlink_to(sys.executable)
+    unit_dir = home / '.config/systemd/user'
+    for target in ('default.target', 'basic.target', 'sockets.target', 'timers.target', 'shutdown.target',
+                   'sysinit.target', 'network.target', 'network-online.target'):
+        (unit_dir / target).write_text('[Unit]\nDescription=Fixture target\nDefaultDependencies=no\n')
+    runtime = tmp_path / 'verify-runtime'; runtime.mkdir(mode=0o700)
+    verify_env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'),
+                      XDG_RUNTIME_DIR=str(runtime), SYSTEMD_UNIT_PATH=str(unit_dir),
+                      DBUS_SYSTEM_BUS_ADDRESS='unix:path=' + str(runtime / 'system-bus'),
+                      DBUS_SESSION_BUS_ADDRESS='unix:path=' + str(runtime / 'session-bus'))
+    units = [str(unit_dir / name) for name in (
+        'local-connect-status.service', 'local-connect-status-heavy.service',
+        'local-connect-status-web.service', 'local-connect-status.timer', 'local-connect-status-heavy.timer')]
+    verified = subprocess.run([analyzer, 'verify', '--user', '--generators=no', '--man=no', *units],
+                              env=verify_env, capture_output=True, text=True, timeout=30)
+    assert verified.returncode == 0, verified.stderr
+
 
 
 def test_path_owner_distinguishes_incomplete_git_marker_from_a_real_code_checkout(tmp_path):
@@ -518,7 +540,7 @@ def test_interrupted_bootstrap_after_publication_finishes_one_deployed_record_wi
     assert paths.current.resolve().name == head
     assert not paths.previous.exists() and attempts(paths) == []
     context = json.loads(deployer.pending.read_text())
-    assert context['bootstrap_ready'] is True
+    assert context['collection_ready'] is True
     monkeypatch.setattr(deployer, 'append', append)
     command.expected_current = head
     assert deployer.tick(collect=True) == 0
@@ -526,3 +548,59 @@ def test_interrupted_bootstrap_after_publication_finishes_one_deployed_record_wi
     assert len(attempts(paths)) == 1 and attempts(paths)[0].detail['outcome'] == 'deployed'
     assert attempts(paths)[0].source['attempt'] == context['attempt']
     assert len(command.suite_checks) == 1
+
+
+@pytest.mark.parametrize('mode', ['bootstrap', 'normal'])
+@pytest.mark.parametrize('fault', ['append', 'unlink'])
+def test_published_release_persistence_error_recovers_one_truthful_deployed_record(world, monkeypatch, mode, fault):
+    work, paths, deployer, command = world
+    prior_count = 0
+    if mode == 'normal':
+        bootstrap(world); commit(work); prior_count = 1
+    head = git(work, 'rev-parse', 'HEAD')
+    if fault == 'append':
+        append = deployer.append
+        count = 0
+        def transient_append(record):
+            nonlocal count
+            count += 1
+            if count == 1: raise OSError('fixture transient journal I/O')
+            return append(record)
+        monkeypatch.setattr(deployer, 'append', transient_append)
+    else:
+        unlink = Path.unlink
+        def pending_unlink(path, *args, **kwargs):
+            if path == deployer.pending: raise OSError('fixture transient pending unlink')
+            return unlink(path, *args, **kwargs)
+        monkeypatch.setattr(Path, 'unlink', pending_unlink)
+    with pytest.raises(OSError, match='fixture transient'):
+        deployer.tick(bootstrap=mode == 'bootstrap', collect=mode == 'normal')
+    assert paths.current.resolve().name == head
+    context = json.loads(deployer.pending.read_text())
+    assert context['collection_ready'] is True
+    assert all(r.detail['outcome'] == 'deployed' for r in attempts(paths))
+    if fault == 'unlink': monkeypatch.setattr(Path, 'unlink', unlink)
+    command.expected_current = head
+    suites = len(command.suite_checks)
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == head and not deployer.pending.exists()
+    assert len(attempts(paths)) == prior_count + 1
+    assert attempts(paths)[-1].source['attempt'] == context['attempt']
+    assert attempts(paths)[-1].detail['outcome'] == 'deployed'
+    assert len(command.suite_checks) == suites
+
+
+@pytest.mark.parametrize('suffix', [' ', '\t', '\n'])
+def test_installer_refuses_unrepresentable_root_without_writing_or_starting_units(tmp_path, suffix):
+    home = tmp_path / 'fixture-home'; home.mkdir()
+    bins = tmp_path / 'fake-bin'; bins.mkdir()
+    calls = tmp_path / 'calls'
+    (bins / 'systemctl').write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$FIXTURE_CALLS"\n')
+    (bins / 'systemctl').chmod(0o755)
+    result = subprocess.run(['bash', str(ROOT / 'systemd/install.sh'), '--no-start'],
+                            env=dict(os.environ, HOME=str(home), LCSTATUS_DATA_ROOT=str(tmp_path / 'runtime') + suffix,
+                                     FIXTURE_CALLS=str(calls), PATH=str(bins)+os.pathsep+os.environ['PATH']),
+                            capture_output=True, text=True)
+    assert result.returncode != 0 and 'whitespace and control' in result.stderr
+    assert not list((home / '.config/systemd/user').glob('*.service'))
+    assert not calls.exists()

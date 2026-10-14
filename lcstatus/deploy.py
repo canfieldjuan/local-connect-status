@@ -278,13 +278,13 @@ class Deployer:
             self.pending.unlink()
             return
         previous = context.get('previous')
-        if previous:
+        if context.get('collection_ready') and self.pin('current') == context['candidate']:
+            # Both first collection and terminal rendering completed. Finish a pending journal
+            # append truthfully, whether publication was bootstrap or a normal release switch.
+            self.finalize(context, 'deployed', context['test_summary'], context['candidate'])
+        elif previous:
             self.switch('current', previous)
             self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release', previous)
-        elif context.get('bootstrap_ready') and self.pin('current') == context['candidate']:
-            # First collection and terminal rendering completed before publication. Finish the
-            # interrupted append truthfully; do not invent a rollback without a kept release.
-            self.finalize(context, 'deployed', context['test_summary'], context['candidate'])
         else:
             self.finalize(context, 'env-failed', 'interrupted bootstrap; no initial current published', None)
 
@@ -359,14 +359,6 @@ class Deployer:
             result = self.collect(head, context, heavy_only=heavy_only)
             record = self.outcome(context, 'deployed', context['test_summary'], deployed=head)
             self.collect(head, context, render_only=True, staged=record)
-            if current is None:
-                context['bootstrap_ready'] = True
-                atomic_write(self.pending, json.dumps(context))
-                self.switch('current', head)
-            self.store = Store(self.paths.data / 'records.jsonl')
-            self.append(record)
-            self.pending.unlink()
-            return result
         except (OSError, ValueError, StepFailed, subprocess.TimeoutExpired) as exc:
             if current:
                 self.switch('current', current)
@@ -374,6 +366,16 @@ class Deployer:
             else:
                 self.finalize(context, 'env-failed', f'bootstrap collection/render failed: {exc}', None)
             return 1
+        # Collection/render failure handling ends here. A subsequent publication/journal I/O
+        # error must leave the context for recovery, never fabricate a failed first collection.
+        context['collection_ready'] = True
+        atomic_write(self.pending, json.dumps(context))
+        if current is None:
+            self.switch('current', head)
+        self.store = Store(self.paths.data / 'records.jsonl')
+        self.append(record)
+        self.pending.unlink()
+        return result
 
 
 def main(argv: list[str] | None = None) -> int:

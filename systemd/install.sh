@@ -22,16 +22,23 @@ PYTHONPATH="$HERE/.." python3 - "$HERE" "$DEST" <<'PYUNIT'
 import os, sys
 from pathlib import Path
 source, destination = map(Path, sys.argv[1:])
-root = os.environ['LCSTATUS_DATA_ROOT'].replace('%', '%%').replace('\\', '\\\\').replace('"', '\\"')
+configured_root = os.environ['LCSTATUS_DATA_ROOT']
+if configured_root != configured_root.strip() or any(ord(c) < 32 or ord(c) == 127 for c in configured_root):
+    raise SystemExit('unit data root refuses surrounding whitespace and control characters')
+raw_root = configured_root.replace('%', '%%')
+root = raw_root.replace('\\', '\\\\').replace('"', '\\"')
 for name in ('local-connect-status.service', 'local-connect-status-heavy.service',
              'local-connect-status-web.service', 'local-connect-status.timer',
              'local-connect-status-heavy.timer'):
     unit = source / name
-    text = unit.read_text().replace('%h/.local/share/local-connect-status', root)
+    text = unit.read_text()
     lines = []
     for line in text.splitlines():
         key, sep, value = line.partition('=')
-        if key == 'WorkingDirectory': value = '"' + value + '"'
+        if key == 'WorkingDirectory':
+            value = value.replace('%h/.local/share/local-connect-status', raw_root)
+        else:
+            value = value.replace('%h/.local/share/local-connect-status', root)
         if key == 'Environment' and value.startswith('LCSTATUS_DATA_ROOT='): value = '"' + value + '"'
         if key == 'ExecStart':
             command, args = value.split(' -m ', 1)
