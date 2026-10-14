@@ -206,3 +206,27 @@ before implementing B. Local-only Vercel retirement and every live cut-over rest
   interior spaces and percent escaping remain supported and checked by the real systemd parser.
 
 Non-blocking retry/cache and interpreter-portability suggestions remain deferred.
+
+## Release retention — proposed amendment (not accepted)
+
+R4 requires keeping the previous release. It does not decide when older release trees may be
+deleted. Automatic review raised accumulation of unreferenced trees; oversight proposed cleanup,
+but the operator has not accepted a retention/deletion policy. No cleanup behavior is implemented
+under this proposal.
+
+Operator choices:
+
+- **A — Accept bounded automatic cleanup.** After a successful deployment's terminal record is
+  appended, remove only release directories not referenced by `current`, `previous`, or pending
+  recovery. Keep any in-flight candidate. Enumerate only the owned `releases/` directory, do not
+  follow symlinks, and refuse a path outside it. Preserve all append-only records, test/environment/
+  collection logs, and the owned repository mirror; only obsolete extracted code, environment and
+  duplicate release metadata are removed. A cleanup error is logged without altering the truthful
+  deployment outcome. Fixtures prove retained pins/pending survive and obsolete releases are
+  removed; a mutant that prunes current must fail. This adds release cleanup to the Scope list.
+- **B — Defer automatic cleanup.** Keep the accepted scope: current and previous are retained,
+  older trees remain, and cleanup belongs to a later separately accepted contract/operator action.
+  No automatic deletion is added to this implementation.
+
+This proposal is its own commit before any cleanup code. Operator acceptance is required before
+implementing A. Oversight remains review-only and cannot substitute for that acceptance.
