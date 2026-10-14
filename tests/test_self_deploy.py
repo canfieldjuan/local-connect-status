@@ -418,9 +418,11 @@ def test_path_owner_refuses_code_tree_and_symlink_back_into_code_before_any_writ
     assert Paths.configured().data == tmp_path / 'configured/data'
 
 
-def test_user_unit_installer_uses_configured_root_with_spaces_and_does_not_start_before_bootstrap(tmp_path):
+@pytest.mark.parametrize('component', ['runtime data', 'runtime% data'])
+def test_user_unit_installer_uses_configured_root_with_spaces_and_does_not_start_before_bootstrap(tmp_path, component):
     home = tmp_path / 'fake home';home.mkdir()
-    root = home / 'runtime data'
+    root = home / component
+    unit_root = str(root).replace('%', '%%')
     bins = tmp_path / 'fake-bin';bins.mkdir()
     commands = tmp_path / 'systemctl-calls'
     (bins / 'systemctl').write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE_CALLS"\n')
@@ -433,12 +435,12 @@ def test_user_unit_installer_uses_configured_root_with_spaces_and_does_not_start
     assert '--now' not in commands.read_text()
     for name in ('local-connect-status.service', 'local-connect-status-heavy.service', 'local-connect-status-web.service'):
         unit = (home / '.config/systemd/user' / name).read_text()
-        assert f'WorkingDirectory={root}/current' in unit
-        assert f'ExecStart="{root}/current/.venv/bin/python"' in unit
-        assert f'Environment="LCSTATUS_DATA_ROOT={root}"' in unit
+        assert f'WorkingDirectory={unit_root}/current' in unit
+        assert f'ExecStart="{unit_root}/current/.venv/bin/python"' in unit
+        assert f'Environment="LCSTATUS_DATA_ROOT={unit_root}"' in unit
     web = (home / '.config/systemd/user/local-connect-status-web.service').read_text()
-    assert f'--directory "{root}/site" --bind 127.0.0.1' in web
-    assert f'ExecStartPre=/usr/bin/mkdir -p "{root}/site"' in web
+    assert f'--directory "{unit_root}/site" --bind 127.0.0.1' in web
+    assert f'ExecStartPre=/usr/bin/mkdir -p "{unit_root}/site"' in web
     assert not (ROOT / 'vercel.json').exists()
     analyzer = shutil.which('systemd-analyze')
     assert analyzer, 'systemd-analyze is required to verify the own user-unit syntax; no silent pass or skip'
