@@ -23,7 +23,10 @@ import os, sys
 from pathlib import Path
 source, destination = map(Path, sys.argv[1:])
 root = os.environ['LCSTATUS_DATA_ROOT'].replace('%', '%%').replace('\\', '\\\\').replace('"', '\\"')
-for unit in source.glob('*.service'):
+for name in ('local-connect-status.service', 'local-connect-status-heavy.service',
+             'local-connect-status-web.service', 'local-connect-status.timer',
+             'local-connect-status-heavy.timer'):
+    unit = source / name
     text = unit.read_text().replace('%h/.local/share/local-connect-status', root)
     lines = []
     for line in text.splitlines():
@@ -38,7 +41,6 @@ for unit in source.glob('*.service'):
         lines.append(key + sep + value)
     (destination / unit.name).write_text('\n'.join(lines) + '\n')
 PYUNIT
-cp "$HERE"/local-connect-status.timer "$HERE"/local-connect-status-heavy.timer "$DEST"/
 systemctl --user daemon-reload
 if [[ "${1:-}" == "--no-start" ]]; then
   systemctl --user enable local-connect-status.timer local-connect-status-heavy.timer local-connect-status-web.service
