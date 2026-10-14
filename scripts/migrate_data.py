@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from lcstatus.evidence import atomic_write, collection_lock
 from lcstatus.paths import Paths
 
+COPY_TREES = ('data', 'site')
+
 
 def digest(path: Path) -> str:
     h = hashlib.sha256()
@@ -26,17 +28,53 @@ def digest(path: Path) -> str:
 
 def inventory(root: Path) -> dict[str, str]:
     result = {}
-    for name in ('data', '.cache', 'site'):
+    for name in COPY_TREES:
         source = root / name
         if not source.exists():
             continue
         for p in sorted(source.rglob('*')):
-            # Cache links may point at extracted owned trees. Preserve links, never follow them.
+            # Preserve links, never follow them.
             if p.is_symlink():
                 result[str(p.relative_to(root))] = 'symlink:' + hashlib.sha256(os.readlink(p).encode()).hexdigest()
             elif p.is_file():
                 result[str(p.relative_to(root))] = digest(p)
     return result
+
+
+def require_space(source: Path, destination: Path, receipt: str) -> None:
+    """Observe the destination filesystem before mkdir, staging or copying."""
+    ancestor = destination.parent
+    missing_parents = 0
+    while not ancestor.exists():
+        missing_parents += 1
+        ancestor = ancestor.parent
+    block = os.statvfs(ancestor).f_frsize or os.statvfs(ancestor).f_bsize
+
+    def allocated(size: int) -> int:
+        return ((size + block - 1) // block) * block
+
+    # Staging becomes the root; allow one block per directory and the receipt's data.
+    required = (missing_parents + 1) * block + allocated(len(receipt.encode()))
+    for name in COPY_TREES:
+        tree = source / name
+        if not tree.exists():
+            continue
+        for path in (tree, *tree.rglob('*')):
+            if path.is_symlink():
+                required += allocated(len(os.fsencode(os.readlink(path))))
+            elif path.is_dir():
+                required += max(block, allocated(path.stat().st_size))
+            elif path.is_file():
+                # copytree expands sparse files and duplicates every hardlinked path.
+                required += allocated(path.stat().st_size)
+            # copy2 and directory copystat also preserve xattrs. Charge each copied
+            # name/value plus a metadata block; do not follow link targets outside the copy.
+            for name in os.listxattr(path, follow_symlinks=False):
+                value = os.getxattr(path, name, follow_symlinks=False)
+                required += block + allocated(len(os.fsencode(name)) + len(value))
+    free = shutil.disk_usage(ancestor).free
+    if free < required:
+        raise ValueError(f'insufficient free space: need {required} bytes, have {free}; no migration writes')
 
 
 def migrate(source: Path, destination: Path) -> dict[str, str]:
@@ -54,10 +92,12 @@ def migrate(source: Path, destination: Path) -> dict[str, str]:
     with lock_path.open('r') as held:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
         before = inventory(source)
+        receipt = json.dumps({'source': str(source), 'files': before, 'verified': True}, indent=2)
+        require_space(source, paths.root, receipt)
         paths.root.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix='.lcstatus-migrate-', dir=paths.root.parent))
         try:
-            for name in ('data', '.cache', 'site'):
+            for name in COPY_TREES:
                 if (source / name).exists():
                     shutil.copytree(source / name, staging / name, symlinks=True)
             copied = inventory(staging)
@@ -65,8 +105,7 @@ def migrate(source: Path, destination: Path) -> dict[str, str]:
             if before != copied or before != after:
                 raise ValueError('migration hash mismatch; no switch; originals remain in place')
             # Absolute evidence paths are immutable history. They still resolve in the originals.
-            atomic_write(staging / 'migration-hashes.json', json.dumps({
-                'source': str(source), 'files': before, 'verified': True}, indent=2))
+            atomic_write(staging / 'migration-hashes.json', receipt)
             os.rename(staging, paths.root)
             return before
         finally:

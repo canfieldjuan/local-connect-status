@@ -44,7 +44,7 @@ stays the Contract 10 / `docs/PROMOTION-LINUX.md` workflow; this repository only
 - Live state moves to a data directory outside any code tree, by default
   `~/.local/share/local-connect-status/` (records, state, logs, caches, rendered site). Code reads
   the path from configuration, never from its own tree.
-- A one-time migration copies the existing `data/`, `.cache/` and `site/`, verifies each copied
+- A one-time migration copies only the existing `data/` and `site/`, verifies each copied
   file's hash, and only then switches over. The originals are left in place until the operator
   removes them.
 - The tracked `data/` files stop being written. `records.jsonl` remains the append-only store
@@ -222,3 +222,30 @@ monitor, notification, page label or cleanup behavior to Contract 11.
 
 This acceptance is recorded separately from implementation. Oversight agreed that deferral plus
 this issue is non-blocking; automatic cleanup would require a later contract acceptance.
+
+## Migration copy scope — accepted follow-up amendment
+
+The operator directed on 2026-10-14: "copy only data/ and site/" (message
+`Sentinel_0ad21727075c81918d82ca6471c5962f`), then assigned this follow-up to the original
+implementation session (message `Sentinel_09c101dcfe3c81919906c6e091c2d052`). Acceptance is
+recorded in its own commit before changed behavior.
+
+Reason, as reported by the operator: the forty-nine GB hardlinked `.cache/` filled the disk on
+the first cut-over. This is operator-reported evidence; Codex has not inspected or repaired
+the live installation. Caches can be regenerated in the external root and are not migrated.
+
+- The inventory, copy and verification cover only `data/` and `site/`. Neither `.cache/` nor
+  any other source directory is copied. Originals remain in place.
+- Before any migration write, check free space on the destination filesystem against the
+  space needed for the selected copy and its hash receipt, including allocation rounding
+  and directories. Count hardlinked file paths separately because the copy does not preserve
+  hardlinks. Refuse a shortfall without creating parents, staging or the destination.
+- Free space is a preflight observation, not a reservation. Later copy errors still refuse
+  publication and discard staging. Per-file hash mismatch still refuses publication.
+- Fixture tests prove cache exclusion, a passing verified copy, shortfall before writes and
+  the preserved mismatch refusal. All other Contract 11 gates remain.
+
+This amendment authorizes source changes and new merge-pinned cut-over commands only. It does
+not authorize rerunning a live migration, deleting caches, repairing disk state or operating
+live services. A pre-existing destination still refuses without merging or overwriting it;
+operator and oversight must resolve any prior failed cut-over separately.
