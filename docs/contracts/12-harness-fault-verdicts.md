@@ -16,6 +16,46 @@ fixture subprocess parity test compares direct and adapted success: exit, stdout
 product side effects, argv, `__main__` identity/file metadata, and interpreter/venv. Observe
 native assertions without altering the product source or its success path.
 
+## Accepted amendment — connect-contracts counted unittest step
+
+Operator decision relayed verbatim by oversight on PR #30, 2026-10-14:
+"Yes, amend Contract 12 (Recommended)". The accepted option was: "Codex adds the counted
+result for the contracts test step to the plan and code in the same PR. A real test failure
+stays "check failed" and broken tooling becomes "harness fault". Nothing else changes."
+This amendment is committed by itself before its implementation.
+
+The connect-contracts `unittest discover -s tests` step in `accept_ew_ds` is a test phase,
+not preparation. An LCS-owned `lcstatus/unittest_proof.py` adapter uses the same uv command,
+requirements, interpreter pin, exact tree and discovery arguments, without editing
+connect-contracts. It uses the framework's native result callbacks and prints one terminal
+stdout line, only after the runner returns normally, prefixed `LCSTATUS_UNITTEST_RESULT `:
+
+```json
+{"schema_version": 1, "runner": "accept_ew_ds", "phase": "contracts-test",
+ "tests": 2, "failures": 1, "errors": 0, "skipped": 0}
+```
+
+`tests` is the native `testsRun` count. Failures and errors count distinct parent tests
+observed through the native callbacks, including subtests; skips count whole-test skips
+(subtest skips do not mark the parent unexecuted); unexpected successes count as
+failed tests, expected failures retain unittest's successful outcome. One test can fail and
+also error in teardown, so failure and error counts can overlap. Counts must be strict
+nonnegative integers, each at most `tests`, with failures plus skipped at most `tests`.
+`executed` is `tests` minus skipped. The existing detail can carry the error diagnostic.
+
+The same `outcomes.classify_execution` owner validates the exact keys, version, runner,
+phase and counts. Duplicate, nonterminal, missing or malformed reports are unavailable.
+A normally completed exit one with at least one counted failed test is fail. Errors-only,
+other nonzero exits, kill/signal, timeout, startup and earlier uv fetch faults are unavailable.
+A valid zero-exit report with no failures or errors allows the later build/proof steps;
+a valid zero-count/all-skipped result retains skip and also allows those steps, as before.
+Every other outcome stops the remaining steps, with its report-derived record and log.
+
+Required fail-first fixtures: counted failure, errors-only, missing report and fetch failure,
+plus a mutation bypassing the report. The original settling evidence and operator parity
+condition still apply. No Record field, verdict, skip/retry, historical row, evidence
+identity or other receipt changes are authorized by this amendment.
+
 ## Problem and inspected evidence
 
 At dashboard main `08009142732676253d6dcb1ebc8d595264ef0ea2`:
