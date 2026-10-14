@@ -330,13 +330,16 @@ class Deployer:
             self.pending.unlink()
             return
         previous = context.get('previous')
-        if context.get('collection_ready') and self.pin('current') == context['candidate']:
+        current = self.pin('current')
+        if context.get('collection_ready') and current == context['candidate']:
             # Both first collection and terminal rendering completed. Finish a pending journal
             # append truthfully, whether publication was bootstrap or a normal release switch.
             self.finalize(context, 'deployed', context['test_summary'], context['candidate'])
-        elif previous:
+        elif previous and current == context['candidate']:
             self.switch('current', previous)
             self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release', previous)
+        elif previous:
+            self.finalize(context, 'env-failed', 'interrupted before publication', current)
         else:
             self.finalize(context, 'env-failed', 'interrupted bootstrap; no initial current published', None)
 

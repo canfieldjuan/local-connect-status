@@ -256,6 +256,50 @@ def test_interrupted_pending_switch_recovers_kept_release_once_and_does_not_retr
     assert len(attempts(paths)) == count and len(command.suite_checks) == suite_count
 
 
+@pytest.mark.parametrize('phase', ['pending', 'previous', 'before-current', 'after-current'])
+def test_pending_interruption_classifies_actual_publication_and_preserves_retry_eligibility(world, monkeypatch, phase):
+    import lcstatus.deploy as module
+    work, paths, deployer, command = world
+    old = bootstrap(world);new = commit(work)
+    write, switch = module.atomic_write, deployer.switch
+    def interrupt_pending(path, text):
+        write(path, text)
+        if phase == 'pending' and path == deployer.pending:
+            raise KeyboardInterrupt('fixture pre-publication pending interruption')
+    def interrupt_switch(name, sha):
+        if phase == 'before-current' and name == 'current' and sha == new:
+            raise KeyboardInterrupt('fixture before current switch')
+        switch(name, sha)
+        if (phase == 'previous' and name == 'previous') or (
+                phase == 'after-current' and name == 'current' and sha == new):
+            raise KeyboardInterrupt('fixture interruption around publication')
+    monkeypatch.setattr(module, 'atomic_write', interrupt_pending)
+    monkeypatch.setattr(deployer, 'switch', interrupt_switch)
+    with pytest.raises(KeyboardInterrupt, match='fixture'):
+        deployer.tick(collect=True)
+    context = json.loads(deployer.pending.read_text())
+    assert len(attempts(paths)) == 1
+    assert paths.current.resolve().name == (new if phase == 'after-current' else old)
+    monkeypatch.setattr(module, 'atomic_write', write)
+    monkeypatch.setattr(deployer, 'switch', switch)
+    deployer.recover()
+    assert not deployer.pending.exists() and paths.current.resolve().name == old
+    record = attempts(paths)[-1]
+    assert len(attempts(paths)) == 2 and record.source['attempt'] == context['attempt']
+    assert record.revision == new
+    assert record.detail['outcome'] == ('rolled-back' if phase == 'after-current' else 'env-failed')
+    if phase != 'after-current': assert record.detail['reason'] == 'interrupted before publication'
+    suites = len(command.suite_checks)
+    assert deployer.tick(collect=True) == 0
+    if phase == 'after-current':
+        assert paths.current.resolve().name == old
+        assert len(command.suite_checks) == suites and len(attempts(paths)) == 2
+    else:
+        assert paths.current.resolve().name == new
+        assert len(command.suite_checks) == suites + 1 and len(attempts(paths)) == 3
+        assert attempts(paths)[-1].detail['outcome'] == 'deployed'
+
+
 def test_dashboard_labels_require_typed_evidence_and_last_failure_clears_only_on_later_deploy(world):
     work, paths, deployer, command = world
     old = bootstrap(world)

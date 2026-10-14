@@ -445,3 +445,8 @@ hide added code. A changed tree fails the candidate gate and keeps the running r
 against accidental mutation by our own main-branch tests; the suite runs as the same user and is
 not a security boundary against a malicious candidate. Manual rollback carries the latest
 authenticated main observation or unavailable state through the existing rules admission owner.
+
+Recovery distinguishes a pending pre-publication interruption from a published but incomplete
+first collection. Before publication it records `env-failed`, leaves current untouched and allows
+the candidate SHA to retry; a current pin at the candidate without collection readiness rolls back
+and permanently excludes that SHA. Completed publication still recovers one `deployed` outcome.
