@@ -35,9 +35,11 @@ from lcstatus.sources import Failure  # noqa: E402
 from lcstatus.promotion import installed_programs, package_programs, sha256_file  # noqa: E402
 from lcstatus.rules import validate_promotion_member  # noqa: E402
 
-DATA = ROOT / "data"
+from lcstatus.paths import Paths, outside_code
+
+DATA = Paths.configured().data
 CATALOGUE = ROOT / "catalogue.json"
-MIRRORS = ROOT / ".cache" / "mirrors"
+MIRRORS = Paths.configured().cache / "mirrors"
 
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
@@ -218,6 +220,9 @@ def main() -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+
+    a.data = outside_code(a.data)
+    a.mirrors = outside_code(a.mirrors)
 
     # One writer at a time (contract 08 B5): wait for any running collection, then read the
     # catalogue, the mirrors and the store as they are now.  The lock is held until this process exits.

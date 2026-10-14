@@ -3,9 +3,11 @@ Description=Local Connect status dashboard (static, loopback only)
 After=network.target
 
 [Service]
-WorkingDirectory=%h/Desktop/local-connect-status
-ExecStartPre=/usr/bin/mkdir -p site
-ExecStart=/usr/bin/env python3 -m http.server 8790 --directory site --bind 127.0.0.1
+WorkingDirectory=%h/.local/share/local-connect-status/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=LCSTATUS_DATA_ROOT=%h/.local/share/local-connect-status
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/local-connect-status/site
+ExecStart=%h/.local/share/local-connect-status/current/.venv/bin/python -m http.server 8790 --directory %h/.local/share/local-connect-status/site --bind 127.0.0.1
 Restart=on-failure
 
 [Install]

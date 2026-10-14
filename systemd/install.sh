@@ -12,10 +12,42 @@ if [[ "${1:-}" == "--uninstall" ]]; then
   systemctl --user daemon-reload
   echo "removed"; exit 0
 fi
-cp "$HERE"/local-connect-status.service "$HERE"/local-connect-status.timer \
-   "$HERE"/local-connect-status-heavy.service "$HERE"/local-connect-status-heavy.timer \
-   "$HERE"/local-connect-status-web.service "$DEST"/
+DATA_ROOT="${LCSTATUS_DATA_ROOT:-$HOME/.local/share/local-connect-status}"
+export LCSTATUS_DATA_ROOT="$DATA_ROOT"
+export PYTHONDONTWRITEBYTECODE=1
+DATA_ROOT="$(PYTHONPATH="$HERE/.." python3 -c 'from lcstatus.paths import Paths; print(Paths.configured().root)')"
+# systemd specifiers and quoted paths are escaped by its unit grammar, never shell evaluation.
+export LCSTATUS_DATA_ROOT="$DATA_ROOT"
+PYTHONPATH="$HERE/.." python3 - "$HERE" "$DEST" <<'PYUNIT'
+import os, sys
+from pathlib import Path
+source, destination = map(Path, sys.argv[1:])
+root = os.environ['LCSTATUS_DATA_ROOT'].replace('%', '%%').replace('\\', '\\\\').replace('"', '\\"')
+for unit in source.glob('*.service'):
+    text = unit.read_text().replace('%h/.local/share/local-connect-status', root)
+    lines = []
+    for line in text.splitlines():
+        key, sep, value = line.partition('=')
+        if key == 'WorkingDirectory': value = '"' + value + '"'
+        if key == 'Environment' and value.startswith('LCSTATUS_DATA_ROOT='): value = '"' + value + '"'
+        if key == 'ExecStart':
+            command, args = value.split(' -m ', 1)
+            value = '"' + command + '" -m ' + args
+            value = value.replace('--directory ' + root + '/site', '--directory "' + root + '/site"')
+        if key == 'ExecStartPre': value = '/usr/bin/mkdir -p "' + root + '/site"'
+        lines.append(key + sep + value)
+    (destination / unit.name).write_text('\n'.join(lines) + '\n')
+PYUNIT
+cp "$HERE"/local-connect-status.timer "$HERE"/local-connect-status-heavy.timer "$DEST"/
 systemctl --user daemon-reload
+if [[ "${1:-}" == "--no-start" ]]; then
+  systemctl --user enable local-connect-status.timer local-connect-status-heavy.timer local-connect-status-web.service
+  echo "units installed without starting; bootstrap before starting them"
+  exit 0
+fi
+if [[ ! -x "$DATA_ROOT/current/.venv/bin/python" ]]; then
+  echo "no tested current release; use --no-start, then bootstrap" >&2; exit 1
+fi
 systemctl --user enable --now local-connect-status.timer local-connect-status-heavy.timer local-connect-status-web.service
 systemctl --user list-timers --no-pager | grep local-connect-status || true
 echo "dashboard: http://127.0.0.1:8790/"

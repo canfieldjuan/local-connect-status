@@ -1032,6 +1032,11 @@
       "app": "document-ocr",
       "platform": "linux",
       "note": "One read-only installed snapshot supplies the checked hash, first-parent lag and recorded-revision pin conditions."
+    },
+    "dashboard.deploy": {
+      "runner": "deployment",
+      "repo": "local-connect-status",
+      "platform": "linux"
     }
   },
   "tasks": [
@@ -1985,5 +1990,15 @@
       "document-summarizer",
       "document-ocr"
     ]
-  ]
+  ],
+  "dashboard": {
+    "refresh_seconds": 60,
+    "stale_minutes": 45,
+    "condition": {
+      "id": "dashboard.code",
+      "kind": "deployment",
+      "check": "dashboard.deploy",
+      "proves": "Dashboard runs an exact tested main release with kept rollback"
+    }
+  }
 }

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import html
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .evidence import Record, atomic_write, instant_key
-from .rules import TaskStatus, installed_statuses
+from .rules import TaskStatus, installed_statuses, dashboard_status
 
 MATURITY_ORDER = ["planned", "partly built", "built", "demonstrated", "ready for release", "released"]
 FRESH_LABEL = {
@@ -123,6 +124,10 @@ def status_payload(cat: dict[str, Any], statuses: list[TaskStatus], heads: dict[
     ]
     return {
         "generated_at": state.get("last_run_at"),
+        "rendered_at": datetime.now(timezone.utc).isoformat(),
+        "page_refresh": {"seconds": cat.get("dashboard", {}).get("refresh_seconds", 60),
+                         "stale_minutes": cat.get("dashboard", {}).get("stale_minutes", 45)},
+        "dashboard_code": dashboard_status(cat, records),
         "collection_run": state.get("runs"),
         "release": cat["release"],
         "heads": {repo: revs.get(repo, {"sha": sha, "committed_at": None, "subject": None}) for repo, sha in heads.items()},
@@ -190,6 +195,12 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
     if m.get("unchecked"):
         w("> **Catalogue mapping not checked this run for:** "
           + "; ".join(f"{u['repo']} ({u['why']})" for u in m["unchecked"]))
+        w("")
+    if p.get("dashboard_code"):
+        code = p["dashboard_code"]
+        w(f"**Dashboard code:** {code['label']} ({code['color']}); deployed `{code['deployed'] or 'absent'}`; "
+          f"main `{code['main'] or 'unobserved'}`; last outcome: {code['outcome'] or 'none'}; "
+          f"{markdown_cell(code['reason'] or '')}")
         w("")
     w("## Where the code is")
     w("")
@@ -308,6 +319,8 @@ const FRESH = {current:'verified at current code',changed_since_verification:'ch
 const COND = {satisfied:'verified',changed_since:'changed since verification',check_failed:'check failed',not_checked:'check skipped or unavailable',stale_failure:'failed at an earlier revision, not re-run',head_unobserved:'current revision not observed this tick',config_changed:'configuration changed since verification',no_evidence:'no evidence',inconclusive:'needs verification'};
 const condLabel = (c)=>c.label || COND[c.state];
 const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let liveData=DATA;
+let unreachable=false;
 function evLine(e){ if(!e) return '—'; let s=`${esc(e.kind)} <code>${esc(e.revision)}</code> ${esc(e.verdict)} ${esc(String(e.recorded_at).slice(0,10))}`;
   if(e.executed!=null) s+=` · ${esc(e.executed)} run, ${esc(e.failed||0)} failed, ${esc(e.skipped||0)} skipped`;
   if(e.exit_code!=null) s+=` · exit ${esc(e.exit_code)}`; if(e.platform && e.platform!=='n/a') s+=` · ${esc(e.platform)}`;
@@ -335,9 +348,11 @@ function taskCard(t){
      <div class="field"><b>Code this depends on</b><ul style="margin:4px 0 0 18px;padding:0">${deps}</ul></div>
    </details></div>`; }
 function render(view){
-  const root=document.getElementById('root'); const p=DATA;
+  const root=document.getElementById('root'); const p=liveData;
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.view===view));
   let h='';
+  if(p.dashboard_code){const c=p.dashboard_code;h+=`<div class="banner"><b>Dashboard code</b>: <span class="pill ${{green:'p-ok',amber:'p-warn',red:'p-bad'}[c.color]}">${esc(c.label)}</span> deployed <code>${esc(c.deployed||'absent')}</code> · main <code>${esc(c.main||'unobserved')}</code> · last attempt: ${esc(c.outcome||'none')} ${esc(c.reason||'')}</div>`;}
+
   if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
   const m=p.catalogue_mapping||{}, gaps=m.gaps||[], unchecked=m.unchecked||[];
   if(gaps.length||unchecked.length){h+=`<div class="banner warn">${gaps.length?`<b>Catalogue mapping: ${gaps.length} dependency pattern(s) match no file at the current revision.</b> A change to the code a pattern was meant to cover is not attributed to its task.<ul style="margin:6px 0 0 18px">${gaps.map(g=>`<li>${esc(g.task)} — ${esc(g.repo)}: <code>${esc(g.pattern)}</code></li>`).join('')}</ul>`:''}${unchecked.length?`<div><b>Catalogue mapping not checked this run for:</b> ${unchecked.map(u=>`${esc(u.repo)} (${esc(u.why)})`).join('; ')}</div>`:''}</div>`;}
@@ -368,7 +383,44 @@ function render(view){
   root.innerHTML=h;
 }
 document.querySelectorAll('nav a').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();location.hash=a.dataset.view;render(a.dataset.view);}));
-render((location.hash||'#overview').slice(1));
+function selectedView(){return (location.hash||'#overview').slice(1);}
+function freshness(){
+  const line=document.getElementById('freshness');
+  const elapsed=Date.now()-Date.parse(liveData.generated_at);
+  const age=Math.max(0,Math.floor(elapsed/60000));
+  const stale=!Number.isFinite(elapsed)||elapsed>(liveData.page_refresh?.stale_minutes??45)*60000;
+  line.className='banner'+((unreachable||stale)?' bad':'');
+  line.textContent=unreachable?'dashboard service unreachable':
+    (!Number.isFinite(elapsed)?'collection stale · never collected':
+    (stale?'collection stale · ':'')+`collected ${age} minutes ago`);
+  document.getElementById('root').hidden=unreachable;
+}
+const loopbackOrigin=()=>['http:','https:'].includes(location.protocol)&&
+  ['127.0.0.1','localhost','[::1]'].includes(location.hostname);
+async function refresh(){
+  if(!loopbackOrigin()) return;
+  try{
+    const response=await fetch(new URL('status.json',location.href),
+      {cache:'no-store',mode:'same-origin',credentials:'omit',redirect:'error'});
+    if(!response.ok) throw new Error('fetch failed');
+    const next=await response.json();
+    if(!next||!Array.isArray(next.tasks)||!next.release||typeof next.rendered_at!=='string')
+      throw new Error('invalid status');
+    unreachable=false;
+    if(next.rendered_at!==liveData.rendered_at){
+      const view=selectedView(), x=window.scrollX,y=window.scrollY;
+      const open=[...document.querySelectorAll('#root .card:has(details[open])')].map(c=>c.id);
+      liveData=next;render(view);
+      for(const id of open){const detail=document.getElementById(id)?.querySelector('details');if(detail)detail.open=true;}
+      window.scrollTo(x,y);
+    }
+  }catch(error){unreachable=true;}
+  freshness();
+}
+render(selectedView());freshness();
+setInterval(freshness,15000);
+if(loopbackOrigin())setInterval(refresh,(liveData.page_refresh?.seconds??60)*1000);
+
 """
 
 
@@ -382,6 +434,7 @@ def dashboard_html(p: dict[str, Any], cat: dict[str, Any]) -> str:
 <h1>What works. What's left.</h1>
 <p class="sub">The apps, the connections between them, and the work they will do for you automatically — with the evidence for each claim.</p>
 <nav><a href="#overview" data-view="overview">Overview</a><a href="#email-watcher" data-view="email-watcher">Email Watcher</a><a href="#document-summarizer" data-view="document-summarizer">Document Summarizer</a><a href="#invoice-processor" data-view="invoice-processor">Invoice Processor</a><a href="#release" data-view="release">Before we ship</a></nav>
+<div id="freshness" class="banner" role="status" aria-live="polite"></div>
 <div id="root"></div>
 <footer>Every status is derived from <code>data/records.jsonl</code>; issue-gate records can block release but never prove product capability. "Verified" means a check passed at the exact current code. A change to the code makes earlier evidence "changed since verification" until a check runs again. Release status comes from both the capability rows and the issue-gate rows above.</footer>
 </div><script>{JS.replace('__DATA__', data)}</script></body></html>

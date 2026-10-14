@@ -1,0 +1,361 @@
+"""Test exact main trees and switch kept releases under the collection lock.
+
+Operator bootstrap: python -m lcstatus.deploy --bootstrap
+User units:         python -m lcstatus.deploy --collect [--heavy-only]
+Operator rollback:  python -m lcstatus.deploy --rollback
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import uuid
+from pathlib import Path
+
+from . import catalogue as catmod
+from .evidence import (Record, Store, atomic_write, check_fingerprint, collection_lock,
+                       condition_fingerprint_map)
+from .paths import Paths, ROOT_ENV
+from .promotion import sha256_file
+from .sources import is_full_sha
+
+REPOSITORY = 'https://github.com/canfieldjuan/local-connect-status.git'
+
+
+class StepFailed(RuntimeError):
+    pass
+
+
+class Deployer:
+    def __init__(self, paths: Paths, lock, *, repository: str = REPOSITORY, command=None):
+        self.paths, self.lock, self.repository = paths, lock, repository
+        self.command = command or self.run
+        self.mirror = paths.cache / 'dashboard.git'
+        self.store = Store(paths.data / 'records.jsonl')
+        self.pending = paths.data / 'deployment-pending.json'
+        self.cat = catmod.load(Path(__file__).resolve().parent.parent / 'catalogue.json')
+        self.last_summary = ''
+
+    def environment(self) -> dict[str, str]:
+        env = dict(os.environ)
+        for name in ('PYTHONPATH', 'PYTHONHOME', 'UV_PROJECT_ENVIRONMENT', 'LCSTATUS_STAGED_DEPLOYMENT',
+                     'LCSTATUS_RENDER_RECEIPT', 'LCSTATUS_COLLECTION_LOCK_FD'):
+            env.pop(name, None)
+        env.update({ROOT_ENV: str(self.paths.root), 'PYTHONDONTWRITEBYTECODE': '1',
+                    'UV_CACHE_DIR': str(self.paths.cache / 'deploy-uv'), 'UV_PYTHON_DOWNLOADS': 'never',
+                    'GIT_TERMINAL_PROMPT': '0'})
+        return env
+
+    def run(self, args: list[str], *, cwd: Path, timeout: int | None = None,
+            env: dict[str, str] | None = None, pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess:
+        return subprocess.run(args, cwd=cwd, env=env or self.environment(), pass_fds=pass_fds,
+                              capture_output=True, text=True, timeout=timeout)
+
+    def git(self, *args: str) -> str:
+        result = self.command(['git', '--git-dir', str(self.mirror), *args],
+                              cwd=self.paths.root, timeout=120)
+        if result.returncode:
+            raise StepFailed((result.stderr or result.stdout).strip())
+        return result.stdout.strip()
+
+    def fetch(self) -> str:
+        self.paths.cache.mkdir(parents=True, exist_ok=True)
+        if not self.mirror.exists():
+            self.git('init', '--bare', str(self.mirror))
+            self.git('remote', 'add', 'origin', self.repository)
+        # The owned mirror is never a product or developer checkout.
+        if self.git('remote', 'get-url', 'origin') != self.repository:
+            raise StepFailed('dashboard mirror has an unexpected remote')
+        self.git('fetch', '--no-tags', 'origin', '+refs/heads/main:refs/heads/main')
+        sha = self.git('rev-parse', '--verify', 'refs/heads/main')
+        if not is_full_sha(sha):
+            raise StepFailed('fetched main did not name an exact revision')
+        return sha
+
+    def release(self, sha: str) -> Path:
+        if not is_full_sha(sha):
+            raise ValueError('release requires a full lowercase SHA')
+        tree = self.paths.releases / sha
+        receipt = json.loads((tree / '.release.json').read_text())
+        if receipt.get('revision') != sha or receipt.get('tests') != 'pass':
+            raise ValueError('release has no passing exact-revision suite receipt')
+        if not (tree / '.venv/bin/python').is_file():
+            raise ValueError('kept release environment is missing')
+        return tree
+
+    def pin(self, name: str) -> str | None:
+        link = self.paths.root / name
+        if not link.is_symlink():
+            if link.exists():
+                raise ValueError(f'{name} must be an owned release symlink')
+            return None
+        target = link.resolve(strict=True)
+        if target.parent != self.paths.releases.resolve():
+            raise ValueError(f'{name} does not point into the owned releases directory')
+        self.release(target.name)
+        return target.name
+
+    def switch(self, name: str, sha: str) -> None:
+        """The sole switch owner; both current and kept previous require passing receipts."""
+        self.release(sha)
+        link = self.paths.root / name
+        temporary = self.paths.root / f'.{name}-{uuid.uuid4().hex}'
+        try:
+            temporary.symlink_to(Path('releases') / sha)
+            os.replace(temporary, link)
+            fd = os.open(self.paths.root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def source(self, attempt: str | None = None, *, catalogue: dict | None = None) -> dict:
+        cat = catalogue or self.cat
+        check = cat['dashboard']['condition']['check']
+        source = {'type': 'dashboard_deploy', 'check': check,
+                  'check_fingerprint': check_fingerprint(cat['checks'][check]),
+                  'condition_fingerprints': condition_fingerprint_map(cat, [cat['dashboard']['condition']['id']])}
+        if attempt:
+            source['attempt'] = attempt
+        return source
+
+    def observation(self, head: str, deployed: str | None) -> None:
+        self.store.add(Record(kind='revision', repo='local-connect-status', revision=head,
+                              verdict='pass', condition_ids=[self.cat['dashboard']['condition']['id']],
+                              source=self.source(), summary=f'dashboard {deployed or "absent"} -> main {head}',
+                              detail={'deployed': deployed, 'main': head}))
+
+    def outcome(self, context: dict, outcome: str, reason: str, *, deployed: str | None,
+                catalogue: dict | None = None) -> Record:
+        cat = catalogue or self.cat
+        return Record(kind='deployment', repo='local-connect-status', revision=context['candidate'],
+                      verdict='pass' if outcome == 'deployed' else 'fail', platform='linux',
+                      source=self.source(context['attempt'], catalogue=cat),
+                      condition_ids=[cat['dashboard']['condition']['id']], summary=reason,
+                      duration_s=max(0, time.monotonic() - context['started']),
+                      detail={'outcome': outcome, 'deployed': deployed, 'main': context['head'],
+                              'previous': context.get('previous'), 'test_summary': context.get('test_summary', ''),
+                              'reason': reason})
+
+    def append(self, record: Record) -> None:
+        if not self.store.add(record):
+            raise RuntimeError('deployment attempt was unexpectedly collapsed')
+
+    def extract(self, sha: str) -> Path:
+        tree = self.paths.releases / sha
+        if tree.exists():
+            # Never discard current or kept fallback while retrying an unsuccessful build.
+            if sha in (self.pin('current'), self.pin('previous')):
+                raise StepFailed('candidate directory is an active or kept release')
+            shutil.rmtree(tree)
+        self.paths.releases.mkdir(parents=True, exist_ok=True)
+        archive = subprocess.run(['git', '--git-dir', str(self.mirror), 'archive', sha],
+                                 capture_output=True, timeout=120)
+        if archive.returncode:
+            raise StepFailed(archive.stderr.decode(errors='replace'))
+        tree.mkdir()
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(tree, filter='data')
+        if not (tree / 'uv.lock').is_file():
+            raise StepFailed('candidate has no own uv.lock')
+        return tree
+
+    def build(self, tree: Path, context: dict) -> None:
+        # No unlocked resolution and no build backend downloaded outside the locked environment.
+        result = self.command(['uv', 'sync', '--locked', '--group', 'dev', '--no-install-project',
+                               '--python', sys.executable], cwd=tree, timeout=600)
+        atomic_write(self.paths.data / 'logs' / f"deploy-{context['attempt']}-env.log",
+                     (result.stdout or '') + (result.stderr or ''))
+        if result.returncode:
+            raise StepFailed((result.stderr or result.stdout).strip() or 'candidate environment failed')
+
+    def suite(self, tree: Path, context: dict) -> bool:
+        result = self.command([str(tree / '.venv/bin/python'), '-m', 'pytest'], cwd=tree, timeout=1800)
+        output = (result.stdout or '') + (result.stderr or '')
+        atomic_write(self.paths.data / 'logs' / f"deploy-{context['attempt']}-suite.log", output)
+        lines = [line.strip('= ') for line in output.splitlines() if line.strip()]
+        context['test_summary'] = next((line for line in reversed(lines) if 'passed' in line or 'failed' in line),
+                                       lines[-1] if lines else f'pytest exit {result.returncode}')
+        return result.returncode == 0
+
+    def collect(self, sha: str, context: dict, *, render_only: bool = False, heavy_only: bool = False,
+                staged: Record | None = None) -> int:
+        tree = self.release(sha)
+        receipt = self.paths.cache / f"deploy-{context['attempt']}-render.json"
+        receipt.unlink(missing_ok=True)
+        env = self.environment()
+        env['LCSTATUS_COLLECTION_LOCK_FD'] = str(self.lock.fileno())
+        env['LCSTATUS_RENDER_RECEIPT'] = str(receipt)
+        staged_path = None
+        if staged:
+            staged_path = self.paths.cache / f"deploy-{context['attempt']}-terminal.json"
+            atomic_write(staged_path, staged.to_json())
+            env['LCSTATUS_STAGED_DEPLOYMENT'] = str(staged_path)
+        args = [str(tree / '.venv/bin/python'), '-m', 'lcstatus.collect']
+        if render_only:
+            args.append('--render-only')
+        elif heavy_only:
+            args.append('--heavy-only')
+        try:
+            result = self.command(args, cwd=tree, env=env, pass_fds=(self.lock.fileno(),))
+            atomic_write(self.paths.data / 'logs' / f"deploy-{context['attempt']}-collection.log",
+                         (result.stdout or '') + (result.stderr or ''))
+            if result.returncode not in (0, 2):
+                raise StepFailed(f'collection exit {result.returncode}: {result.stderr or result.stdout}')
+            rendered = json.loads(receipt.read_text())
+            if result.returncode == 2 and rendered.get('source_failures', 0) <= 0:
+                raise StepFailed('collection exit two without existing per-source failures')
+            expected = {'status.json', 'report.md', 'dashboard.html', 'index.html'}
+            if set(rendered.get('files', {})) != expected or any(
+                    sha256_file(self.paths.site / name) != digest for name, digest in rendered['files'].items()):
+                raise StepFailed('collection did not completely render its report')
+            return result.returncode
+        finally:
+            receipt.unlink(missing_ok=True)
+            if staged_path:
+                staged_path.unlink(missing_ok=True)
+
+    def finalize(self, context: dict, outcome: str, reason: str, deployed: str | None, *, render: bool = True) -> None:
+        if deployed:
+            self.cat = catmod.load(self.release(deployed) / 'catalogue.json')
+        record = self.outcome(context, outcome, reason, deployed=deployed)
+        # Render with the proposed terminal record before committing that terminal outcome.
+        if render and deployed:
+            self.collect(deployed, context, render_only=True, staged=record)
+        # Children appended collection facts; refresh the store before writing the terminal record.
+        self.store = Store(self.paths.data / 'records.jsonl')
+        self.append(record)
+        self.pending.unlink(missing_ok=True)
+
+    def recover(self) -> None:
+        if not self.pending.exists():
+            return
+        context = json.loads(self.pending.read_text())
+        if any(r.kind == 'deployment' and r.source.get('attempt') == context['attempt'] for r in self.store.all()):
+            self.pending.unlink()
+            return
+        previous = context.get('previous')
+        if previous:
+            self.switch('current', previous)
+            self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release', previous)
+        else:
+            # Bootstrap never switches until collection and terminal rendering have succeeded.
+            self.finalize(context, 'env-failed', 'interrupted bootstrap; no initial current published', None)
+
+    def context(self, candidate: str, head: str, previous: str | None) -> dict:
+        return {'attempt': uuid.uuid4().hex, 'candidate': candidate, 'head': head, 'previous': previous,
+                'started': time.monotonic(), 'test_summary': ''}
+
+    def rollback(self) -> int:
+        current, previous = self.pin('current'), self.pin('previous')
+        if not current or not previous or current == previous:
+            raise ValueError('rollback refuses: no distinct kept release')
+        context = self.context(current, current, previous)
+        self.switch('current', previous)
+        self.finalize(context, 'rolled-back', 'operator rollback to kept release', previous)
+        return 0
+
+    def tick(self, *, bootstrap: bool = False, collect: bool = False, heavy_only: bool = False) -> int:
+        self.recover()
+        current = self.pin('current')
+        if current is None and not bootstrap:
+            raise ValueError('no deployed release; the operator must explicitly bootstrap')
+        if current is not None and bootstrap:
+            raise ValueError('bootstrap refuses: current already exists')
+        try:
+            head = self.fetch()
+        except (OSError, StepFailed, subprocess.TimeoutExpired) as exc:
+            context = self.context('', '', current)
+            self.finalize(context, 'env-failed', f'fetch main failed: {exc}', current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
+        self.observation(head, current)
+        context = self.context(head, head, current)
+        rolled_back = any(r.kind == 'deployment' and r.revision == head and r.detail.get('outcome') == 'rolled-back'
+                          for r in self.store.all())
+        if current == head or rolled_back:
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
+        lineage = self.git('rev-list', '--first-parent', head).splitlines()
+        if current is not None and current not in lineage:
+            self.finalize(context, 'not-descendant', 'main does not descend from current on its first-parent history',
+                          current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect else 1
+        tree = None
+        try:
+            tree = self.extract(head)
+            self.build(tree, context)
+        except (OSError, ValueError, StepFailed, tarfile.TarError, subprocess.TimeoutExpired) as exc:
+            if tree and tree.exists():
+                shutil.rmtree(tree)
+            self.finalize(context, 'env-failed', f'extraction/environment failed: {exc}', current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
+        try:
+            passed = self.suite(tree, context)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            passed = False
+            context['test_summary'] = f'suite could not complete: {exc}'
+        if not passed:
+            self.finalize(context, 'tests-failed', context['test_summary'], current, render=False)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
+        self.cat = catmod.load(tree / 'catalogue.json')
+        atomic_write(tree / '.release.json', json.dumps({'revision': head, 'tests': 'pass',
+                                                       'summary': context['test_summary']}))
+        atomic_write(self.pending, json.dumps(context))
+        if current:
+            self.switch('previous', current)
+            self.switch('current', head)
+        try:
+            result = self.collect(head, context, heavy_only=heavy_only)
+            record = self.outcome(context, 'deployed', context['test_summary'], deployed=head)
+            self.collect(head, context, render_only=True, staged=record)
+            if current is None:
+                self.switch('current', head)
+            self.store = Store(self.paths.data / 'records.jsonl')
+            self.append(record)
+            self.pending.unlink()
+            return result
+        except (OSError, ValueError, StepFailed, subprocess.TimeoutExpired) as exc:
+            if current:
+                self.switch('current', current)
+                self.finalize(context, 'rolled-back', f'first collection/render failed: {exc}', current)
+            else:
+                self.finalize(context, 'env-failed', f'bootstrap collection/render failed: {exc}', None)
+            return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--data-root')
+    ap.add_argument('--repository', default=REPOSITORY, help='dashboard repository; fixture tests may use a local repo')
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument('--bootstrap', action='store_true', help='operator-only first deployment')
+    mode.add_argument('--rollback', action='store_true')
+    mode.add_argument('--collect', action='store_true', help='check main at the start of this collection tick')
+    ap.add_argument('--heavy-only', action='store_true')
+    args = ap.parse_args(argv)
+    if args.heavy_only and not args.collect:
+        ap.error('--heavy-only requires --collect')
+    try:
+        paths = Paths.configured(args.data_root)
+        lock = collection_lock(paths.data, wait=args.rollback or args.bootstrap or args.heavy_only)
+        if lock is None:
+            print('another collection is running; not starting deployment', file=sys.stderr)
+            return 3
+        with lock:
+            deployer = Deployer(paths, lock, repository=args.repository)
+            return deployer.rollback() if args.rollback else deployer.tick(
+                bootstrap=args.bootstrap, collect=args.collect, heavy_only=args.heavy_only)
+    except (OSError, ValueError, StepFailed) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

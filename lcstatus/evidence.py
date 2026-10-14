@@ -38,6 +38,7 @@ KINDS = (
     "release_artifact",     # a published release the public can download
     "collection_failure",   # a source could not be read; the absence of data is data
     "promotion",            # human attestation of a gated main build actually installed
+    "deployment",           # one terminal outcome per tested dashboard deployment attempt
     "installed_observation", # read-only installed program hashes and exact-revision lock facts
 )
 
@@ -314,7 +315,7 @@ class Record:
             key["old"] = self.detail.get("old")
             if self.kind == "change":
                 key["commits_complete"] = self.detail.get("commits_complete", True)
-        elif self.kind in ("issue_gate", "release_artifact", "promotion", "installed_observation"):
+        elif self.kind in ("issue_gate", "release_artifact", "promotion", "installed_observation", "deployment"):
             key["summary"] = self.summary
             key["detail"] = self.detail
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
@@ -491,6 +492,16 @@ def collection_lock(data: Path, *, wait: bool) -> Any:
     on stderr before it blocks, so a run that seems stuck names what it is waiting for.
     """
     data = Path(data)
+    inherited = os.environ.get("LCSTATUS_COLLECTION_LOCK_FD")
+    if inherited is not None:
+        fd = int(inherited)
+        held = os.fstat(fd)
+        expected = (data / LOCK_NAME).stat()
+        if (held.st_dev, held.st_ino) != (expected.st_dev, expected.st_ino):
+            raise ValueError("inherited collection lock names a different store")
+        fh = os.fdopen(os.dup(fd), "r+")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fh
     data.mkdir(parents=True, exist_ok=True)
     fh = open(data / LOCK_NAME, "w")
     try:

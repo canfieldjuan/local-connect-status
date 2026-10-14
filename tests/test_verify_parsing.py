@@ -944,9 +944,9 @@ def test_default_branch_head_requires_a_full_commit_sha(monkeypatch):
 def test_web_service_creates_generated_site_before_serving_it():
     unit = (Path(__file__).resolve().parent.parent / "systemd/local-connect-status-web.service").read_text()
 
-    assert "WorkingDirectory=%h/Desktop/local-connect-status\n" in unit
-    assert "ExecStartPre=/usr/bin/mkdir -p site\n" in unit
-    assert "python3 -m http.server 8790 --directory site --bind 127.0.0.1\n" in unit
+    assert "WorkingDirectory=%h/.local/share/local-connect-status/current\n" in unit
+    assert "ExecStartPre=/usr/bin/mkdir -p %h/.local/share/local-connect-status/site\n" in unit
+    assert "current/.venv/bin/python -m http.server 8790 --directory %h/.local/share/local-connect-status/site --bind 127.0.0.1\n" in unit
 
 
 def test_editable_install_timeout_becomes_an_explicit_failure(tmp_path: Path, monkeypatch):

@@ -19,6 +19,7 @@ RUNNERS = (
     "github_release",
     "source_inspection",
     "installed_observation",
+    "deployment",
 )
 LAYERS = ("standalone", "connect", "automate", "release")
 KIND_RUNNERS = {
@@ -29,10 +30,13 @@ KIND_RUNNERS = {
     "release_artifact": {"github_release"},
     "source_inspection": {"source_inspection"},
     "installed_observation": {"installed_observation"},
+    "deployment": {"deployment"},
 }
 
 
 def all_conditions(cat: dict[str, Any]):
+    if "dashboard" in cat:
+        yield cat["dashboard"]["condition"]
     for task in cat.get("tasks", []):
         yield from task.get("conditions", [])
     for row in cat.get("apps", {}).values():
@@ -162,7 +166,8 @@ def load(path: Path) -> dict[str, Any]:
     for cid, chk in checks.items():
         if chk.get("runner") not in RUNNERS:
             problems.append(f"check {cid}: unknown runner {chk.get('runner')!r}")
-        if chk.get("repo") not in cat.get("repos", {}):
+        if chk.get("repo") not in cat.get("repos", {}) and not (
+                chk.get("runner") == "deployment" and chk.get("repo") == "local-connect-status"):
             problems.append(f"check {cid}: repo must name one catalogue repository, got {chk.get('repo')!r}")
         if chk.get("platform", "n/a") not in PLATFORMS:
             problems.append(f"check {cid}: unknown platform")
@@ -188,8 +193,20 @@ def load(path: Path) -> dict[str, Any]:
                 problems.append(f"check {cid}: source inspection needs paths")
             if not chk.get("markers"):
                 problems.append(f"check {cid}: source inspection needs markers")
+    if "dashboard" in cat:
+        dashboard = cat["dashboard"]
+        for field in ("refresh_seconds", "stale_minutes"):
+            if type(dashboard.get(field)) is not int or dashboard[field] <= 0:
+                problems.append(f"dashboard {field} must be a positive integer")
+        condition = dashboard.get("condition", {})
+        if not condition.get("id") or condition.get("kind") != "deployment":
+            problems.append("dashboard needs a deployment condition")
+        elif checks.get(condition.get("check"), {}).get("runner") != "deployment":
+            problems.append("dashboard condition needs its deployment check")
+        else:
+            problems.extend(condition_problems(condition, checks))
     seen_tasks: set[str] = set()
-    seen_conds: set[str] = set()
+    seen_conds: set[str] = {cat["dashboard"]["condition"]["id"]} if "dashboard" in cat else set()
     for t in cat.get("tasks", []):
         if t["id"] in seen_tasks:
             problems.append(f"duplicate task id {t['id']}")

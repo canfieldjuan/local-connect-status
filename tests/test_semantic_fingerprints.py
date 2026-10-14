@@ -181,13 +181,15 @@ def test_frozen_alias_table_covers_every_check_in_the_catalogue():
         "promotion.observe.document-summarizer",
         "promotion.observe.document-ocr",
     }
+    added_by_contract_11 = {"dashboard.deploy"}
     reconfigured = {"ew.pytest.entitlement"}
     values = set(CHECK_FINGERPRINT_ALIASES.values())
     assert added_by_contract_09 <= set(catalogue["checks"])
     assert added_by_contract_10 <= set(catalogue["checks"])
+    assert added_by_contract_11 <= set(catalogue["checks"])
     for check_id, check in catalogue["checks"].items():
         semantic = check_fingerprint(check)
-        if check_id in added_by_contract_09 | added_by_contract_10:
+        if check_id in added_by_contract_09 | added_by_contract_10 | added_by_contract_11:
             # Genuinely new: no pre-slice-3 whole-dict value can resolve to it.  Its semantic value
             # may equal another manual check's (same runner, repo and platform, a different note);
             # evidence is selected by check id first, so the two never cross-bind.

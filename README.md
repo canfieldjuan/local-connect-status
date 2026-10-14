@@ -345,3 +345,57 @@ packages. Without those exact revisions' stored test, smoke and standing-gate re
 must refuse, leaving `unrecorded install`. No promotion backfills were run for this implementation.
 The live `~/Desktop/local-connect-status` dashboard checkout at `4c1d7c5` is stale; updating its
 checkout, service or records is an operator action outside this goal.
+
+
+## Tested local dashboard deployment (Contract 11)
+
+The dashboard is local-only. This repository's Vercel build configuration and dedicated export
+checks are retired; remote Git disconnection must be confirmed separately if access is unavailable.
+Existing deployment history is retained.
+
+Live files are under `~/.local/share/local-connect-status/`, configured with `LCSTATUS_DATA_ROOT`
+or `--data-root`. Its `data/` contains append-only records, state and logs; `.cache/` contains owned
+mirrors and runner caches; `site/` contains the atomic reports. Runtime paths inside a git/code tree
+are refused. The checked-in `data/` is a historical test fixture, never the live default.
+Human observations use the same external root and collection lock. Historical absolute log paths
+remain unchanged and resolve in the retained originals.
+
+Each routine/heavy user-unit tick runs `lcstatus.deploy --collect` before collection. The deployer
+fetches dashboard main into its own bare mirror, requires the deployed SHA in main's first-parent
+history, extracts `releases/<full-sha>/`, runs `uv sync --locked --group dev --no-install-project`
+with that release's own lock, and runs its own `.venv/bin/python -m pytest`. No candidate is switched
+to before a passing suite receipt exists. `current` changes by an atomic symlink replacement;
+`previous` keeps the tested fallback. The lock remains held in the controller and inherited by
+its exact-release collection/render children. Test/environment failures leave current untouched.
+A first-collection process/render failure restores the kept release. An exit of two is accepted
+only with a completed render receipt identifying existing per-source failures. A rolled-back SHA
+is never retried; a later main revision remains eligible. Interrupted pending attempts recover
+under the same lock, and deployment outcomes never rewrite earlier evidence.
+
+The operator's initial `lcstatus.deploy --bootstrap` is explicit: tests and the first collection
+and render must pass before publishing the initial `current`. Without a fallback, bootstrap
+failure is `env-failed` with the actual reason, never a fictitious rollback. Manual
+`current/.venv/bin/python -m lcstatus.deploy --rollback` refuses unless a distinct tested kept
+release exists. One terminal `deployment` record names each attempt, SHA, outcome, duration and
+suite summary. The typed `dashboard.code` condition and `dashboard.deploy` check drive the
+Dashboard code row: green at main, amber while ahead, red on a failed attempt/rollback until a
+later successful deployment. Product-release and installed-promotion evidence rules are unchanged.
+
+The loopback page fetches its own `status.json` every sixty seconds with caching disabled and
+redirects refused. Changed rendered timestamps update the existing view, open evidence details
+and scroll position. It shows collected age, red collection stale beyond forty-five minutes, and
+service unreachable with old content hidden after a failed fetch. Offline/non-loopback views do
+not poll. Browser credentials are never requested.
+
+Cut-over belongs to the operator. Stop existing user timers/services, run
+`scripts/migrate_data.py --from-checkout <old-checkout> --data-root <external-root>` from the merged
+code, inspect `migration-hashes.json`, install new units with `systemd/install.sh --no-start`, run
+one bootstrap of merged main, then run `systemd/install.sh` to start the new units. The migration
+copies `data/`, `.cache/` and `site/` to staging, compares SHA-256 inventories of the original,
+staged copy and original again, and publishes the new root only on equality. Existing destinations
+and hash mismatches refuse without overwrites; originals stay in place. Never delete the originals
+as part of this cut-over. Per-request exact commands are supplied with the merge receipt.
+
+Tests use fixture repositories, fake environment builds and temporary data roots. The final
+repository suite is the gate; there is no CI. Required mutation receipts cover an early switch,
+a skipped descendant check, rollback without a kept release, and code-tree runtime writes.

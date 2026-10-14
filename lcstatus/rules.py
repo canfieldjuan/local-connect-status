@@ -514,3 +514,31 @@ def _platform_states(conds: list[ConditionStatus], release: dict[str, Any]) -> d
 
 def _all_platforms(conds: list[ConditionStatus], release: dict[str, Any]) -> bool:
     return all(v == "satisfied" for v in _platform_states(conds, release).values())
+
+
+def dashboard_status(cat: dict[str, Any], records: list[Record]) -> dict[str, Any] | None:
+    """Dashboard labels are derived only from authenticated deployment observations/outcomes."""
+    config = cat.get("dashboard")
+    if not config:
+        return None
+    cond = config["condition"]
+    check = cat["checks"][cond["check"]]
+    rows = [r for r in records if r.repo == "local-connect-status" and r.kind in ("revision", "deployment")
+            and cond["id"] in r.condition_ids and r.source.get("check") == cond["check"]
+            and record_check_fingerprint(r) == check_fingerprint(check)
+            and record_condition_fingerprint(r, cond["id"]) == condition_fingerprint(cond)]
+    attempt = next((r for r in reversed(rows) if r.kind == "deployment"), None)
+    observation = rows[-1] if rows else None
+    deployed = observation.detail.get("deployed") if observation else None
+    head = observation.detail.get("main") if observation else None
+    outcome = attempt.detail.get("outcome") if attempt else None
+    if attempt and outcome != "deployed":
+        color, label = "red", outcome
+    elif deployed and head == deployed:
+        color, label = "green", "current"
+    else:
+        color, label = "amber", "main ahead" if deployed and head else "not deployed"
+    return {"label": label, "color": color, "deployed": deployed, "main": head, "outcome": outcome,
+            "reason": attempt.detail.get("reason") if attempt else None,
+            "test_summary": attempt.detail.get("test_summary") if attempt else None,
+            "record_id": attempt.record_id if attempt else None}
