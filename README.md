@@ -393,10 +393,17 @@ Cut-over belongs to the operator. Stop existing user timers/services, run
 `scripts/migrate_data.py --from-checkout <old-checkout> --data-root <external-root>` from the merged
 code, inspect `migration-hashes.json`, install new units with `systemd/install.sh --no-start`, run
 one bootstrap of merged main, then run `systemd/install.sh` to start the new units. The migration
-copies `data/`, `.cache/` and `site/` to staging, compares SHA-256 inventories of the original,
+copies only `data/` and `site/` to staging, compares SHA-256 inventories of the original,
 staged copy and original again, and publishes the new root only on equality. Existing destinations
 and hash mismatches refuse without overwrites; originals stay in place. Never delete the originals
-as part of this cut-over. Per-request exact commands are supplied with the merge receipt.
+as part of this cut-over. `.cache/` is not inventoried or copied; caches rebuild under the external
+root. Before creating parents or staging, the migration checks destination free space for the
+selected files, directories and receipt, rounded to filesystem allocation units; each hardlinked
+file path counts separately. A shortfall refuses before migration writes. This check does not
+reserve space against other writers; later copy failures still refuse publication and remove
+staging. A prior failed cut-over's existing destination or disk state needs a separate operator
+decision; these commands do not repair or delete it. Per-request exact commands are supplied
+with the actual new merge receipt.
 
 Tests use fixture repositories, fake environment builds and temporary data roots. The final
 repository suite is the gate; there is no CI. Required mutation receipts cover an early switch,
