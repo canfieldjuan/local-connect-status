@@ -167,14 +167,17 @@ class Deployer:
     def outcome(self, context: dict, outcome: str, reason: str, *, deployed: str | None,
                 catalogue: dict | None = None) -> Record:
         cat = catalogue or self.cat
+        started = context.get('started_wall')
         return Record(kind='deployment', repo='local-connect-status', revision=context['candidate'],
                       verdict='pass' if outcome == 'deployed' else 'fail', platform='linux',
                       source=self.source(context['attempt'], catalogue=cat),
                       condition_ids=[cat['dashboard']['condition']['id']], summary=reason,
-                      duration_s=max(0, time.monotonic() - context['started']),
+                      duration_s=max(0, time.time() - started) if started is not None else None,
                       detail={'outcome': outcome, 'deployed': deployed, 'main': context['head'],
                               'previous': context.get('previous'), 'test_summary': context.get('test_summary', ''),
-                              'reason': reason, 'error': context.get('observation_error')})
+                              'reason': reason, 'error': context.get('observation_error'),
+                              'duration_unavailable': ('legacy pending context has no wall-clock start'
+                                                       if started is None else None)})
 
     def append(self, record: Record) -> None:
         if not self.store.add(record):
@@ -345,7 +348,7 @@ class Deployer:
 
     def context(self, candidate: str, head: str, previous: str | None) -> dict:
         return {'attempt': uuid.uuid4().hex, 'candidate': candidate, 'head': head, 'previous': previous,
-                'started': time.monotonic(), 'test_summary': ''}
+                'started_wall': time.time(), 'test_summary': ''}
 
     def rollback(self) -> int:
         current, previous = self.pin('current'), self.pin('previous')

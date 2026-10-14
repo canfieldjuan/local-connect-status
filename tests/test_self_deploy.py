@@ -300,6 +300,45 @@ def test_pending_interruption_classifies_actual_publication_and_preserves_retry_
         assert attempts(paths)[-1].detail['outcome'] == 'deployed'
 
 
+def test_deployment_duration_survives_rebooted_monotonic_clock(world, monkeypatch):
+    import lcstatus.deploy as module
+    work, paths, deployer, command = world
+    head = git(work, 'rev-parse', 'HEAD')
+    monkeypatch.setattr(module.time, 'time', lambda: 1000.0)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 900000.0)
+    context = deployer.context(head, head, None)
+    assert context['started_wall'] == 1000.0
+    monkeypatch.setattr(module.time, 'time', lambda: 1060.5)
+    monkeypatch.setattr(module.time, 'monotonic', lambda: 2.0)
+    record = deployer.outcome(context, 'env-failed', 'fixture interrupted before publication', deployed=None)
+    assert record.duration_s == 60.5
+    assert record.detail['duration_unavailable'] is None
+
+
+def test_legacy_pending_duration_is_unavailable_with_reason_without_inventing_elapsed_time(world):
+    work, paths, deployer, command = world
+    old = bootstrap(world);new = commit(work)
+    context = deployer.context(new, new, old)
+    context.pop('started_wall');context['started'] = 900000.0
+    deployer.pending.write_text(json.dumps(context))
+    deployer.recover()
+    record = attempts(paths)[-1]
+    assert record.detail['outcome'] == 'env-failed' and record.revision == new
+    assert record.duration_s is None
+    assert record.detail['duration_unavailable'] == 'legacy pending context has no wall-clock start'
+    assert paths.current.resolve().name == old and not deployer.pending.exists()
+
+
+def test_wall_clock_duration_never_reports_negative_elapsed_time(world, monkeypatch):
+    import lcstatus.deploy as module
+    work, paths, deployer, command = world
+    head = git(work, 'rev-parse', 'HEAD')
+    monkeypatch.setattr(module.time, 'time', lambda: 1000.0)
+    context = deployer.context(head, head, None)
+    monkeypatch.setattr(module.time, 'time', lambda: 999.0)
+    assert deployer.outcome(context, 'env-failed', 'fixture clock moved', deployed=None).duration_s == 0
+
+
 def test_dashboard_labels_require_typed_evidence_and_last_failure_clears_only_on_later_deploy(world):
     work, paths, deployer, command = world
     old = bootstrap(world)

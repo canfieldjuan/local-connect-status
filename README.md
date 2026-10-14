@@ -450,3 +450,7 @@ Recovery distinguishes a pending pre-publication interruption from a published b
 first collection. Before publication it records `env-failed`, leaves current untouched and allows
 the candidate SHA to retry; a current pin at the candidate without collection readiness rolls back
 and permanently excludes that SHA. Completed publication still recovers one `deployed` outcome.
+
+Deployment attempts persist a wall-clock start so recovered durations survive reboot. Legacy
+pending contexts without that start record an unavailable duration with its reason; they do not
+convert a previous boot's monotonic clock into elapsed time. Existing terminal records stay intact.
