@@ -140,3 +140,85 @@ Out of scope:
 3. **Deploy cadence.** Proposed: check at every collection tick (every 20 minutes). The alternative is
    once an hour.
 4. **Data root.** Proposed: `~/.local/share/local-connect-status/`.
+
+## Bootstrap and attempt finalization — accepted amendment
+
+Accepted by the operator on 2026-10-13: "I accept option A for contract 11". Oversight
+relayed acceptance in PR #26 and mailbox receipt `13c58cecee304f1ea89e864ce59d39cd`.
+This acceptance is recorded before implementation.
+
+Decision:
+
+- An empty deployment layout is permitted only for the operator's explicit first-deploy command.
+  A timer tick does not silently bootstrap. The command fetches main, extracts its exact head,
+  builds from that revision's lock, and runs that revision's full suite.
+- With no kept release, the first collection must also finish and render successfully before
+  publishing `current`. Existing per-source failures are still allowed. A bootstrap failure leaves
+  `current` absent; it must never claim a rollback without a kept release.
+- Extraction failures, including disk-full, are recorded as `env-failed` with the actual reason.
+  A failed bootstrap collection is also `env-failed`, with the collection/render failure named.
+- Each attempt gets one terminal `deployment` record: `deployed` after its first collection passes
+  (or has only existing per-source failures), otherwise the applicable failure. A normal candidate
+  switch can be pending while its first collection runs under the same lock; if that collection
+  fails, the one terminal outcome is `rolled-back` after restoring the kept release.
+- Manual rollback refuses without a kept release. It does not append a fictitious `rolled-back`
+  record. All later deployment switches retain the previous release as R4 requires.
+
+The alternative operator-supplied seed release was not adopted.
+
+## Local-only scope — accepted amendment
+
+The operator resolved the Vercel scope question: "retire the integration from vercel. were not
+ deploying these to vercel" (message `Sentinel_7b452dacc5808191a32252117d22a533`, relayed from
+ the operator conversation). Acceptance is recorded before implementation.
+
+Retire this repository's Vercel integration and its dedicated static-build tests. The dashboard
+is local-only; no legacy code-tree write exception is adopted. This adds `vercel.json` removal
+and disabling this repository's remote Git deployment connection to scope. Preserve remote
+project/deployment data and do not alter unrelated projects. An unavailable permission or
+separate irreversible remote action is reported as a remaining blocker, not as completed retirement.
+
+## Main lookup and failed-candidate visibility — accepted clarification (Option B, restored)
+
+The operator's latest direct correction accepts **B**. It supersedes the earlier A acceptance in
+`b4b9d77`, which remains in history without a rewrite. This restoration is committed separately
+before implementing B. Local-only Vercel retirement and every live cut-over restriction remain.
+
+- Fetch and lineage-read failures are typed observations, not terminal deployment attempts.
+  Lookup failure alone is amber, `main not observed`, with a separately exposed source error.
+  Recovery to a successful observation is retained even when it returns to an earlier head.
+- R5's real-candidate rule remains: `tests-failed`, real-candidate `env-failed`, `rolled-back` and
+  `not-descendant` stay red until a later revision deploys successfully. Persistent red has
+  priority over lookup outages; moving main or observing deployed equals main cannot clear it.
+  Preserve the failure reason, and expose a lookup outage separately as `observation_error`.
+- Candidate builds and full suites receive fresh per-attempt data/HOME/XDG roots under the
+  deploy cache, cleaned after the phase. Only actual collection receives the live root.
+- One collection-ready marker is written after BOTH first collection and terminal render pass.
+  Recovery finishes one `deployed` outcome only with that marker AND current pinned to the
+  candidate; otherwise uncompleted collection keeps the rollback/bootstrap failure behavior.
+  Persistence errors after publication retain pending context rather than fabricate env-failed.
+  The per-attempt guard prevents a duplicate when append landed but pending cleanup failed.
+- An exact archive receives an independent local Git HEAD/index from the owned mirror so the
+  preserved tracked-file commercial scan runs unchanged. No network is needed for that metadata.
+- Installed evidence panels keep stable app-keyed identities across in-place refresh.
+- Unit working directories are unquoted and percent-escaped; representability validation precedes
+  shell normalization and writing units. Invalid controls/edge whitespace/quote/backslash refuse;
+  interior spaces and percent escaping remain supported and checked by the real systemd parser.
+
+Non-blocking retry/cache and interpreter-portability suggestions remain deferred.
+
+## Release retention — accepted deferral (Option B)
+
+The operator chose B: defer cleanup and keep the accepted Contract 11 scope. R4 continues to
+retain current and previous; older release trees remain. No automatic release deletion is added.
+The unaccepted automatic-cleanup alternative remains in proposal commit `254497b` history.
+
+Track a separately accepted retention contract in
+[issue #27](https://github.com/canfieldjuan/local-connect-status/issues/27). Oversight measured a
+scratch release at approximately nine MB; this is not a measurement of the live installation.
+The operator's planning trigger is to add retention before approximately fifty releases, or when
+free space on `/` falls below twenty GB, whichever comes first. These triggers do not add a
+monitor, notification, page label or cleanup behavior to Contract 11.
+
+This acceptance is recorded separately from implementation. Oversight agreed that deferral plus
+this issue is non-blocking; automatic cleanup would require a later contract acceptance.

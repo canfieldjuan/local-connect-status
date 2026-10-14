@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from . import catalogue as catmod
+from .paths import Paths, outside_code
 from .change import assess, uncovered_patterns
 from .evidence import Record, Store, atomic_write, collection_lock, now_iso
 from .render import render_all
@@ -33,9 +34,10 @@ from .verify import (
 )
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
-CACHE = ROOT / ".cache"
-SITE = ROOT / "site"
+DATA = Paths.configured().data
+CACHE = Paths.configured().cache
+DEFAULT_CACHE = CACHE
+SITE = Paths.configured().site
 
 
 def load_state(path: Path) -> dict[str, Any]:
@@ -150,8 +152,9 @@ def validate_baselines(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lcstatus.collect")
     ap.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
-    ap.add_argument("--data", default=str(DATA))
-    ap.add_argument("--site", default=str(SITE))
+    ap.add_argument("--data-root", help="external runtime root; also LCSTATUS_DATA_ROOT")
+    ap.add_argument("--data")
+    ap.add_argument("--site")
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust and PDF handoff)")
     ap.add_argument("--heavy-only", action="store_true",
@@ -169,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
                             or args.render_only or args.set_baseline):
         ap.error("--heavy-only is a mode of its own: it cannot be combined with --heavy, --checks, "
                  "--no-local, --render-only or --set-baseline")
-    data = Path(args.data)
+    paths = Paths.configured(args.data_root, data=args.data, site=args.site,
+                             cache=CACHE if CACHE != DEFAULT_CACHE else None)
+    data, site, cache = paths.data, paths.site, paths.cache
     # One collector at a time. A second run (timer tick, or a baseline write during a run)
     # must never interleave with a run in progress; state.json would lose one of them.  A routine
     # tick yields; a baseline write and the nightly heavy run wait (contract 06 B3): a routine tick
@@ -193,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     # the whole diff and commit range has been read, so a transient read failure is retried.
     change_baselines = dict(state.get("change_baselines", state.get("heads", {})))
     failures: list[dict[str, Any]] = []
-    mirrors = Mirrors(CACHE / "mirrors", cat["repos"])
+    mirrors = Mirrors(cache / "mirrors", cat["repos"])
 
     if args.set_baseline:
         validated = validate_baselines(args.set_baseline, cat["repos"], mirrors)
@@ -209,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     gh = GitHub()
-    runner = Runner(mirrors, CACHE, data / "logs", gh, cat)
+    runner = Runner(mirrors, cache, data / "logs", gh, cat)
 
     heads: dict[str, str] = {}
     revs: dict[str, Revision] = {}
@@ -343,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if runner_kind == "manual_observation":
                 continue   # only a person records these, via scripts/record_observation.py
-            if runner_kind == "installed_observation":
+            if runner_kind in ("installed_observation", "deployment"):
                 continue   # one shared read-only snapshot per app below, never a product runner
             if args.no_local or not wanted(cid, chk):
                 continue
@@ -414,12 +419,22 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- derive & render ----------------------------------------------------------
     records = store.all()
+    staged = os.environ.get("LCSTATUS_STAGED_DEPLOYMENT")
+    if staged:
+        records.append(Record.from_dict(json.loads(Path(staged).read_text())))
     statuses = [
         task_status(t, records, heads, cat, cat["release"])
         for t in cat["tasks"]
     ]
-    render_all(Path(args.site), cat, statuses, records, heads, failures, state, changed)
-    print(f"rendered {args.site} ({len(records)} records; {len(failures)} source failures)")
+    render_all(site, cat, statuses, records, heads, failures, state, changed)
+    receipt = os.environ.get("LCSTATUS_RENDER_RECEIPT")
+    if receipt:
+        from .promotion import sha256_file
+        atomic_write(outside_code(Path(receipt)), json.dumps({
+            "source_failures": len(failures), "files": {
+                name: sha256_file(site / name) for name in ("status.json", "report.md", "dashboard.html", "index.html")
+            }}))
+    print(f"rendered {site} ({len(records)} records; {len(failures)} source failures)")
     return 2 if failures else 0
 
 

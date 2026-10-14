@@ -345,3 +345,122 @@ packages. Without those exact revisions' stored test, smoke and standing-gate re
 must refuse, leaving `unrecorded install`. No promotion backfills were run for this implementation.
 The live `~/Desktop/local-connect-status` dashboard checkout at `4c1d7c5` is stale; updating its
 checkout, service or records is an operator action outside this goal.
+
+
+## Tested local dashboard deployment (Contract 11)
+
+The dashboard is local-only. This repository's Vercel build configuration and dedicated export
+checks are retired; remote Git disconnection must be confirmed separately if access is unavailable.
+Existing deployment history is retained.
+
+Live files are under `~/.local/share/local-connect-status/`, configured with `LCSTATUS_DATA_ROOT`
+or `--data-root`. Its `data/` contains append-only records, state and logs; `.cache/` contains owned
+mirrors and runner caches; `site/` contains the atomic reports. Runtime paths inside a git/code tree
+are refused. The checked-in `data/` is a historical test fixture, never the live default.
+Human observations use the same external root and collection lock. Historical absolute log paths
+remain unchanged and resolve in the retained originals.
+
+Each routine/heavy user-unit tick runs `lcstatus.deploy --collect` before collection. The deployer
+fetches dashboard main into its own bare mirror, requires the deployed SHA in main's first-parent
+history, extracts `releases/<full-sha>/`, runs `uv sync --locked --group dev --no-install-project`
+with that release's own lock, and runs its own `.venv/bin/python -m pytest`. No candidate is switched
+to before a passing suite receipt exists. `current` changes by an atomic symlink replacement;
+`previous` keeps the tested fallback. The lock remains held in the controller and inherited by
+its exact-release collection/render children. Test/environment failures leave current untouched.
+A first-collection process/render failure restores the kept release. An exit of two is accepted
+only with a completed render receipt identifying existing per-source failures. A rolled-back SHA
+is never retried; a later main revision remains eligible. Interrupted pending attempts recover
+under the same lock, and deployment outcomes never rewrite earlier evidence.
+
+The operator's initial `lcstatus.deploy --bootstrap` is explicit: tests and the first collection
+and render must pass before publishing the initial `current`. Without a fallback, bootstrap
+failure is `env-failed` with the actual reason, never a fictitious rollback. Manual
+`current/.venv/bin/python -m lcstatus.deploy --rollback` refuses unless a distinct tested kept
+release exists. One terminal `deployment` record names each attempt, SHA, outcome, duration and
+suite summary. The typed `dashboard.code` condition and `dashboard.deploy` check drive the
+Dashboard code row: a real failed or rolled-back attempt stays red until a later successful
+deployment (directly accepted Option B). Moving main, observing deployed equals main, or a lookup
+outage cannot clear that failure. Otherwise it is green at main and amber while ahead or unobserved.
+Product-release and installed-promotion evidence rules are unchanged.
+
+The loopback page fetches its own `status.json` every sixty seconds with caching disabled and
+redirects refused. Changed rendered timestamps update the existing view, open evidence details
+and scroll position. It shows collected age, red collection stale beyond forty-five minutes, and
+service unreachable with old content hidden after a failed fetch. Offline/non-loopback views do
+not poll. Browser credentials are never requested.
+
+Cut-over belongs to the operator. Stop existing user timers/services, run
+`scripts/migrate_data.py --from-checkout <old-checkout> --data-root <external-root>` from the merged
+code, inspect `migration-hashes.json`, install new units with `systemd/install.sh --no-start`, run
+one bootstrap of merged main, then run `systemd/install.sh` to start the new units. The migration
+copies `data/`, `.cache/` and `site/` to staging, compares SHA-256 inventories of the original,
+staged copy and original again, and publishes the new root only on equality. Existing destinations
+and hash mismatches refuse without overwrites; originals stay in place. Never delete the originals
+as part of this cut-over. Per-request exact commands are supplied with the merge receipt.
+
+Tests use fixture repositories, fake environment builds and temporary data roots. The final
+repository suite is the gate; there is no CI. Required mutation receipts cover an early switch,
+a skipped descendant check, rollback without a kept release, and code-tree runtime writes.
+
+
+Main fetch and first-parent-history read failures are observations, never attempts for an empty
+candidate. Without a real failed attempt, the Dashboard code row is amber `main not observed`,
+with the source reason; recovery is retained across heads. A real failed attempt keeps its red
+label and original reason while a lookup outage is exposed separately as `observation_error`
+in JSON, Markdown and the page. Only a later successful deployment clears it. Build and suite subprocesses receive independent
+per-attempt temporary data/HOME/XDG/cache roots; only collection receives the live root. A pending
+bootstrap records readiness after the first collection/render and before publication so recovery
+can finish an interrupted terminal append as one successful deployment, without a fake rollback.
+
+
+Generated units use unquoted percent-escaped working directories, with separately quoted command
+arguments and environment values. Interior spaces are supported; surrounding whitespace/control
+characters are refused before shell normalization. Fixture units are checked by the real systemd
+parser without installing or starting them. A completed collection-ready marker is persisted only
+after first collection and terminal render succeed; publication and terminal append/unlink are
+separate phases, so a persistence error leaves the pending context for one truthful recovery.
+
+
+An exact archive gets an independent local Git HEAD/index from the owned dashboard mirror, using
+only local objects, with user templates/hooks suppressed. This keeps the existing tracked-file
+commercial scan unchanged in a release; its original assertions and regex remain the gate.
+The final suite is run from the exact extracted revision as well as the fixture archive regression.
+Node and systemd-analyze must be available on this local host for the page and generated-unit
+regression gates; missing tools are explicit gate failures, never silent passes or skipped tests.
+
+
+Before release receipts are written, the pending attempt is journaled. Transient pre-publication
+metadata failure records one real-candidate environment failure without switching and continues
+collection from the kept current release; unavailable persistence propagates with any pending
+context retained. The own-unit root validator also refuses backslash/double-quote characters that
+systemd cannot use in an executable path, before any unit is written or started.
+
+Self-deployment requires Python 3.11.4 or newer for safe archive extraction; the project and lock
+declare the same minimum.
+
+The deploy controller inventories the extracted code before build and compares bytes, types,
+permissions and symlink targets after both build and suite, before catalogue reload, release receipt
+or switch. Only root `.git` and `.venv` controller artifacts are excluded; Git ignore rules do not
+hide added code. A changed tree fails the candidate gate and keeps the running release. This guards
+against accidental mutation by our own main-branch tests; the suite runs as the same user and is
+not a security boundary against a malicious candidate. Manual rollback carries the latest
+authenticated main observation or unavailable state through the existing rules admission owner.
+
+Recovery distinguishes a pending pre-publication interruption from a published but incomplete
+first collection. Before publication it records `env-failed`, leaves current untouched and allows
+the candidate SHA to retry; a current pin at the candidate without collection readiness rolls back
+and permanently excludes that SHA. Completed publication still recovers one `deployed` outcome.
+
+Deployment attempts persist a wall-clock start so recovered durations survive reboot. Legacy
+pending contexts without that start record an unavailable duration with its reason; they do not
+convert a previous boot's monotonic clock into elapsed time. Existing terminal records stay intact.
+
+Own user units require an absolute data-root path using ASCII letters/digits, interior spaces,
+and `/ . _ @ + , : ~ = - %`. Other characters, including apostrophes and dollar signs, refuse
+before unit files or starts; percent escaping and the real systemd-parser fixture remain.
+Release cleanup is deferred by the operator; issue #27 tracks the measured size and planning
+trigger for a separately accepted retention contract. No automatic release deletion is added.
+
+If recovery restores the previous release, that controller ends its tick immediately after the
+rollback record. A later tick starts through the restored release before fetching or deploying
+a newer main, so code from the rejected release cannot control another deployment.
