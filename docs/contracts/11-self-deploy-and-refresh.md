@@ -178,32 +178,31 @@ and disabling this repository's remote Git deployment connection to scope. Prese
 project/deployment data and do not alter unrelated projects. An unavailable permission or
 separate irreversible remote action is reported as a remaining blocker, not as completed retirement.
 
-## Main lookup and failed-candidate visibility — accepted clarification (Option A)
+## Main lookup and failed-candidate visibility — accepted clarification (Option B, restored)
 
-The operator's newer decision is **A** (message `Sentinel_ae8619927c7481919c4916defb24ba03`,
-relayed from the main conversation). The question explicitly described A as current-main failure
-red, a newer untried revision amber, and confirmed deployed equals main green. This supersedes the
-earlier relayed B decision (`0633282bf6da44118734b0cabe2c6e28`). This acceptance is recorded as its
-own commit before implementing the changed semantics; the local-only/Vercel decision is unchanged.
+The operator's latest direct correction accepts **B**. It supersedes the earlier A acceptance in
+`b4b9d77`, which remains in history without a rewrite. This restoration is committed separately
+before implementing B. Local-only Vercel retirement and every live cut-over restriction remain.
 
 - Fetch and lineage-read failures are typed observations, not terminal deployment attempts.
-  The code row is amber, `main not observed`, with the source reason for that tick. The last
-  confirmed head is historical, not proof of current main or its eligibility. Recovery to a
-  successful observation is retained even when it returns to an earlier head.
-- Red means the observed current main revision failed deployment and is not the deployed
-  revision. A newer, not-yet-attempted main revision is amber. Confirmed deployed equals observed
-  main is green. An earlier failed candidate does not impose unconditional red on a different
-  current main. The row still exposes the last attempt's revision, outcome and reason as history.
-  This replaces R5's original unconditional persistence until a later successful deployment.
-- Candidate environment builds and full suites receive fresh per-attempt temporary data, HOME
-  and XDG roots, created and removed under the deploy cache. Only actual collection receives
-  the live root. A fixture candidate writes to its configured root to prove isolation; a mutation
-  supplying the live root must fail that test. No real live store is used for this evidence.
-- Bootstrap publication is recoverable: recovery distinguishes successful first collection
-  followed by interrupted publication/terminal append from a bootstrap that never published.
-  It records one truthful terminal outcome without claiming a rollback without a kept release.
-- A lineage-read failure after fetch is still an observation, so the retained release can collect.
-  In-place refresh preserves open installed evidence with stable app-keyed identities.
+  Lookup failure alone is amber, `main not observed`, with a separately exposed source error.
+  Recovery to a successful observation is retained even when it returns to an earlier head.
+- R5's real-candidate rule remains: `tests-failed`, real-candidate `env-failed`, `rolled-back` and
+  `not-descendant` stay red until a later revision deploys successfully. Persistent red has
+  priority over lookup outages; moving main or observing deployed equals main cannot clear it.
+  Preserve the failure reason, and expose a lookup outage separately as `observation_error`.
+- Candidate builds and full suites receive fresh per-attempt data/HOME/XDG roots under the
+  deploy cache, cleaned after the phase. Only actual collection receives the live root.
+- One collection-ready marker is written after BOTH first collection and terminal render pass.
+  Recovery finishes one `deployed` outcome only with that marker AND current pinned to the
+  candidate; otherwise uncompleted collection keeps the rollback/bootstrap failure behavior.
+  Persistence errors after publication retain pending context rather than fabricate env-failed.
+  The per-attempt guard prevents a duplicate when append landed but pending cleanup failed.
+- An exact archive receives an independent local Git HEAD/index from the owned mirror so the
+  preserved tracked-file commercial scan runs unchanged. No network is needed for that metadata.
+- Installed evidence panels keep stable app-keyed identities across in-place refresh.
+- Unit working directories are unquoted and percent-escaped; representability validation precedes
+  shell normalization and writing units. Invalid controls/edge whitespace/quote/backslash refuse;
+  interior spaces and percent escaping remain supported and checked by the real systemd parser.
 
-Non-blocking retry caching and environment-portability suggestions remain deferred; they are
-outside this bounded implementation.
+Non-blocking retry/cache and interpreter-portability suggestions remain deferred.
