@@ -1,8 +1,20 @@
 # Contract 12 — Harness faults are unavailable checks, not failed product tests
 
-Status: **proposed; awaiting operator acceptance**. No implementation is authorized by this
-document until Juan's acceptance is relayed verbatim and recorded in a separate commit.
+Status: **accepted by Juan, 2026-10-14**, with the execution-parity condition below. Acceptance
+is recorded in this separate commit before implementation.
 Tracks [issue #14](https://github.com/canfieldjuan/local-connect-status/issues/14).
+
+## Operator acceptance and condition
+
+Juan's direct instruction: "I accept Contract 12 as proposed, with one condition: the acceptance
+adapter must execute the product script with __main__ semantics in the same interpreter/venv
+as today, and a parity test must show the success path is identical to direct execution."
+
+The adapter must execute the script as `__main__`, not import it under an alternate module
+name and call `main`. Keep the product interpreter/venv, arguments and environment. A real
+fixture subprocess parity test compares direct and adapted success: exit, stdout/stderr,
+product side effects, argv, `__main__` identity/file metadata, and interpreter/venv. Observe
+native assertions without altering the product source or its success path.
 
 ## Problem and inspected evidence
 
