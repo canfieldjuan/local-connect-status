@@ -91,6 +91,7 @@ def condition_payload(status: Any) -> dict[str, Any]:
         missing = evidence.get("detail", {}).get("missing", [])
         label = "release incomplete" if missing else "no release published"
     condition["label"] = label
+    condition["label"] = status.harness_label() or condition["label"]
     return condition
 
 

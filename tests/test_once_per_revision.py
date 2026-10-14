@@ -412,7 +412,8 @@ def test_pytest_collection_error_is_not_decided(tmp_path: Path, monkeypatch):
         monkeypatch.setattr("lcstatus.verify.subprocess.run", completed)
         row = runner.pytest("ew.case", {"repo": "ew", "args": ["tests/test_case.py"]},
                             rev("ew", "a"), [], [])
-        assert row.verdict == "fail" and row.failed == 1, (name, row.summary)
+        assert (row.verdict, row.failed) == (('fail', 1) if name == 'assertion' else ('unavailable', 0)), (name, row.summary)
+        if name == 'collection': assert row.detail['junit_errors'] == 1
         assert decided("pytest", row) is expect, name
 
 

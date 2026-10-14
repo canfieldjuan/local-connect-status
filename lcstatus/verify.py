@@ -4,8 +4,8 @@ Principles that keep these honest:
 
 * Tests run against a tree extracted at the exact revision, never a developer checkout.
 * pytest results come from JUnit XML, so "executed / failed / skipped" are counted, not
-  parsed from a summary line. A nonzero exit is a failure even if a passing-looking line
-  was printed. Zero executed tests is `skip`, never `pass`.
+  parsed from a summary line. The shared outcome owner requires counted failure proof;
+  unproved nonzero exits are harness faults. Zero executed tests is `skip`, never `pass`.
 * A GitHub job is recorded as `ci_run` with the job's own conclusion and the platform read
   from the job, not assumed. Pending and cancelled stay pending and skip.
 * A runner that cannot run records `unavailable` with the reason. It never returns nothing.
@@ -28,11 +28,12 @@ import stat
 import subprocess
 import sys
 import time
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from .acceptance_proof import bootstrap
+from .outcomes import classify_execution, INVOICE_ACCEPTANCE_CHECKS, invoice_acceptance_proof
 from .catalogue import declared_participants, participants_required
 from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
 from .sources import Failure, GitHub, Mirrors, Revision
@@ -49,30 +50,6 @@ MAX_ENTITLEMENT_BYTES = 16 * 1024
 UTC_TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$")
 # The acceptance script prints the watcher's own entitlement verdict on this line.
 WATCHER_DECISION_PREFIX = "watcher entitlement decision"
-INVOICE_ACCEPTANCE_CHECKS = frozenset({
-    "consumer_import_pinned", "entitlement_active", "provider_discovered",
-    "invoice_job_completed", "declared_outputs_present", "ledger_one_entry",
-    "replay_no_duplicate", "second_provider_refused", "registration_removed",
-})
-
-
-def invoice_acceptance_proof(stdout: str) -> dict[str, Any] | None:
-    """Accept only the complete, machine-readable final proof line."""
-    try:
-        proof = json.loads((stdout.strip().splitlines() or [""])[-1])
-    except (ValueError, TypeError):
-        return None
-    if (not isinstance(proof, dict) or type(proof.get("schema_version")) is not int
-            or proof["schema_version"] != 1):
-        return None
-    checks = proof.get("checks")
-    if (proof.get("all_checks") is not True or not isinstance(checks, dict)
-            or set(checks) != INVOICE_ACCEPTANCE_CHECKS
-            or any(value is not True for value in checks.values())):
-        return None
-    return proof
-
-
 def _pyproject_has_dev_group(tree: Path) -> bool:
     pp = tree / "pyproject.toml"
     return pp.exists() and "[dependency-groups]" in pp.read_text(encoding="utf-8")
@@ -607,6 +584,13 @@ class Runner:
         self.cat = catalogue
         self.logs.mkdir(parents=True, exist_ok=True)
 
+    def _execution_record(self, runner, base, *, phase='prepare', reason=None, exit_code=None,
+                          stdout='', junit=None, **fields):
+        outcome = classify_execution(runner, phase=phase, reason=reason, exit_code=exit_code,
+                                     stdout=stdout, junit=junit, summary=fields.pop('summary', None),
+                                     detail=fields.pop('detail', None))
+        return Record(exit_code=exit_code, **outcome, **fields, **base)
+
     def _source(
         self, source_type: str, check_id: str, check: dict[str, Any],
         condition_ids: list[str], **extra: Any,
@@ -749,22 +733,18 @@ class Runner:
         base = run_base(self.cat, "pytest", check_id, check, {repo: rev}, condition_ids, task_ids)
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
-            return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
+            return self._execution_record('pytest', base, reason=f"{tree.what}: {tree.why}")
         for argument in check.get("args", []):
             target = argument.split("::", 1)[0]
             if not target.startswith("-") and target.endswith(".py") and not (tree / target).is_file():
-                return Record(
-                    verdict="unavailable",
-                    summary=f"configured pytest target absent at this revision: {target}",
-                    **base,
-                )
+                return self._execution_record('pytest', base, reason=f"configured pytest target absent at this revision: {target}")
         venv = self._venv(repo, tree, rev.sha)
         if isinstance(venv, Failure):
-            return Record(verdict="unavailable", summary=f"{venv.what}: {venv.why}", **base)
+            return self._execution_record('pytest', base, reason=f"{venv.what}: {venv.why}")
         if check.get("desktop_deps"):
             f = self._desktop_deps(tree)
             if isinstance(f, Failure):
-                return Record(verdict="unavailable", summary=f"desktop deps: {f.why}", **base)
+                return self._execution_record('pytest', base, reason=f"desktop deps: {f.why}")
         log, junit = self._execution_paths(check_id, rev.sha[:12])
         # No -q here: a repo whose addopts already has -q would become -qq and lose its
         # summary line. Verdicts never depend on that line; people reading logs do.
@@ -780,37 +760,16 @@ class Runner:
                 env=sanitized_python_env(),
             )
         except subprocess.TimeoutExpired:
-            return Record(verdict="unavailable", summary="timeout", command=recorded, **base)
+            return self._execution_record('pytest', base, reason="timeout", command=recorded)
         except OSError as exc:
-            return Record(verdict="unavailable", summary=f"could not start: {type(exc).__name__}",
-                          command=recorded, **base)
+            return self._execution_record('pytest', base, reason=f"could not start: {type(exc).__name__}", command=recorded)
         dur = round(time.time() - t0, 1)
         log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
-        executed = failed = skipped = None
-        if junit.exists():
-            try:
-                root = ET.parse(junit).getroot()
-                suites = root.findall(".//testsuite") or [root]
-                tests = sum(int(s.get("tests", 0)) for s in suites)
-                failures = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
-                skips = sum(int(s.get("skipped", 0)) for s in suites)
-                executed, failed, skipped = tests - skips, failures, skips
-            except ET.ParseError:
-                pass
         summary = next((l for l in reversed(r.stdout.splitlines()) if " passed" in l or " failed" in l or " error" in l), "").strip() or None
-        # The verdict is decided by exit code and counts, never by the summary line.
-        if r.returncode != 0:
-            verdict = "fail"
-        elif executed is None:
-            verdict = "unknown"
-        elif executed == 0:
-            verdict = "skip"
-        elif failed:
-            verdict = "fail"
-        else:
-            verdict = "pass"
-        return Record(verdict=verdict, command=f"[{interpreter_version(venv)}] {recorded}", exit_code=r.returncode, executed=executed,
-                      failed=failed, skipped=skipped, summary=summary, log_path=str(log), duration_s=dur, **base)
+        return self._execution_record('pytest', base, phase='test', stdout=r.stdout, junit=junit,
+                                      exit_code=r.returncode, summary=summary,
+                                      command=f"[{interpreter_version(venv)}] {recorded}",
+                                      log_path=str(log), duration_s=dur)
 
     # ---- cargo (Document Summarizer) -------------------------------------------------
 
@@ -819,10 +778,10 @@ class Runner:
         base = run_base(self.cat, "cargo_lib", check_id, check, {repo: rev}, condition_ids, task_ids)
         tree = self.tree(repo, rev.sha)
         if isinstance(tree, Failure):
-            return Record(verdict="unavailable", summary=f"{tree.what}: {tree.why}", **base)
+            return self._execution_record('cargo_lib', base, reason=f"{tree.what}: {tree.why}")
         for tool in ("npm", "cargo"):
             if not shutil.which(tool):
-                return Record(verdict="unavailable", summary=f"{tool} not installed", **base)
+                return self._execution_record('cargo_lib', base, reason=f"{tool} not installed")
         log, _ = self._execution_paths(check_id, rev.sha[:12])
         t0 = time.time()
         steps = [(["npm", "install", "--silent"], tree), (["npm", "run", "build"], tree),
@@ -834,29 +793,20 @@ class Runner:
                 r = run_owned_group(cmd, cwd=cwd, env=dict(os.environ), timeout=3600)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(out), encoding="utf-8")
-                return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}", log_path=str(log), **base)
+                return self._execution_record('cargo_lib', base, reason=f"timeout in {' '.join(cmd)}", log_path=str(log))
             except OSError as exc:
                 log.write_text("\n".join(out), encoding="utf-8")
-                return Record(verdict="unavailable",
-                              summary=f"could not start {' '.join(cmd)}: {type(exc).__name__}",
-                              log_path=str(log), **base)
+                return self._execution_record('cargo_lib', base, reason=f"could not start {' '.join(cmd)}: {type(exc).__name__}", log_path=str(log))
             out += [f"$ {' '.join(cmd)}", r.stdout, r.stderr]
             rc = r.returncode
             if rc != 0:
                 break
         log.write_text("\n".join(out), encoding="utf-8")
-        text = "\n".join(out)
-        summary = next((l for l in reversed(text.splitlines()) if l.startswith("test result:")), None)
-        executed = failed = None
-        if summary:
-            import re
-            m = re.search(r"(\d+) passed; (\d+) failed; (\d+) ignored", summary)
-            if m:
-                executed = int(m.group(1)) + int(m.group(2)); failed = int(m.group(2))
-        verdict = "fail" if rc != 0 else ("unknown" if executed is None else ("skip" if executed == 0 else ("fail" if failed else "pass")))
-        return Record(verdict=verdict, command="npm install && npm run build && cargo test --lib", exit_code=rc,
-                      executed=executed, failed=failed, summary=summary, log_path=str(log),
-                      duration_s=round(time.time() - t0, 1), **base)
+        return self._execution_record('cargo_lib', base,
+                                      phase='test' if cmd[0] == 'cargo' else ' '.join(cmd),
+                                      stdout=r.stdout + '\n' + r.stderr, exit_code=rc,
+                                      command="npm install && npm run build && cargo test --lib",
+                                      log_path=str(log), duration_s=round(time.time() - t0, 1))
 
     # ---- cross-app acceptance (Email Watcher -> Invoice Processor) --------------------
 
@@ -867,27 +817,26 @@ class Runner:
         # borrows the operator's installed one. Without a usable licence the acceptance cannot run.
         licence_path = installed_entitlement_path(os.environ)
         if isinstance(licence_path, Failure):
-            return Record(verdict="unavailable",
-                          summary=f"installed Connect entitlement unreadable: {licence_path.why}", **base)
+            return self._execution_record('accept_ew_ip', base, reason=f"installed Connect entitlement unreadable: {licence_path.why}")
         licence = read_installed_entitlement(licence_path)
         if isinstance(licence, Failure):
-            return Record(verdict="unavailable", summary=licence.why, **base)
+            return self._execution_record('accept_ew_ip', base, reason=licence.why)
         licence_bytes, entitlement = licence
         trees: dict[str, Path] = {}
         for repo in declared_participants(check):
             tree = self.tree(repo, revs[repo].sha)
             if isinstance(tree, Failure):
-                return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)
+                return self._execution_record('accept_ew_ip', base, reason=f"could not extract {repo}: {tree.why}")
             trees[repo] = tree
         ip_tree = trees["invoice-processor"]
         ew_tree = trees["eom-email-watcher"]
         contracts_tree = trees["connect-contracts"]
         venv = self._venv("invoice-processor", ip_tree, ip.sha, extra_trees=[ew_tree])
         if isinstance(venv, Failure):
-            return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
+            return self._execution_record('accept_ew_ip', base, reason=f"env: {venv.why}")
         script = ip_tree / "scripts" / "accept_against_email_watcher.py"
         if not script.exists():
-            return Record(verdict="unavailable", summary="acceptance script absent at this revision", **base)
+            return self._execution_record('accept_ew_ip', base, reason="acceptance script absent at this revision")
 
         key = f"{ip.sha[:12]}-{ew.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
         compat_home = self.cache / "xapp-homes" / key
@@ -908,7 +857,7 @@ class Runner:
             fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             lock_fh.close()
-            return Record(verdict="unavailable", summary="watcher compatibility path is busy", **base)
+            return self._execution_record('accept_ew_ip', base, reason="watcher compatibility path is busy")
         linked = False
         staged: Path | None = None
         try:
@@ -916,16 +865,14 @@ class Runner:
                 wm, ew_tree, self.cache / "trees" / "eom-email-watcher"
             )
             if failure is not None:
-                return Record(verdict="unavailable", summary=failure.why, **base)
+                return self._execution_record('accept_ew_ip', base, reason=failure.why)
             linked = True
             # Fix the cleanup path before the copy starts, so a copy that fails half-way is still removed.
             staged = compat_home / ".config" / INSTALLED_ENTITLEMENT
             try:
                 stage_entitlement(compat_home, licence_bytes)
             except OSError as exc:
-                return Record(verdict="unavailable",
-                              summary=f"installed Connect entitlement unreadable: could not stage ({type(exc).__name__})",
-                              **base)
+                return self._execution_record('accept_ew_ip', base, reason=f"installed Connect entitlement unreadable: could not stage ({type(exc).__name__})")
             log, _ = self._execution_paths(check_id, f"{ip.sha[:8]}-{ew.sha[:8]}")
             env = sanitized_python_env(
                 HOME=str(compat_home),
@@ -941,7 +888,8 @@ class Runner:
                 f"ok = tests.fixtures.__file__.startswith({str(ip_tree)!r}) and tests.oracle.__file__.startswith({str(ip_tree)!r})\n"
                 "if not ok:\n"
                 "    print('ISOLATION FAILURE: fixtures resolved outside the extracted tree', file=sys.stderr); sys.exit(97)\n"
-                f"runpy.run_path({str(script)!r}, run_name='__main__')\n"
+                "sys.path.pop(0)\n"
+                + bootstrap(script, "accept_ew_ip") + "\n"
             )
             cmd = [str(venv / "bin" / "python"), "-c", wrapper]
             t0 = time.time()
@@ -949,25 +897,18 @@ class Runner:
                 r = subprocess.run(cmd, cwd=ip_tree, capture_output=True, text=True,
                                    timeout=1800, env=env)
             except subprocess.TimeoutExpired:
-                return Record(verdict="unavailable", summary="timeout",
-                              command="accept_against_email_watcher.py (isolated)", **base)
+                return self._execution_record('accept_ew_ip', base, reason="timeout", command="accept_against_email_watcher.py (isolated)")
             except OSError as exc:
-                return Record(verdict="unavailable", summary=f"could not start: {type(exc).__name__}",
-                              command="accept_against_email_watcher.py (isolated)", **base)
+                return self._execution_record('accept_ew_ip', base, reason=f"could not start: {type(exc).__name__}", command="accept_against_email_watcher.py (isolated)")
             log.write_text(r.stdout + "\n--- stderr ---\n" + r.stderr, encoding="utf-8")
             last = (r.stdout.strip().splitlines() or [""])[-1]
             if r.returncode == 97:
-                return Record(verdict="unavailable", summary="isolation failure: fixtures from outside the extracted tree",
-                              command="accept_against_email_watcher.py (isolated)", exit_code=97,
-                              log_path=str(log), **base)
-            proof = invoice_acceptance_proof(r.stdout)
-            verdict = "pass" if r.returncode == 0 and proof is not None else "fail"
+                return self._execution_record('accept_ew_ip', base, reason="isolation failure: fixtures from outside the extracted tree", command="accept_against_email_watcher.py (isolated)", exit_code=97, log_path=str(log))
             decision = watcher_decision(r.stdout)
-            return Record(verdict=verdict,
+            return self._execution_record("accept_ew_ip", base, phase="test", stdout=r.stdout,
                           command="accept_against_email_watcher.py (isolated, stand-in model)",
                           exit_code=r.returncode,
-                          summary=(last[:200] if proof is not None or r.returncode != 0
-                                   else "acceptance process exited zero without complete proof"),
+                          summary=last[:200],
                           log_path=str(log),
                           duration_s=round(time.time() - t0, 1),
                           detail={"fixtures_pinned_to": str(ip_tree),
@@ -975,8 +916,7 @@ class Runner:
                                   "contracts_tree": str(contracts_tree),
                                   "isolated_home": str(compat_home),
                                   **entitlement,
-                                  **({"acceptance_proof": proof} if proof is not None else {}),
-                                  **({"watcher_decision": decision} if decision else {})}, **base)
+                                  **({"watcher_decision": decision} if decision else {})})
         finally:
             if staged is not None:
                 try:
@@ -1003,7 +943,7 @@ class Runner:
         for repo in declared_participants(check):
             tree = self.tree(repo, revs[repo].sha)
             if isinstance(tree, Failure):
-                return Record(verdict="unavailable", summary=f"could not extract {repo}: {tree.why}", **base)
+                return self._execution_record('accept_ew_ds', base, reason=f"could not extract {repo}: {tree.why}")
             trees[repo] = tree
 
         ew_tree = trees["eom-email-watcher"]
@@ -1018,7 +958,7 @@ class Runner:
         required = (proof, pdf, keyring, active, expired, contract_requirements)
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
-            return Record(verdict="unavailable", summary=f"cross-app proof input absent: {missing[0]}", **base)
+            return self._execution_record('accept_ew_ds', base, reason=f"cross-app proof input absent: {missing[0]}")
 
         npm = find_tool("npm")
         cargo = find_tool("cargo")
@@ -1026,10 +966,10 @@ class Runner:
         xvfb = find_tool("xvfb-run")
         absent_tool = next((name for name, path in (("npm", npm), ("cargo", cargo), ("uv", uv), ("xvfb-run", xvfb)) if path is None), None)
         if absent_tool:
-            return Record(verdict="unavailable", summary=f"{absent_tool} not installed", **base)
+            return self._execution_record('accept_ew_ds', base, reason=f"{absent_tool} not installed")
         venv = self._venv("eom-email-watcher", ew_tree, ew.sha)
         if isinstance(venv, Failure):
-            return Record(verdict="unavailable", summary=f"env: {venv.why}", **base)
+            return self._execution_record('accept_ew_ds', base, reason=f"env: {venv.why}")
 
         key = f"{ew.sha[:12]}-{ds.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
         log, _ = self._execution_paths(check_id, key)
@@ -1057,28 +997,24 @@ class Runner:
                 result = run_owned_group(cmd, cwd=cwd, env=env, timeout=timeout)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(output), encoding="utf-8")
-                return Record(verdict="unavailable", summary=f"timeout in {' '.join(cmd)}",
-                              command=" && ".join(" ".join(step[0]) for step in steps),
-                              log_path=str(log), **base)
+                return self._execution_record('accept_ew_ds', base, reason=f"timeout in {' '.join(cmd)}", command=" && ".join(" ".join(step[0]) for step in steps), log_path=str(log))
             except OSError as exc:
                 log.write_text("\n".join(output), encoding="utf-8")
-                return Record(verdict="unavailable", summary=f"could not start {' '.join(cmd)}: {type(exc).__name__}",
-                              command=" && ".join(" ".join(step[0]) for step in steps),
-                              log_path=str(log), **base)
+                return self._execution_record('accept_ew_ds', base, reason=f"could not start {' '.join(cmd)}: {type(exc).__name__}", command=" && ".join(" ".join(step[0]) for step in steps), log_path=str(log))
             output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
             if result.returncode != 0:
                 log.write_text("\n".join(output), encoding="utf-8")
                 summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "build failed")
-                return Record(verdict="fail", summary=summary[:200], exit_code=result.returncode,
+                return self._execution_record("accept_ew_ds", base, phase=" ".join(cmd),
+                              stdout=result.stdout, summary=summary[:200], exit_code=result.returncode,
                               command=" ".join(cmd), log_path=str(log),
-                              duration_s=round(time.time() - started, 1), **base)
+                              duration_s=round(time.time() - started, 1))
 
         provider = ds_tree / "src-tauri" / "target" / "release" / "document-summarizer"
         if not provider.is_file():
             log.write_text("\n".join(output), encoding="utf-8")
-            return Record(verdict="unavailable", summary="Document Summarizer build produced no release binary",
-                          log_path=str(log), **base)
-        cmd = [xvfb, "-a", str(venv / "bin" / "python"), str(proof),
+            return self._execution_record('accept_ew_ds', base, reason="Document Summarizer build produced no release binary", log_path=str(log))
+        cmd = [xvfb, "-a", str(venv / "bin" / "python"), "-c", bootstrap(proof, "accept_ew_ds"),
                "--provider-binary", str(provider), "--pdf", str(pdf),
                "--entitlement-keyring", str(keyring), "--active-entitlement", str(active),
                "--expired-entitlement", str(expired)]
@@ -1101,22 +1037,16 @@ class Runner:
                 directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         except OSError as exc:
             log.write_text("\n".join(output), encoding="utf-8")
-            return Record(verdict="unavailable",
-                          summary=f"could not prepare the proof's isolated home: {type(exc).__name__}",
-                          log_path=str(log), **base)
+            return self._execution_record('accept_ew_ds', base, reason=f"could not prepare the proof's isolated home: {type(exc).__name__}", log_path=str(log))
         try:
             try:
                 result = run_owned_group(cmd, cwd=ew_tree, env=proof_env, timeout=1800)
             except subprocess.TimeoutExpired:
                 log.write_text("\n".join(output), encoding="utf-8")
-                return Record(verdict="unavailable", summary="cross-app proof timed out after 1800 seconds",
-                              command="connect-local-proof.py (exact trees, stand-in model)",
-                              log_path=str(log), **base)
+                return self._execution_record('accept_ew_ds', base, reason="cross-app proof timed out after 1800 seconds", command="connect-local-proof.py (exact trees, stand-in model)", log_path=str(log))
             except OSError as exc:
                 log.write_text("\n".join(output), encoding="utf-8")
-                return Record(verdict="unavailable", summary=f"could not start cross-app proof: {type(exc).__name__}",
-                              command="connect-local-proof.py (exact trees, stand-in model)",
-                              log_path=str(log), **base)
+                return self._execution_record('accept_ew_ds', base, reason=f"could not start cross-app proof: {type(exc).__name__}", command="connect-local-proof.py (exact trees, stand-in model)", log_path=str(log))
         finally:
             # The proof's process group is gone by now (run_owned_group), so nothing writes into the
             # home.  A removal that fails is said out loud and swept by the next PDF run.
@@ -1127,15 +1057,15 @@ class Runner:
         output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
         log.write_text("\n".join(output), encoding="utf-8")
         summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "cross-app proof completed")
-        return Record(verdict="pass" if result.returncode == 0 else "fail",
+        return self._execution_record("accept_ew_ds", base, phase="test", stdout=result.stdout,
                       command="connect-local-proof.py (exact trees, stand-in model, software rendering)",
-                      exit_code=result.returncode, executed=1, failed=int(result.returncode != 0),
+                      exit_code=result.returncode,
                       summary=summary[:200], log_path=str(log),
                       duration_s=round(time.time() - started, 1),
                       detail={"email_watcher_tree": str(ew_tree),
                               "document_summarizer_tree": str(ds_tree),
                               "contracts_tree": str(contracts_tree),
-                              "provider_binary": str(provider)}, **base)
+                              "provider_binary": str(provider)})
 
     # ---- GitHub Actions --------------------------------------------------------------
 

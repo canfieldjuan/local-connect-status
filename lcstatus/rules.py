@@ -234,6 +234,14 @@ class ConditionStatus:
     last_result: Record | None = None   # stale_failure / head_unobserved: the latest admitted record
     platform: str = "n/a"
 
+    def harness_label(self) -> str | None:
+        if (self.state == 'not_checked' and self.condition['kind'] == 'automated_test'
+                and self.current is not None and self.current.verdict == 'unavailable'):
+            reason = self.current.detail.get('harness_reason')
+            if isinstance(reason, str) and reason:
+                return f'check unavailable: harness fault ({reason})'
+        return None
+
     def as_dict(self) -> dict[str, Any]:
         def rec(r: Record | None) -> dict[str, Any] | None:
             if r is None:
