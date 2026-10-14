@@ -15,17 +15,22 @@ fi
 DATA_ROOT="${LCSTATUS_DATA_ROOT:-$HOME/.local/share/local-connect-status}"
 export LCSTATUS_DATA_ROOT="$DATA_ROOT"
 export PYTHONDONTWRITEBYTECODE=1
-DATA_ROOT="$(PYTHONPATH="$HERE/.." python3 -c 'from lcstatus.paths import Paths; print(Paths.configured().root)')"
+DATA_ROOT="$(PYTHONPATH="$HERE/.." python3 - <<'PYROOT'
+import os
+from lcstatus.paths import Paths
+root = os.environ['LCSTATUS_DATA_ROOT']
+if root != root.strip() or any(ord(c) < 32 or ord(c) == 127 for c in root):
+    raise SystemExit('unit data root refuses surrounding whitespace and control characters')
+print(Paths.configured().root)
+PYROOT
+)"
 # systemd specifiers and quoted paths are escaped by its unit grammar, never shell evaluation.
 export LCSTATUS_DATA_ROOT="$DATA_ROOT"
 PYTHONPATH="$HERE/.." python3 - "$HERE" "$DEST" <<'PYUNIT'
 import os, sys
 from pathlib import Path
 source, destination = map(Path, sys.argv[1:])
-configured_root = os.environ['LCSTATUS_DATA_ROOT']
-if configured_root != configured_root.strip() or any(ord(c) < 32 or ord(c) == 127 for c in configured_root):
-    raise SystemExit('unit data root refuses surrounding whitespace and control characters')
-raw_root = configured_root.replace('%', '%%')
+raw_root = os.environ['LCSTATUS_DATA_ROOT'].replace('%', '%%')
 root = raw_root.replace('\\', '\\\\').replace('"', '\\"')
 for name in ('local-connect-status.service', 'local-connect-status-heavy.service',
              'local-connect-status-web.service', 'local-connect-status.timer',
