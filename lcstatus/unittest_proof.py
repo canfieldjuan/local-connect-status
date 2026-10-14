@@ -38,18 +38,25 @@ class CountedResult(unittest.TextTestResult):
 
 class CountedRunner(unittest.TextTestRunner):
     resultclass = CountedResult
+    receipt_prefix = None
+
+    def run(self, test):
+        # Only a normally returned native run furnishes a report; an interrupted
+        # framework run must not print partial counts that could look completed.
+        result = super().run(test)
+        report = dict(schema_version=1, runner='accept_ew_ds', phase='contracts-test',
+                      tests=result.testsRun, failures=len(result.failed_tests),
+                      errors=len(result.error_tests), skipped=len(result.skipped_tests))
+        print(self.receipt_prefix + json.dumps(report, sort_keys=True), flush=True)
+        return result
 
 
 def execute(outcomes_path):
     rules = runpy.run_path(outcomes_path)
-    program = unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests'],
-                            testRunner=CountedRunner, exit=False)
-    result = program.result
-    report = dict(schema_version=1, runner='accept_ew_ds', phase='contracts-test',
-                  tests=result.testsRun, failures=len(result.failed_tests),
-                  errors=len(result.error_tests), skipped=len(result.skipped_tests))
-    print(rules['UNITTEST_PREFIX'] + json.dumps(report, sort_keys=True), flush=True)
-    raise SystemExit(0 if result.wasSuccessful() else 1)
+    CountedRunner.receipt_prefix = rules['UNITTEST_PREFIX']
+    # Keep unittest's own exit policy, including its no-tests status.
+    unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests'],
+                  testRunner=CountedRunner)
 
 
 def bootstrap():

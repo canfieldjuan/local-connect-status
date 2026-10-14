@@ -995,6 +995,7 @@ class Runner:
         ]
         output: list[str] = []
         started = time.time()
+        contracts_report = None
         for cmd, cwd, timeout in steps:
             try:
                 result = run_owned_group(cmd, cwd=cwd, env=env, timeout=timeout)
@@ -1013,6 +1014,7 @@ class Runner:
                 if observation.verdict not in ('pass', 'skip'):
                     log.write_text("\n".join(output), encoding="utf-8")
                     return observation
+                contracts_report = observation.detail['unittest_report']
                 continue
             if result.returncode != 0:
                 log.write_text("\n".join(output), encoding="utf-8")
@@ -1077,6 +1079,7 @@ class Runner:
                       detail={"email_watcher_tree": str(ew_tree),
                               "document_summarizer_tree": str(ds_tree),
                               "contracts_tree": str(contracts_tree),
+                              "contracts_unittest": contracts_report,
                               "provider_binary": str(provider)})
 
     # ---- GitHub Actions --------------------------------------------------------------

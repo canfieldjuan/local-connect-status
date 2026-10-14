@@ -50,6 +50,7 @@ def test_success():
     (130, contracts_report(failures=1), 'unavailable'),
     (0, contracts_report(errors=1), 'unavailable'),
     (1, 'LCSTATUS_UNITTEST_RESULT {"schema_version":true}', 'unavailable'),
+    (5, contracts_report(tests=0), 'unavailable'),
 ])
 def test_contracts_test_step_requires_its_own_completed_counted_report(tmp_path, monkeypatch, code, report, verdict):
     runner, trees = _pdf_runner(tmp_path, monkeypatch)
@@ -156,6 +157,8 @@ def test_valid_contracts_completion_is_consumed_by_owner_and_continues(tmp_path,
     monkeypatch.setattr(verify, 'run_owned_group', step)
     result = _run_pdf(runner, trees)
     assert result.verdict == 'pass' and len(calls) == 4
+    assert result.detail['contracts_unittest'] == dict(schema_version=1, runner='accept_ew_ds',
+        phase='contracts-test', tests=tests, failures=0, errors=0, skipped=skipped)
     assert owner_calls == [('accept_ew_ds', 'contracts-test'), ('accept_ew_ds', 'test')]
 
 
@@ -210,4 +213,27 @@ def test_environment_stderr_is_diagnostic_not_a_variable_fault_reason(tmp_path, 
         assert records[-1].detail['setup_stderr'] == stderr
     assert records[0].detail['harness_reason'] == records[1].detail['harness_reason']
     assert records[0].identity() == records[1].identity()
+
+
+@pytest.mark.parametrize('mode', ['pass', 'fail', 'error', 'empty'])
+def test_unittest_adapter_preserves_native_exit_for_every_completion(tmp_path, mode):
+    from lcstatus.unittest_proof import bootstrap
+    tests = tmp_path / 'tests';tests.mkdir()
+    if mode != 'empty':
+        (tests/'test_native.py').write_text('''import unittest, os
+class Native(unittest.TestCase):
+    def test_result(self):
+        if os.environ['FIXTURE_MODE'] == 'fail': self.fail('fixture assertion')
+        if os.environ['FIXTURE_MODE'] == 'error': raise RuntimeError('fixture harness fault')
+''')
+    env = dict(os.environ, FIXTURE_MODE=mode, PYTHONDONTWRITEBYTECODE='1')
+    direct = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests'],
+                            cwd=tmp_path, env=env, capture_output=True, text=True)
+    adapted = subprocess.run([sys.executable, '-c', bootstrap()],
+                             cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert adapted.returncode == direct.returncode
+    report = json.loads(adapted.stdout.split('LCSTATUS_UNITTEST_RESULT ', 1)[1])
+    assert report['tests'] == (0 if mode=='empty' else 1)
+    expected = 'unavailable' if mode=='error' or direct.returncode==5 else ('fail' if mode=='fail' else ('skip' if mode=='empty' else 'pass'))
+    assert classify_execution('accept_ew_ds', phase='contracts-test', exit_code=adapted.returncode, stdout=adapted.stdout)['verdict'] == expected
 

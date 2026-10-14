@@ -131,6 +131,9 @@ The connect-contracts unittest step in PDF acceptance emits its native counted r
 an LCS adapter: a counted failure stops the later steps as `fail`; errors-only, missing reports
 and fetch faults stop as `unavailable`. Both reports use the same classifier. A pytest failure
 with a teardown error remains a counted failure.
+The unittest adapter preserves the framework's native exit status, including no tests;
+it prints counts only after the native run returns normally. An empty suite's nonzero exit
+is unavailable and stops the later steps. The final acceptance record retains the contracts counts.
 
 For new unavailable rows, a changed harness reason is a new observation; an identical fault
 still collapses. Reasons exclude variable timestamps, process IDs and elapsed durations;

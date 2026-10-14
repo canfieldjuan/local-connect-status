@@ -157,6 +157,7 @@ def classify_execution(runner, *, phase='prepare', exit_code=None, reason=None, 
         executed, failed, errors, skipped = (report['tests'] - report['skipped'], report['failures'], report['errors'], report['skipped'])
         result.update(executed=executed, failed=failed, skipped=skipped)
         result['detail']['unittest_errors'] = errors
+        result['detail']['unittest_report'] = report
         result['summary'] = f'contracts unittest: {executed} executed; {failed} failed; {errors} errors; {skipped} skipped'
         if exit_code == 1 and failed >= 1:
             result['verdict'] = 'fail'
