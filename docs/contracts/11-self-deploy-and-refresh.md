@@ -141,12 +141,13 @@ Out of scope:
    once an hour.
 4. **Data root.** Proposed: `~/.local/share/local-connect-status/`.
 
-## Bootstrap and attempt finalization — proposed amendment, awaiting acceptance
+## Bootstrap and attempt finalization — accepted amendment
 
-The accepted revision does not specify the first deployment when no `current` or previous
-release exists. The implementation is paused before coding this behavior.
+Accepted by the operator on 2026-10-13: "I accept option A for contract 11". Oversight
+relayed acceptance in PR #26 and mailbox receipt `13c58cecee304f1ea89e864ce59d39cd`.
+This acceptance is recorded before implementation.
 
-Proposed decision:
+Decision:
 
 - An empty deployment layout is permitted only for the operator's explicit first-deploy command.
   A timer tick does not silently bootstrap. The command fetches main, extracts its exact head,
@@ -163,6 +164,4 @@ Proposed decision:
 - Manual rollback refuses without a kept release. It does not append a fictitious `rolled-back`
   record. All later deployment switches retain the previous release as R4 requires.
 
-Alternative: the operator supplies a separately tested seed release before using the deployer;
-first deployment then always has an existing `current` and a kept fallback. This requires explicit
-seed/cut-over semantics and commands before implementation.
+The alternative operator-supplied seed release was not adopted.
