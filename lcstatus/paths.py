@@ -28,23 +28,33 @@ def outside_code(path: Path, code: Path = CODE_ROOT) -> Path:
 @dataclass(frozen=True)
 class Paths:
     root: Path
+    data_override: Path | None = None
+    site_override: Path | None = None
+    cache_override: Path | None = None
 
     @classmethod
-    def configured(cls, value: str | Path | None = None) -> 'Paths':
-        root = value or os.environ.get(ROOT_ENV) or Path.home() / '.local/share/local-connect-status'
-        return cls(outside_code(Path(root)))
+    def configured(cls, value: str | Path | None = None, *, data: str | Path | None = None,
+                   site: str | Path | None = None, cache: str | Path | None = None) -> 'Paths':
+        # An explicit legacy record directory selects its external runtime root too. It must
+        # never leave the cache pointing at an unrelated live default.
+        root = (value or (Path(data).expanduser().parent if data is not None else None)
+                or os.environ.get(ROOT_ENV) or Path.home() / '.local/share/local-connect-status')
+        return cls(outside_code(Path(root)),
+                   outside_code(Path(data)) if data is not None else None,
+                   outside_code(Path(site)) if site is not None else None,
+                   outside_code(Path(cache)) if cache is not None else None)
 
     @property
     def data(self) -> Path:
-        return outside_code(self.root / 'data')
+        return outside_code(self.data_override or self.root / 'data')
 
     @property
     def cache(self) -> Path:
-        return outside_code(self.root / '.cache')
+        return outside_code(self.cache_override or self.root / '.cache')
 
     @property
     def site(self) -> Path:
-        return outside_code(self.root / 'site')
+        return outside_code(self.site_override or self.root / 'site')
 
     @property
     def releases(self) -> Path:

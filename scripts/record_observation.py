@@ -38,8 +38,10 @@ from lcstatus.rules import validate_promotion_member  # noqa: E402
 from lcstatus.paths import Paths, outside_code
 
 DATA = Paths.configured().data
+DEFAULT_DATA = DATA
 CATALOGUE = ROOT / "catalogue.json"
 MIRRORS = Paths.configured().cache / "mirrors"
+DEFAULT_MIRRORS = MIRRORS
 
 
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
@@ -202,9 +204,9 @@ def main() -> int:
     ap.add_argument("--package", action="append", default=[], metavar="app=path")
     ap.add_argument("--rollback-package", action="append", default=[], metavar="app=path")
     ap.add_argument("--gate-record", action="append", default=[])
-    ap.add_argument("--data", type=Path, default=DATA)
+    ap.add_argument("--data", type=Path, default=DATA if DATA != DEFAULT_DATA else None)
     ap.add_argument("--catalogue", type=Path, default=CATALOGUE)
-    ap.add_argument("--mirrors", type=Path, default=MIRRORS)
+    ap.add_argument("--mirrors", type=Path, default=MIRRORS if MIRRORS != DEFAULT_MIRRORS else None)
     ap.add_argument("--participant", action="append", default=[], metavar="repo=sha")
     ap.add_argument("--verdict", required=True, choices=["pass", "fail", "partial"])
     ap.add_argument("--platform", required=True, choices=["linux", "windows", "macos", "n/a"])
@@ -221,8 +223,9 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    a.data = outside_code(a.data)
-    a.mirrors = outside_code(a.mirrors)
+    paths = Paths.configured(data=a.data)
+    a.data = paths.data
+    a.mirrors = outside_code(a.mirrors) if a.mirrors is not None else paths.cache / "mirrors"
 
     # One writer at a time (contract 08 B5): wait for any running collection, then read the
     # catalogue, the mirrors and the store as they are now.  The lock is held until this process exits.

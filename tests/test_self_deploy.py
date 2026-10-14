@@ -395,3 +395,18 @@ def test_rollback_record_survives_failure_of_the_kept_renderer(world, monkeypatc
     assert attempts(paths)[-1].revision == new
     assert attempts(paths)[-1].detail['outcome'] == 'rolled-back'
     assert not deployer.pending.exists()
+
+
+def test_explicit_legacy_record_directory_selects_all_runtime_paths_without_live_defaults(tmp_path, monkeypatch):
+    sentinel = tmp_path / 'must-not-exist'
+    isolated = tmp_path / 'isolated'
+    monkeypatch.setenv('LCSTATUS_DATA_ROOT', str(sentinel))
+    cat = tmp_path / 'catalogue.json';cat.write_text(json.dumps(fixture_catalogue()))
+    paths = Paths.configured(data=isolated / 'records', site=isolated / 'report')
+    assert paths.root == isolated and paths.cache == isolated / '.cache'
+    assert collect.main(['--catalogue', str(cat), '--data', str(paths.data),
+                         '--site', str(paths.site), '--render-only']) == 0
+    assert (isolated / '.cache/mirrors').is_dir()
+    assert (isolated / 'records/.lock').is_file()
+    assert (isolated / 'report/status.json').is_file()
+    assert not sentinel.exists()

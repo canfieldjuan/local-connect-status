@@ -36,6 +36,7 @@ from .verify import (
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Paths.configured().data
 CACHE = Paths.configured().cache
+DEFAULT_CACHE = CACHE
 SITE = Paths.configured().site
 
 
@@ -152,8 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="lcstatus.collect")
     ap.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
     ap.add_argument("--data-root", help="external runtime root; also LCSTATUS_DATA_ROOT")
-    ap.add_argument("--data", default=str(DATA))
-    ap.add_argument("--site", default=str(SITE))
+    ap.add_argument("--data")
+    ap.add_argument("--site")
     ap.add_argument("--no-fetch", action="store_true")
     ap.add_argument("--heavy", action="store_true", help="run checks marked heavy (Rust and PDF handoff)")
     ap.add_argument("--heavy-only", action="store_true",
@@ -171,10 +172,9 @@ def main(argv: list[str] | None = None) -> int:
                             or args.render_only or args.set_baseline):
         ap.error("--heavy-only is a mode of its own: it cannot be combined with --heavy, --checks, "
                  "--no-local, --render-only or --set-baseline")
-    paths = Paths.configured(args.data_root)
-    data = outside_code(paths.data if args.data_root else Path(args.data))
-    site = outside_code(paths.site if args.data_root else Path(args.site))
-    cache = outside_code(paths.cache if args.data_root else CACHE)
+    paths = Paths.configured(args.data_root, data=args.data, site=args.site,
+                             cache=CACHE if CACHE != DEFAULT_CACHE else None)
+    data, site, cache = paths.data, paths.site, paths.cache
     # One collector at a time. A second run (timer tick, or a baseline write during a run)
     # must never interleave with a run in progress; state.json would lose one of them.  A routine
     # tick yields; a baseline write and the nightly heavy run wait (contract 06 B3): a routine tick
@@ -434,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
             "source_failures": len(failures), "files": {
                 name: sha256_file(site / name) for name in ("status.json", "report.md", "dashboard.html", "index.html")
             }}))
-    print(f"rendered {args.site} ({len(records)} records; {len(failures)} source failures)")
+    print(f"rendered {site} ({len(records)} records; {len(failures)} source failures)")
     return 2 if failures else 0
 
 
