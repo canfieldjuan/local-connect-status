@@ -519,6 +519,58 @@ def test_migration_sufficient_space_boundary_includes_allocation_receipt_and_par
     assert before == migration.inventory(original)
 
 
+@pytest.mark.parametrize('metadata_path', ['data', 'data/records.jsonl', 'site'])
+def test_migration_metadata_space_shortfall_refuses_before_any_write(tmp_path, monkeypatch, metadata_path):
+    migration = migration_module()
+    original = tmp_path / 'old'
+    for name in ('data', 'site'): (original / name).mkdir(parents=True)
+    (original / 'data/.lock').write_text('')
+    (original / 'data/records.jsonl').write_text('fixture evidence')
+    destination = tmp_path / 'runtime'
+    target = original / metadata_path
+    os.setxattr(target, 'user.lcs-fixture', b'v' * 2048)
+    before = migration.inventory(original)
+    from types import SimpleNamespace
+    block = 4096
+    monkeypatch.setattr(migration.os, 'statvfs', lambda path: SimpleNamespace(f_frsize=block, f_bsize=block))
+    # Content-only estimate: root, receipt, two source directories and one payload block.
+    content_only = 3 * block + sum(max(block, ((p.stat().st_size + block - 1) // block) * block)
+                                 for p in (original / 'data', original / 'site'))
+    monkeypatch.setattr(migration.shutil, 'disk_usage', lambda path: SimpleNamespace(free=content_only))
+    def forbidden(*args, **kwargs):
+        pytest.fail('uncounted copied metadata reached a migration write')
+    with monkeypatch.context() as writes:
+        writes.setattr(Path, 'mkdir', forbidden)
+        writes.setattr(migration.tempfile, 'mkdtemp', forbidden)
+        writes.setattr(migration.shutil, 'copytree', forbidden)
+        writes.setattr(migration, 'atomic_write', forbidden)
+        writes.setattr(migration.os, 'rename', forbidden)
+        with pytest.raises(ValueError, match='insufficient free space.*no migration writes'):
+            migration.migrate(original, destination)
+    assert not destination.exists()
+    assert before == migration.inventory(original)
+    assert os.getxattr(target, 'user.lcs-fixture') == b'v' * 2048
+
+
+def test_migration_with_space_preserves_file_and_directory_metadata(tmp_path, monkeypatch):
+    migration = migration_module()
+    original = tmp_path / 'old'
+    for name in ('data', 'site'): (original / name).mkdir(parents=True)
+    (original / 'data/.lock').write_text('')
+    payload = original / 'data/records.jsonl';payload.write_text('fixture evidence')
+    for path in (payload, original / 'data', original / 'site'):
+        os.setxattr(path, 'user.lcs-fixture', b'v' * 2048)
+    from types import SimpleNamespace
+    monkeypatch.setattr(migration.shutil, 'disk_usage', lambda path: SimpleNamespace(free=1024 ** 2))
+    before = migration.inventory(original)
+    destination = tmp_path / 'runtime'
+    assert migration.migrate(original, destination) == before == migration.inventory(destination)
+    for name in ('data', 'data/records.jsonl', 'site'):
+        assert os.getxattr(destination / name, 'user.lcs-fixture') == b'v' * 2048
+        assert os.getxattr(original / name, 'user.lcs-fixture') == b'v' * 2048
+    assert not (destination / '.cache').exists()
+
+
 def test_path_owner_refuses_code_tree_and_symlink_back_into_code_before_any_write(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='outside the code tree'): Paths.configured(CODE_ROOT / 'data')
     outside = tmp_path / 'link';outside.symlink_to(CODE_ROOT / 'data', target_is_directory=True)

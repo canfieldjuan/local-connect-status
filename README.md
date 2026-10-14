@@ -399,7 +399,9 @@ and hash mismatches refuse without overwrites; originals stay in place. Never de
 as part of this cut-over. `.cache/` is not inventoried or copied; caches rebuild under the external
 root. Before creating parents or staging, the migration checks destination free space for the
 selected files, directories and receipt, rounded to filesystem allocation units; each hardlinked
-file path counts separately. A shortfall refuses before migration writes. This check does not
+file path counts separately. Copied extended attribute names and values are included, with a
+metadata block per attribute, for files and directories without following symlink targets.
+A shortfall refuses before migration writes. This check does not
 reserve space against other writers; later copy failures still refuse publication and remove
 staging. A prior failed cut-over's existing destination or disk state needs a separate operator
 decision; these commands do not repair or delete it. Per-request exact commands are supplied

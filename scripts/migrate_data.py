@@ -67,6 +67,11 @@ def require_space(source: Path, destination: Path, receipt: str) -> None:
             elif path.is_file():
                 # copytree expands sparse files and duplicates every hardlinked path.
                 required += allocated(path.stat().st_size)
+            # copy2 and directory copystat also preserve xattrs. Charge each copied
+            # name/value plus a metadata block; do not follow link targets outside the copy.
+            for name in os.listxattr(path, follow_symlinks=False):
+                value = os.getxattr(path, name, follow_symlinks=False)
+                required += block + allocated(len(os.fsencode(name)) + len(value))
     free = shutil.disk_usage(ancestor).free
     if free < required:
         raise ValueError(f'insufficient free space: need {required} bytes, have {free}; no migration writes')
