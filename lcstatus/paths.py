@@ -15,7 +15,12 @@ def outside_code(path: Path, code: Path = CODE_ROOT) -> Path:
         raise ValueError(f'runtime path must be outside the code tree: {path}')
     # Extracted releases have no .git. Refuse their runtime writes too.
     for parent in (path, *path.parents):
-        if (parent / '.git').exists() or (parent / '.release.json').exists():
+        marker = parent / '.git'
+        checkout = (marker.is_dir() and (marker / 'HEAD').is_file() and
+                    ((marker / 'objects').is_dir() or (marker / 'commondir').is_file()))
+        if marker.is_file():
+            checkout = marker.read_text().startswith('gitdir: ')
+        if checkout or (parent / '.release.json').exists():
             raise ValueError(f'runtime path is inside a code tree: {path}')
     return path
 

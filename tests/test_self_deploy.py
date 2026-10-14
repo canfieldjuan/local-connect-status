@@ -357,3 +357,12 @@ def test_user_unit_installer_uses_configured_root_with_spaces_and_does_not_start
     assert f'--directory "{root}/site" --bind 127.0.0.1' in web
     assert f'ExecStartPre=/usr/bin/mkdir -p "{root}/site"' in web
     assert not (ROOT / 'vercel.json').exists()
+
+
+def test_path_owner_distinguishes_incomplete_git_marker_from_a_real_code_checkout(tmp_path):
+    parent = tmp_path / 'marker';parent.mkdir()
+    (parent / '.git').mkdir()
+    assert outside_code(parent / 'runtime') == parent / 'runtime'
+    git(parent, 'init', '-b', 'main')
+    with pytest.raises(ValueError, match='inside a code tree'):
+        outside_code(parent / 'runtime')
