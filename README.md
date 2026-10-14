@@ -378,8 +378,8 @@ failure is `env-failed` with the actual reason, never a fictitious rollback. Man
 `current/.venv/bin/python -m lcstatus.deploy --rollback` refuses unless a distinct tested kept
 release exists. One terminal `deployment` record names each attempt, SHA, outcome, duration and
 suite summary. The typed `dashboard.code` condition and `dashboard.deploy` check drive the
-Dashboard code row: green at main, amber while ahead, red on a failed attempt/rollback until a
-later successful deployment. Product-release and installed-promotion evidence rules are unchanged.
+Dashboard code row: green at main, amber while ahead, red for a failed/rolled-back current main that is not deployed. A newer
+untried main is amber; confirmed deployed equals main is green (directly accepted Option A). Product-release and installed-promotion evidence rules are unchanged.
 
 The loopback page fetches its own `status.json` every sixty seconds with caching disabled and
 redirects refused. Changed rendered timestamps update the existing view, open evidence details
@@ -403,8 +403,16 @@ a skipped descendant check, rollback without a kept release, and code-tree runti
 
 Main fetch and first-parent-history read failures are observations, never attempts for an empty
 candidate. The Dashboard code row is amber `main not observed` for that tick, with the source
-reason; recovery is retained across heads. A real candidate failure still stays red until a later
-successful deployment (accepted Option B). Build and suite subprocesses receive independent
+reason; recovery is retained across heads. A failed current main is red while undeployed; a newer untried head is amber, and
+confirmed deployed equals main is green (directly accepted Option A). Build and suite subprocesses receive independent
 per-attempt temporary data/HOME/XDG/cache roots; only collection receives the live root. A pending
 bootstrap records readiness after the first collection/render and before publication so recovery
 can finish an interrupted terminal append as one successful deployment, without a fake rollback.
+
+
+Generated units use unquoted percent-escaped working directories, with separately quoted command
+arguments and environment values. Interior spaces are supported; surrounding whitespace/control
+characters are refused before shell normalization. Fixture units are checked by the real systemd
+parser without installing or starting them. A completed collection-ready marker is persisted only
+after first collection and terminal render succeed; publication and terminal append/unlink are
+separate phases, so a persistence error leaves the pending context for one truthful recovery.

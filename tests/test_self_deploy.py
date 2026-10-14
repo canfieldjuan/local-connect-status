@@ -477,18 +477,22 @@ def test_lineage_read_failure_is_an_observation_and_kept_collection_runs(world, 
     assert attempts(paths)[-1].revision == new and attempts(paths)[-1].detail['outcome'] == 'deployed'
 
 
-def test_real_failed_candidate_remains_red_when_main_moves_until_a_later_deploy(world):
+def test_failed_current_main_is_red_new_untried_main_is_amber_and_deployed_main_is_green(world):
     work, paths, deployer, command = world
     old = bootstrap(world); failed = commit(work, 'fail')
     assert deployer.tick(collect=True) == 0
     assert attempts(paths)[-1].detail['outcome'] == 'tests-failed'
     assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'red'
-    # Option B: a real candidate failure cannot be cleared by a successful lookup alone.
+    # Directly accepted Option A: current-main attribution changes with the observed head.
+    deployer.observation(failed, old)
+    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
     later = commit(work, 'pass')
     deployer.observation(later, old)
-    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
+    status = dashboard_status(fixture_catalogue(), deployer.store.all())
+    assert status['color'] == 'amber' and status['label'] == 'main ahead'
+    assert status['attempt_revision'] == failed and status['outcome'] == 'tests-failed'
     deployer.observation(old, old)
-    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
+    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'green'
     assert deployer.tick(collect=True) == 0
     assert paths.current.resolve().name == later
     assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'green'

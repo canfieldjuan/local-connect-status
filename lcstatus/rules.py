@@ -534,13 +534,15 @@ def dashboard_status(cat: dict[str, Any], records: list[Record]) -> dict[str, An
     outcome = attempt.detail.get("outcome") if attempt else None
     if observation and observation.detail.get("error"):
         color, label = "amber", "main not observed"
-    elif attempt and outcome != "deployed":
-        color, label = "red", outcome
     elif deployed and head == deployed:
         color, label = "green", "current"
+    elif attempt and attempt.revision == head and outcome != "deployed":
+        color, label = "red", outcome
     else:
         color, label = "amber", "main ahead" if deployed and head else "not deployed"
     return {"label": label, "color": color, "deployed": deployed, "main": head, "outcome": outcome,
+            "attempt_revision": attempt.revision if attempt else None,
+            "observation_error": observation.detail.get("error") if observation else None,
             "reason": (observation.detail.get("error") if observation and observation.detail.get("error")
                        else attempt.detail.get("reason") if attempt else None),
             "test_summary": attempt.detail.get("test_summary") if attempt else None,
