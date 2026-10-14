@@ -318,6 +318,9 @@ class Record:
         elif self.kind in ("issue_gate", "release_artifact", "promotion", "installed_observation", "deployment"):
             key["summary"] = self.summary
             key["detail"] = self.detail
+        elif (self.kind == "automated_test" and self.verdict == "unavailable"
+              and isinstance(self.detail.get("harness_reason"), str) and self.detail["harness_reason"]):
+            key["harness_reason"] = self.detail["harness_reason"]
         blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(blob).hexdigest()[:24]
 

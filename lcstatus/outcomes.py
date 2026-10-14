@@ -5,6 +5,7 @@ import signal
 import xml.etree.ElementTree as ET
 
 ACCEPTANCE_PREFIX = 'LCSTATUS_ACCEPTANCE_RESULT '
+UNITTEST_PREFIX = 'LCSTATUS_UNITTEST_RESULT '
 INVOICE_ACCEPTANCE_CHECKS = frozenset({
     'consumer_import_pinned', 'entitlement_active', 'provider_discovered',
     'invoice_job_completed', 'declared_outputs_present', 'ledger_one_entry',
@@ -20,6 +21,17 @@ def _object(pairs):
             raise ValueError('duplicate proof key')
         result[key] = value
     return result
+
+
+def stable_harness_reason(reason):
+    """Identity-bearing fault descriptors exclude run timestamps/PIDs/measured durations."""
+    reason = re.sub(r'\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b',
+                    '<timestamp>', str(reason))
+    reason = re.sub(r'\b\d{8}T\d{6}(?:\d+)?Z\b', '<timestamp>', reason)
+    reason = re.sub(r'\b(?:pid|process id)\s*[=:#]?\s*\d+\b', 'pid=<process>', reason, flags=re.I)
+    reason = re.sub(r'\b(elapsed|duration|took|in)\s*[=:]?\s*\d+(?:\.\d+)?\s*(?:milliseconds|seconds|minutes|ms|s|m)\b',
+                    lambda m: m[1].lower() + ' <duration>', reason, flags=re.I)
+    return ' '.join(reason.split())
 
 
 def invoice_acceptance_proof(stdout):
@@ -70,16 +82,49 @@ def _junit(path):
     for suite in suites:
         counts = [int(suite.get(k, '0')) for k in ('tests', 'failures', 'skipped', 'errors')]
         tests, failed, skipped, errors = counts
-        if min(counts) < 0 or failed + skipped + errors > tests:
+        if min(counts) < 0:
             raise ValueError('JUnit counts are inconsistent')
         cases = suite.findall('testcase')
-        if cases and (len(cases) != tests or sum(c.find('failure') is not None for c in cases) != failed
-                      or sum(c.find('error') is not None for c in cases) != errors
-                      or sum(c.find('skipped') is not None for c in cases) != skipped):
-            raise ValueError('JUnit cases disagree with counts')
-        total = [a + b for a, b in zip(total, counts)]
-    tests, failed, skipped, errors = total
-    return tests - skipped - errors, failed, skipped, errors
+        if cases:
+            identity = lambda c: (c.get('classname'), c.get('name'))
+            identities = {identity(c) for c in cases}
+            failed_ids = {identity(c) for c in cases if c.find('failure') is not None}
+            error_ids = {identity(c) for c in cases if c.find('error') is not None}
+            skipped_ids = {identity(c) for c in cases if c.find('skipped') is not None}
+            if (len(identities) != tests or sum(len(c.findall('failure')) for c in cases) != failed
+                    or sum(len(c.findall('error')) for c in cases) != errors
+                    or sum(len(c.findall('skipped')) for c in cases) != skipped):
+                raise ValueError('JUnit cases disagree with counts')
+            # Teardown errors do not erase a test that already executed and failed.
+            executed = len(identities - skipped_ids - (error_ids - failed_ids))
+            failed, skipped = len(failed_ids), len(skipped_ids)
+        else:
+            if failed + skipped + errors > tests:
+                raise ValueError('JUnit counts are inconsistent')
+            executed = tests - skipped - errors
+        total = [a + b for a, b in zip(total, (executed, failed, skipped, errors))]
+    return tuple(total)
+
+
+def unittest_report(stdout):
+    lines = [line for line in stdout.splitlines() if line.startswith(UNITTEST_PREFIX)]
+    if len(lines) != 1 or not stdout.rstrip().endswith(lines[0]):
+        return None
+    try:
+        report = json.loads(lines[0][len(UNITTEST_PREFIX):], object_pairs_hook=_object)
+    except (ValueError, TypeError):
+        return None
+    if (not isinstance(report, dict)
+            or set(report) != {'schema_version', 'runner', 'phase', 'tests', 'failures', 'errors', 'skipped'}
+            or type(report['schema_version']) is not int or report['schema_version'] != 1
+            or report['runner'] != 'accept_ew_ds' or report['phase'] != 'contracts-test'):
+        return None
+    if any(type(report[k]) is not int or report[k] < 0 for k in ('tests', 'failures', 'errors', 'skipped')):
+        return None
+    if (max(report['failures'], report['errors'], report['skipped']) > report['tests']
+            or report['failures'] + report['skipped'] > report['tests']):
+        return None
+    return report
 
 
 def classify_execution(runner, *, phase='prepare', exit_code=None, reason=None, stdout='',
@@ -88,6 +133,10 @@ def classify_execution(runner, *, phase='prepare', exit_code=None, reason=None, 
     result = dict(verdict='unavailable', executed=None, failed=None, skipped=None,
                   summary=summary, detail={**dict(detail or {}), 'execution_phase': phase})
     def unavailable(why):
+        stable = stable_harness_reason(why)
+        if stable != why:
+            result['detail']['harness_diagnostic'] = why
+        why = stable
         result['detail']['harness_reason'] = why
         result['summary'] = 'harness fault: ' + why
         return result
@@ -101,6 +150,21 @@ def classify_execution(runner, *, phase='prepare', exit_code=None, reason=None, 
         except ValueError:
             name = str(-exit_code)
         return unavailable(f'{phase}: terminated by signal {name} (exit {exit_code})')
+    if runner == 'accept_ew_ds' and phase == 'contracts-test':
+        report = unittest_report(stdout)
+        if report is None:
+            return unavailable(f'contracts unittest: missing or invalid counted report (exit {exit_code})')
+        executed, failed, errors, skipped = (report['tests'] - report['skipped'], report['failures'], report['errors'], report['skipped'])
+        result.update(executed=executed, failed=failed, skipped=skipped)
+        result['detail']['unittest_errors'] = errors
+        result['summary'] = f'contracts unittest: {executed} executed; {failed} failed; {errors} errors; {skipped} skipped'
+        if exit_code == 1 and failed >= 1:
+            result['verdict'] = 'fail'
+        elif exit_code != 0 or errors or failed:
+            return unavailable(f'contracts unittest: no completed counted-test verdict (exit {exit_code}; errors {errors})')
+        else:
+            result['verdict'] = 'pass' if executed else 'skip'
+        return result
     if phase != 'test':
         return unavailable(f'{phase}: exited {exit_code} without product-test evidence')
     if runner == 'pytest':

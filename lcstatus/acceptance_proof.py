@@ -5,6 +5,7 @@ import importlib.machinery
 import json
 import runpy
 import sys
+import traceback
 import types
 from pathlib import Path
 
@@ -20,8 +21,10 @@ def execute_script(script, runner, args, outcomes_path):
         raise SystemExit(1)
     witness = []
     def observe(frame, event, arg):
-        if (event == 'exception' and frame.f_code.co_filename == str(script)
-                and frame.f_code.co_name == hook and frame.f_globals.get('__name__') == '__main__'):
+        if (frame.f_code.co_filename != str(script) or frame.f_code.co_name != hook
+                or frame.f_globals.get('__name__') != '__main__'):
+            return None
+        if event == 'exception':
             exception = arg[1]
             if runner == 'accept_ew_ip':
                 name = frame.f_locals.get('name')
@@ -53,6 +56,7 @@ def execute_script(script, runner, args, outcomes_path):
                            checks=checks, failed_checks=sorted(k for k,v in checks.items() if v is False))
             text = rules['ACCEPTANCE_PREFIX'] + json.dumps(receipt, sort_keys=True)
             if rules['product_failure_proof'](runner, text) is not None:
+                traceback.print_exception(exc, file=sys.stderr)
                 print(text, flush=True)
                 raise SystemExit(1) from None
         raise

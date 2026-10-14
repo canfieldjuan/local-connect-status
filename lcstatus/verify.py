@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .acceptance_proof import bootstrap
+from .unittest_proof import bootstrap as unittest_bootstrap
 from .outcomes import classify_execution, INVOICE_ACCEPTANCE_CHECKS, invoice_acceptance_proof
 from .catalogue import declared_participants, participants_required
 from .evidence import Record, atomic_write, check_fingerprint, condition_fingerprint_map, now_iso
@@ -631,7 +632,8 @@ class Runner:
         except OSError as exc:
             return Failure("env", f"uv sync could not start: {type(exc).__name__}", {"repo": repo, "sha": sha})
         if r.returncode != 0:
-            return Failure("env", r.stderr[-400:], {"repo": repo, "sha": sha})
+            return Failure("env", f"uv sync exited {r.returncode}",
+                           {"repo": repo, "sha": sha, "setup_stderr": r.stderr[-400:]})
         py = venv / "bin" / "python"
         for extra in extra_trees:
             try:
@@ -645,7 +647,8 @@ class Runner:
                 return Failure("env", f"editable install could not start: {type(exc).__name__}",
                                {"repo": repo, "sha": sha, "extra": str(extra)})
             if r.returncode != 0:
-                return Failure("env", r.stderr[-400:], {"repo": repo, "sha": sha, "extra": str(extra)})
+                return Failure("env", f"uv editable install exited {r.returncode}",
+                               {"repo": repo, "sha": sha, "extra": str(extra), "setup_stderr": r.stderr[-400:]})
         return venv
 
     def _desktop_deps(self, tree: Path) -> Failure | None:
@@ -688,7 +691,7 @@ class Runner:
             return Failure("env", f"pnpm install could not start: {type(exc).__name__}",
                            {"directory": str(d)})
         if r.returncode != 0:
-            return Failure("env", r.stderr[-300:])
+            return Failure("env", f"pnpm install exited {r.returncode}", {"setup_stderr": r.stderr[-300:]})
         try:
             atomic_write(marker, expected + "\n")
         except OSError as exc:
@@ -740,11 +743,11 @@ class Runner:
                 return self._execution_record('pytest', base, reason=f"configured pytest target absent at this revision: {target}")
         venv = self._venv(repo, tree, rev.sha)
         if isinstance(venv, Failure):
-            return self._execution_record('pytest', base, reason=f"{venv.what}: {venv.why}")
+            return self._execution_record('pytest', base, reason=f"{venv.what}: {venv.why}", detail=venv.detail)
         if check.get("desktop_deps"):
             f = self._desktop_deps(tree)
             if isinstance(f, Failure):
-                return self._execution_record('pytest', base, reason=f"desktop deps: {f.why}")
+                return self._execution_record('pytest', base, reason=f"desktop deps: {f.why}", detail=f.detail)
         log, junit = self._execution_paths(check_id, rev.sha[:12])
         # No -q here: a repo whose addopts already has -q would become -qq and lose its
         # summary line. Verdicts never depend on that line; people reading logs do.
@@ -833,7 +836,7 @@ class Runner:
         contracts_tree = trees["connect-contracts"]
         venv = self._venv("invoice-processor", ip_tree, ip.sha, extra_trees=[ew_tree])
         if isinstance(venv, Failure):
-            return self._execution_record('accept_ew_ip', base, reason=f"env: {venv.why}")
+            return self._execution_record('accept_ew_ip', base, reason=f"env: {venv.why}", detail=venv.detail)
         script = ip_tree / "scripts" / "accept_against_email_watcher.py"
         if not script.exists():
             return self._execution_record('accept_ew_ip', base, reason="acceptance script absent at this revision")
@@ -969,7 +972,7 @@ class Runner:
             return self._execution_record('accept_ew_ds', base, reason=f"{absent_tool} not installed")
         venv = self._venv("eom-email-watcher", ew_tree, ew.sha)
         if isinstance(venv, Failure):
-            return self._execution_record('accept_ew_ds', base, reason=f"env: {venv.why}")
+            return self._execution_record('accept_ew_ds', base, reason=f"env: {venv.why}", detail=venv.detail)
 
         key = f"{ew.sha[:12]}-{ds.sha[:12]}-{revs['connect-contracts'].sha[:12]}"
         log, _ = self._execution_paths(check_id, key)
@@ -986,7 +989,7 @@ class Runner:
         steps = [
             ([uv, "run", "--quiet", *(["--python", contracts_pin] if contracts_pin else []),
               "--with-requirements", str(contract_requirements),
-              "python", "-m", "unittest", "discover", "-s", "tests"], contracts_tree, 1200),
+              "python", "-c", unittest_bootstrap()], contracts_tree, 1200),
             ([npm, "install", "--silent"], ds_tree, 1200),
             ([npm, "run", "desktop:build:no-bundle"], ds_tree, 3600),
         ]
@@ -1002,6 +1005,15 @@ class Runner:
                 log.write_text("\n".join(output), encoding="utf-8")
                 return self._execution_record('accept_ew_ds', base, reason=f"could not start {' '.join(cmd)}: {type(exc).__name__}", command=" && ".join(" ".join(step[0]) for step in steps), log_path=str(log))
             output += [f"$ {' '.join(cmd)}", result.stdout, result.stderr]
+            if cwd == contracts_tree:
+                observation = self._execution_record('accept_ew_ds', base, phase='contracts-test',
+                              stdout=result.stdout, exit_code=result.returncode,
+                              command=" ".join(cmd), log_path=str(log),
+                              duration_s=round(time.time() - started, 1))
+                if observation.verdict not in ('pass', 'skip'):
+                    log.write_text("\n".join(output), encoding="utf-8")
+                    return observation
+                continue
             if result.returncode != 0:
                 log.write_text("\n".join(output), encoding="utf-8")
                 summary = next((line for line in reversed((result.stdout + result.stderr).splitlines()) if line.strip()), "build failed")

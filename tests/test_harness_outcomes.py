@@ -12,7 +12,7 @@ from lcstatus.sources import Failure, Revision
 from lcstatus.verify import Runner, decided
 import lcstatus.verify as verify
 from test_verify_parsing import (
-    _accept, _cross_app_runner, _install_host_entitlement, _pdf_runner, _run_pdf,
+    _accept, _cross_app_runner, _install_host_entitlement, _pdf_runner, _run_pdf, _contracts_success,
 )
 
 
@@ -86,7 +86,7 @@ def test_harness_acceptance_nonzero_without_proof_is_unavailable(tmp_path, monke
         runner, trees = _pdf_runner(tmp_path, monkeypatch)
         def step(cmd, **kw):
             proof = cmd[0] == '/tools/xvfb-run'
-            return subprocess.CompletedProcess(cmd,1 if proof else 0,'','Xvfb failed' if proof else '')
+            return subprocess.CompletedProcess(cmd,1 if proof else 0,_contracts_success() if cmd[0]=='/tools/uv' else '','Xvfb failed' if proof else '')
         monkeypatch.setattr(verify, 'run_owned_group', step)
         record = _run_pdf(runner, trees)
     assert_harness(record, runner_name)
@@ -182,6 +182,7 @@ if __name__ == '__main__':
     if mode=='product':
         assert outcome['verdict']=='fail' and outcome['failed']==1
         assert run.stdout.count(ACCEPTANCE_PREFIX)==1
+        assert 'RuntimeError: native assertion' in run.stderr and str(script) in run.stderr
         from lcstatus.evidence import Record
         assert not decided(runner_name,Record(kind='automated_test',repo='fixture',revision='a'*40,**outcome))
     elif mode=='caught' and runner_name=='accept_ew_ds':
@@ -279,9 +280,10 @@ def test_every_executing_runner_consumes_the_owner_for_test_completion(tmp_path,
         record=_accept(runner,trees,revs)
     else:
         runner,trees=_pdf_runner(tmp_path,monkeypatch)
-        monkeypatch.setattr(verify,'run_owned_group',lambda cmd,**kw:subprocess.CompletedProcess(cmd,0,'',''))
+        monkeypatch.setattr(verify,'run_owned_group',lambda cmd,**kw:subprocess.CompletedProcess(cmd,0,_contracts_success() if cmd[0]=='/tools/uv' else '',''))
         record=_run_pdf(runner,trees)
-    assert [(name,kw['phase']) for name,kw in calls]==[(runner_name,'test')]
+    expected = [(runner_name,'contracts-test'), (runner_name,'test')] if runner_name=='accept_ew_ds' else [(runner_name,'test')]
+    assert [(name,kw['phase']) for name,kw in calls]==expected
     assert record.verdict=='skip' and record.detail['fixture_owner_marker'] is True
 
 
@@ -318,3 +320,4 @@ def test_new_harness_row_preserves_history_and_renders_one_rules_owned_label(tmp
     assert 'check unavailable: harness fault' in md and 'check unavailable: harness fault' in html
     assert '<script> | fixture' not in html and '\\u003cscript\\u003e' in html
     assert '\\|' in md
+    assert '| check unavailable: harness fault (SIGKILL <script> \\| fixture) |' in md

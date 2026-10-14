@@ -439,7 +439,8 @@ def test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entit
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert_harness_summary(record, prefix + stamp)
+    assert_harness_summary(record, prefix + '<timestamp>')
+    assert record.detail['harness_diagnostic'] == prefix + stamp
 
 
 def _payload(raw: bytes) -> str:
@@ -684,7 +685,7 @@ def test_pdf_handoff_timeout_keeps_gathered_output_under_the_execution_name(tmp_
 
     def steps(cmd, **kwargs):
         if cmd[:2] == ["/tools/uv", "run"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="contracts fixtures ok\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="contracts fixtures ok\n" + _contracts_success(), stderr="")
         raise subprocess.TimeoutExpired(cmd, 3600)
 
     _heavy_steps_through(monkeypatch, steps)
@@ -712,6 +713,11 @@ def _heavy_steps_through(monkeypatch, fake):
     monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: fake(cmd, **kwargs))
     monkeypatch.setattr(verify.subprocess, "run",
                         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("heavy step bypassed run_owned_group")))
+
+
+def _contracts_success():
+    """Native counted-report fixture for the accepted Contract 12 unittest amendment."""
+    return 'LCSTATUS_UNITTEST_RESULT {"schema_version":1,"runner":"accept_ew_ds","phase":"contracts-test","tests":2,"failures":0,"errors":0,"skipped":0}\n'
 
 
 def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
@@ -765,7 +771,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
 
     def completed(cmd, **kwargs):
         calls.append((cmd, kwargs))
-        stdout = '{"all_checks":true}\n' if "connect-local-proof.py" in " ".join(cmd) else ""
+        stdout = _contracts_success() if cmd[0] == "/tools/uv" else ('{"all_checks":true}\n' if "connect-local-proof.py" in " ".join(cmd) else "")
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     _heavy_steps_through(monkeypatch, completed)
@@ -823,7 +829,7 @@ def test_pdf_handoff_runner_records_unproved_nonzero_as_unavailable(tmp_path: Pa
     def completed(cmd, **kwargs):
         calls.append(cmd)
         if len(calls) < 4:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=_contracts_success() if cmd[0] == "/tools/uv" else "", stderr="")
         return subprocess.CompletedProcess(cmd, 17, stdout="", stderr="proof broke\n")
 
     _heavy_steps_through(monkeypatch, completed)
@@ -1318,7 +1324,7 @@ def test_pdf_proof_runs_in_an_isolated_home(tmp_path: Path, monkeypatch, outcome
         if is_proof and outcome == "oserror":
             raise PermissionError()
         return subprocess.CompletedProcess(cmd, 1 if (is_proof and outcome == "fail") else 0,
-                                           stdout=_failure_receipt("accept_ew_ds", "job_completed") if is_proof and outcome == "fail" else "", stderr="")
+                                           stdout=_contracts_success() if cmd[0] == "/tools/uv" else (_failure_receipt("accept_ew_ds", "job_completed") if is_proof and outcome == "fail" else ""), stderr="")
 
     owned: list = []
     _heavy_steps_through(monkeypatch, lambda cmd, **kwargs: (owned.append(cmd), step(cmd, **kwargs))[1])
@@ -1356,7 +1362,7 @@ def test_pdf_contracts_step_honours_the_interpreter_pin(tmp_path: Path, monkeypa
             repos["connect-contracts"]["python"] = pin
         runner, trees = _pdf_runner(work, monkeypatch, repos)
         calls = []
-        fake = lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1]  # noqa: E731
+        fake = lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", ""))[1]  # noqa: E731
         _heavy_steps_through(monkeypatch, fake)
         _run_pdf(runner, trees)
         assert calls[0][:3 + len(expected) + 1] == ["/tools/uv", "run", "--quiet", *expected, "--with-requirements"]
@@ -1366,7 +1372,7 @@ def test_pdf_proof_home_that_cannot_be_prepared_is_unavailable(tmp_path: Path, m
     import lcstatus.verify as verify
 
     runner, trees = _pdf_runner(tmp_path, monkeypatch)
-    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", "")  # noqa: E731
     _heavy_steps_through(monkeypatch, lambda cmd, **kwargs: (_ for _ in ()).throw(AssertionError("proof must not start"))
                          if "connect-local-proof.py" in " ".join(cmd) else ok(cmd))
     (tmp_path / "cache" / "xapp-homes" / "pdf-stuck").mkdir(parents=True)
@@ -1383,7 +1389,7 @@ def test_pdf_proof_home_removal_failure_is_said_out_loud(tmp_path: Path, monkeyp
     import lcstatus.verify as verify
 
     runner, trees = _pdf_runner(tmp_path, monkeypatch)
-    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", "")  # noqa: E731
     _heavy_steps_through(monkeypatch, ok)
     monkeypatch.setattr(verify.shutil, "rmtree", lambda path, *a, **k: (_ for _ in ()).throw(PermissionError("busy")))
     record = _run_pdf(runner, trees)

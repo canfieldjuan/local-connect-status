@@ -127,6 +127,15 @@ failure report, or the acceptance adapter's typed native-assertion receipt. Kill
 dependency fetch, build, Xvfb, missing licence and other unproved exits are `unavailable`, with
 their harness reason. The page says `check unavailable: harness fault (<reason>)` in its existing
 not-checked styling. A signal alone is not proof that the cause was OOM.
+The connect-contracts unittest step in PDF acceptance emits its native counted result through
+an LCS adapter: a counted failure stops the later steps as `fail`; errors-only, missing reports
+and fetch faults stop as `unavailable`. Both reports use the same classifier. A pytest failure
+with a teardown error remains a counted failure.
+
+For new unavailable rows, a changed harness reason is a new observation; an identical fault
+still collapses. Reasons exclude variable timestamps, process IDs and elapsed durations;
+environment setup output remains diagnostic detail. History, failure identity and retry rules
+remain unchanged.
 
 The adapters execute untouched product scripts as `__main__` in the same product interpreter/venv;
 fixture subprocess tests compare direct/adapted success, output, arguments, module identity and
