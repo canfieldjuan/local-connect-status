@@ -161,12 +161,20 @@ class Deployer:
                                  capture_output=True, timeout=120)
         if archive.returncode:
             raise StepFailed(archive.stderr.decode(errors='replace'))
-        tree.mkdir()
-        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
-            tar.extractall(tree, filter='data')
-        if not (tree / 'uv.lock').is_file():
-            raise StepFailed('candidate has no own uv.lock')
-        return tree
+        try:
+            tree.mkdir()
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                tar.extractall(tree, filter='data')
+            if not (tree / 'uv.lock').is_file():
+                raise StepFailed('candidate has no own uv.lock')
+            candidate_catalogue = catmod.load(tree / 'catalogue.json')
+            if 'dashboard' not in candidate_catalogue:
+                raise StepFailed('candidate has no deployment condition')
+            return tree
+        except (OSError, ValueError, StepFailed, tarfile.TarError):
+            if tree.exists():
+                shutil.rmtree(tree)
+            raise
 
     def build(self, tree: Path, context: dict) -> None:
         # No unlocked resolution and no build backend downloaded outside the locked environment.
@@ -227,13 +235,12 @@ class Deployer:
         if deployed:
             self.cat = catmod.load(self.release(deployed) / 'catalogue.json')
         record = self.outcome(context, outcome, reason, deployed=deployed)
-        # Render with the proposed terminal record before committing that terminal outcome.
-        if render and deployed:
-            self.collect(deployed, context, render_only=True, staged=record)
-        # Children appended collection facts; refresh the store before writing the terminal record.
+        # The failure/rollback already happened. Persist it even if the kept renderer also fails.
         self.store = Store(self.paths.data / 'records.jsonl')
         self.append(record)
         self.pending.unlink(missing_ok=True)
+        if render and deployed:
+            self.collect(deployed, context, render_only=True)
 
     def recover(self) -> None:
         if not self.pending.exists():

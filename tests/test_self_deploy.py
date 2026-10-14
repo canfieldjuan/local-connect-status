@@ -366,3 +366,32 @@ def test_path_owner_distinguishes_incomplete_git_marker_from_a_real_code_checkou
     git(parent, 'init', '-b', 'main')
     with pytest.raises(ValueError, match='inside a code tree'):
         outside_code(parent / 'runtime')
+
+
+def test_disk_full_inside_extraction_discards_partial_candidate_and_keeps_running_release(world, monkeypatch):
+    import tarfile
+    work, paths, deployer, command = world
+    old = bootstrap(world); new = commit(work)
+    def disk_full(tar, target, **kwargs):
+        (target / 'partial').write_text('incomplete extraction')
+        raise OSError('No space left on device')
+    monkeypatch.setattr(tarfile.TarFile, 'extractall', disk_full)
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == old
+    assert not (paths.releases / new).exists()
+    assert attempts(paths)[-1].detail['outcome'] == 'env-failed'
+
+
+def test_rollback_record_survives_failure_of_the_kept_renderer(world, monkeypatch):
+    work, paths, deployer, command = world
+    old = bootstrap(world); new = commit(work)
+    def collection_failed(*args, **kwargs):
+        raise StepFailed('fixture rendering fails in both releases')
+    monkeypatch.setattr(deployer, 'collect', collection_failed)
+    with pytest.raises(StepFailed, match='both releases'):
+        deployer.tick(collect=True)
+    assert paths.current.resolve().name == old
+    assert len(attempts(paths)) == 2
+    assert attempts(paths)[-1].revision == new
+    assert attempts(paths)[-1].detail['outcome'] == 'rolled-back'
+    assert not deployer.pending.exists()
