@@ -165,3 +165,15 @@ Decision:
   record. All later deployment switches retain the previous release as R4 requires.
 
 The alternative operator-supplied seed release was not adopted.
+
+## Local-only scope — accepted amendment
+
+The operator resolved the Vercel scope question: "retire the integration from vercel. were not
+ deploying these to vercel" (message `Sentinel_7b452dacc5808191a32252117d22a533`, relayed from
+ the operator conversation). Acceptance is recorded before implementation.
+
+Retire this repository's Vercel integration and its dedicated static-build tests. The dashboard
+is local-only; no legacy code-tree write exception is adopted. This adds `vercel.json` removal
+and disabling this repository's remote Git deployment connection to scope. Preserve remote
+project/deployment data and do not alter unrelated projects. An unavailable permission or
+separate irreversible remote action is reported as a remaining blocker, not as completed retirement.
