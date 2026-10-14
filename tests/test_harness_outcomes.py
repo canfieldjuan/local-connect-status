@@ -115,7 +115,7 @@ def test_acceptance_adapter_success_has_direct_main_semantics_and_same_venv(tmp_
     scripts = tmp_path / 'scripts';scripts.mkdir()
     (scripts / 'sibling.py').write_text('VALUE = 37\n')
     script = scripts / 'product.py'
-    script.write_text('''import json, os, sys, __main__, sibling
+    script.write_text('''import json, os, sys, __main__, sibling, atexit
 from pathlib import Path
 def require(checks, name, condition):
     if condition is not True: raise RuntimeError(name)
@@ -132,16 +132,24 @@ if __name__ == '__main__':
                  home=os.environ['HOME'], fixture=os.environ['FIXTURE_VALUE'], sibling=sibling.VALUE)
     Path('product-side-effect').write_text(json.dumps(value,sort_keys=True))
     print(json.dumps(value,sort_keys=True))
+    def final_observation():
+        import __main__
+        assert __main__.__dict__ is globals()
+        print('shutdown', getattr(__main__, '__file__', None), sys.argv)
+        Path('shutdown-side-effect').write_text(repr(getattr(__main__, '__file__', None)) + repr(sys.argv))
+    atexit.register(final_observation)
 ''')
     env = dict(os.environ, HOME=str(tmp_path/'home'), FIXTURE_VALUE='same', PYTHONDONTWRITEBYTECODE='1')
     env.pop('PYTHONPATH',None);env.pop('PYTHONHOME',None)
     direct = subprocess.run([python,str(script),'same-argument'],cwd=tmp_path,env=env,capture_output=True,text=True)
     effect = (tmp_path/'product-side-effect').read_bytes();(tmp_path/'product-side-effect').unlink()
+    shutdown = (tmp_path/'shutdown-side-effect').read_bytes();(tmp_path/'shutdown-side-effect').unlink()
     adapted = subprocess.run([python,'-c',bootstrap(script,runner_name),'same-argument'],cwd=tmp_path,env=env,capture_output=True,text=True)
     assert (direct.returncode,direct.stdout,direct.stderr) == (adapted.returncode,adapted.stdout,adapted.stderr)
     assert adapted.returncode == 0
     assert (tmp_path/'product-side-effect').read_bytes() == effect
-    assert json.loads(adapted.stdout)['prefix'] == str(fixture_venv)
+    assert (tmp_path/'shutdown-side-effect').read_bytes() == shutdown
+    assert json.loads(adapted.stdout.splitlines()[0])['prefix'] == str(fixture_venv)
 
 
 @pytest.mark.parametrize('runner_name', ['accept_ew_ip', 'accept_ew_ds'])
@@ -208,6 +216,14 @@ def test_acceptance_receipts_fail_closed_and_counted_cargo_failure_is_positive()
             stdout='test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured')['verdict']=='unavailable'
 
 
+def test_cargo_failure_counts_across_the_actual_test_phase_reports():
+    from lcstatus.outcomes import classify_execution
+    output=('test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured\n'
+            'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured\n')
+    result=classify_execution('cargo_lib',phase='test',exit_code=101,stdout=output)
+    assert (result['verdict'],result['executed'],result['failed'])==('fail',5,1)
+
+
 @pytest.mark.parametrize('runner_name', ['pytest','cargo_lib','accept_ew_ip','accept_ew_ds'])
 def test_every_executing_runner_consumes_the_owner_for_prerequisite_failure(tmp_path, monkeypatch, runner_name):
     from lcstatus.outcomes import classify_execution
@@ -232,6 +248,41 @@ def test_every_executing_runner_consumes_the_owner_for_prerequisite_failure(tmp_
     assert [name for name,kw in calls]==[runner_name]
     assert calls[0][1]['reason'] and calls[0][1]['phase']=='prepare'
     assert_harness(record,runner_name)
+
+
+@pytest.mark.parametrize('runner_name', ['pytest','cargo_lib','accept_ew_ip','accept_ew_ds'])
+def test_every_executing_runner_consumes_the_owner_for_test_completion(tmp_path, monkeypatch, runner_name):
+    from lcstatus.outcomes import classify_execution
+    from test_verify_parsing import _complete_invoice_proof
+    calls=[]
+    def owner(name,**kwargs):
+        calls.append((name,kwargs));result=classify_execution(name,**kwargs)
+        assert result['verdict']=='pass'
+        result['verdict']='skip';result['detail']['fixture_owner_marker']=True
+        return result
+    monkeypatch.setattr(verify,'classify_execution',owner)
+    if runner_name=='pytest':
+        record=pytest_runner(tmp_path,monkeypatch,0,'<testsuite tests="1" failures="0" errors="0" skipped="0"/>')
+    elif runner_name=='cargo_lib':
+        tree=tmp_path/'tree';tree.mkdir()
+        class Mirrors:
+            def extract(self,*args):return tree
+        runner=Runner(Mirrors(),tmp_path/'cache',tmp_path/'logs',object(),{'repos':{'fixture':{}}})
+        monkeypatch.setattr(verify.shutil,'which',lambda name:'/tools/'+name)
+        monkeypatch.setattr(verify,'run_owned_group',lambda cmd,**kw:subprocess.CompletedProcess(cmd,0,
+            'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured' if cmd[0]=='cargo' else '', ''))
+        record=runner.cargo_lib('fixture',{'repo':'fixture'},Revision('fixture','a'*40,'2026-10-14T00:00:00Z',''),[],[])
+    elif runner_name=='accept_ew_ip':
+        runner,trees,revs=_cross_app_runner(tmp_path,monkeypatch)
+        _install_host_entitlement(monkeypatch,tmp_path/'home')
+        monkeypatch.setattr(verify.subprocess,'run',lambda cmd,**kw:subprocess.CompletedProcess(cmd,0,_complete_invoice_proof(),''))
+        record=_accept(runner,trees,revs)
+    else:
+        runner,trees=_pdf_runner(tmp_path,monkeypatch)
+        monkeypatch.setattr(verify,'run_owned_group',lambda cmd,**kw:subprocess.CompletedProcess(cmd,0,'',''))
+        record=_run_pdf(runner,trees)
+    assert [(name,kw['phase']) for name,kw in calls]==[(runner_name,'test')]
+    assert record.verdict=='skip' and record.detail['fixture_owner_marker'] is True
 
 
 def test_new_harness_row_preserves_history_and_renders_one_rules_owned_label(tmp_path):

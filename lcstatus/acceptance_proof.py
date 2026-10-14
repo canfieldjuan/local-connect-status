@@ -34,15 +34,14 @@ def execute_script(script, runner, args, outcomes_path):
                     witness.append((exception, dict(checks)))
         return observe
     previous_trace = sys.gettrace()
-    previous_main = sys.modules['__main__']
-    previous_argv, previous_path = sys.argv[:], sys.path[:]
     main = types.ModuleType('__main__')
     main.__dict__.update(__file__=str(script), __package__=None, __spec__=None,
                          __loader__=importlib.machinery.SourceFileLoader('__main__', str(script)),
                          __cached__=None, __builtins__=builtins, __annotations__={})
     sys.modules['__main__'] = main
     sys.argv = [str(script), *args]
-    sys.path[0] = str(script.parent)
+    if not sys.flags.safe_path:
+        sys.path[0] = str(script.parent)
     sys.settrace(observe)
     try:
         exec(compile(parsed, str(script), 'exec'), main.__dict__)
@@ -59,8 +58,10 @@ def execute_script(script, runner, args, outcomes_path):
         raise
     finally:
         sys.settrace(previous_trace)
-        sys.modules['__main__'] = previous_main
-        sys.argv, sys.path[:] = previous_argv, previous_path
+        # Like direct file execution, retain the product module/argv through atexit,
+        # but remove the transient file metadata when its top-level execution ends.
+        main.__dict__.pop('__file__', None)
+        main.__dict__.pop('__cached__', None)
 
 
 def bootstrap(script, runner):

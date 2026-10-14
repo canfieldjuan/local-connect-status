@@ -118,15 +118,18 @@ def classify_execution(runner, *, phase='prepare', exit_code=None, reason=None, 
             result['verdict'] = 'pass' if executed else 'skip'
     elif runner == 'cargo_lib':
         lines = [line for line in stdout.splitlines() if line.startswith('test result:')]
-        match = re.fullmatch(r'test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; .*', lines[-1]) if lines else None
-        if not match:
+        matches = [re.fullmatch(r'test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored; .*', line) for line in lines]
+        if not matches or any(match is None for match in matches):
             return unavailable(f'cargo test: missing or invalid test summary (exit {exit_code})')
-        status, passed, failed, skipped = match.groups()
-        passed, failed, skipped = map(int, (passed, failed, skipped))
-        if (status == 'ok') != (failed == 0):
-            return unavailable('cargo test: inconsistent test summary')
+        passed = failed = skipped = 0
+        for match in matches:
+            status, p, f, s = match.groups()
+            p, f, s = map(int, (p, f, s))
+            if (status == 'ok') != (f == 0):
+                return unavailable('cargo test: inconsistent test summary')
+            passed += p;failed += f;skipped += s
         result.update(executed=passed + failed, failed=failed, skipped=skipped)
-        result['summary'] = lines[-1]
+        result['summary'] = '; '.join(lines)
         # Cargo's ordinary failure status is 101; shell kill/interrupt statuses are not completion.
         if exit_code == 101 and failed >= 1:
             result['verdict'] = 'fail'
