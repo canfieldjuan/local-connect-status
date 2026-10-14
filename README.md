@@ -460,3 +460,7 @@ and `/ . _ @ + , : ~ = - %`. Other characters, including apostrophes and dollar 
 before unit files or starts; percent escaping and the real systemd-parser fixture remain.
 Release cleanup is deferred by the operator; issue #27 tracks the measured size and planning
 trigger for a separately accepted retention contract. No automatic release deletion is added.
+
+If recovery restores the previous release, that controller ends its tick immediately after the
+rollback record. A later tick starts through the restored release before fetching or deploying
+a newer main, so code from the rejected release cannot control another deployment.

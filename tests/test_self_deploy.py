@@ -315,6 +315,37 @@ def test_deployment_duration_survives_rebooted_monotonic_clock(world, monkeypatc
     assert record.detail['duration_unavailable'] is None
 
 
+@pytest.mark.parametrize('collect_requested', [False, True])
+def test_recovered_rollback_ends_rejected_controller_before_advanced_main_is_considered(world, monkeypatch, collect_requested):
+    work, paths, deployer, command = world
+    old = bootstrap(world);candidate = commit(work)
+    collect = deployer.collect
+    def interrupted_first_collection(sha, *args, **kwargs):
+        if sha == candidate: raise KeyboardInterrupt('fixture published first collection interruption')
+        return collect(sha, *args, **kwargs)
+    monkeypatch.setattr(deployer, 'collect', interrupted_first_collection)
+    with pytest.raises(KeyboardInterrupt, match='fixture published'):
+        deployer.tick(collect=True)
+    assert paths.current.resolve().name == candidate and deployer.pending.exists()
+    later = commit(work)
+    recovering = Deployer(paths, deployer.lock, repository=str(work), command=command)
+    def forbidden(*args, **kwargs):
+        pytest.fail('rejected controller continued after recovered rollback')
+    for method in ('fetch', 'build', 'suite', 'collect'):
+        monkeypatch.setattr(recovering, method, forbidden)
+    events = list(command.events)
+    assert recovering.tick(collect=collect_requested) == 0
+    assert command.events == events
+    assert paths.current.resolve().name == old and not recovering.pending.exists()
+    assert len(attempts(paths)) == 2 and attempts(paths)[-1].revision == candidate
+    assert attempts(paths)[-1].detail['outcome'] == 'rolled-back'
+    # A later timer starts a fresh controller through the restored release, then may deploy C.
+    restored = Deployer(paths, deployer.lock, repository=str(work), command=command)
+    assert restored.tick(collect=True) == 0
+    assert paths.current.resolve().name == later
+    assert len(attempts(paths)) == 3 and attempts(paths)[-1].detail['outcome'] == 'deployed'
+
+
 def test_legacy_pending_duration_is_unavailable_with_reason_without_inventing_elapsed_time(world):
     work, paths, deployer, command = world
     old = bootstrap(world);new = commit(work)

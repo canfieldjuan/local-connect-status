@@ -325,13 +325,13 @@ class Deployer:
         if render and deployed:
             self.collect(deployed, context, render_only=True)
 
-    def recover(self) -> None:
+    def recover(self) -> bool:
         if not self.pending.exists():
-            return
+            return False
         context = json.loads(self.pending.read_text())
         if any(r.kind == 'deployment' and r.source.get('attempt') == context['attempt'] for r in self.store.all()):
             self.pending.unlink()
-            return
+            return False
         previous = context.get('previous')
         current = self.pin('current')
         if context.get('collection_ready') and current == context['candidate']:
@@ -340,11 +340,14 @@ class Deployer:
             self.finalize(context, 'deployed', context['test_summary'], context['candidate'])
         elif previous and current == context['candidate']:
             self.switch('current', previous)
-            self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release', previous)
+            self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release',
+                          previous, render=False)
+            return True
         elif previous:
             self.finalize(context, 'env-failed', 'interrupted before publication', current)
         else:
             self.finalize(context, 'env-failed', 'interrupted bootstrap; no initial current published', None)
+        return False
 
     def context(self, candidate: str, head: str, previous: str | None) -> dict:
         return {'attempt': uuid.uuid4().hex, 'candidate': candidate, 'head': head, 'previous': previous,
@@ -362,7 +365,8 @@ class Deployer:
         return 0
 
     def tick(self, *, bootstrap: bool = False, collect: bool = False, heavy_only: bool = False) -> int:
-        self.recover()
+        if self.recover():
+            return 0  # The next tick starts through the restored current release's controller.
         current = self.pin('current')
         if current is None and not bootstrap:
             raise ValueError('no deployed release; the operator must explicitly bootstrap')
