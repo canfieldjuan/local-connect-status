@@ -1,7 +1,7 @@
 # Contract 11 — The dashboard keeps its own code current and its open page fresh
 
-Status: **proposed 2026-10-13, revision 1**. It needs operator acceptance before any implementation
-commit, and it needs the operator decisions listed at the end.
+Status: **accepted 2026-10-13, revision 1** (operator: "i accept the contract"). The operator
+accepted the proposed defaults for all four decisions at the end.
 
 Contract 10 made the dashboard *report* how far each product app's installed build lags main. This
 contract covers the dashboard itself, which has two remaining manual steps: reloading the open page,
@@ -133,7 +133,7 @@ Out of scope:
 | Mutations | Each must fail a test: switch before tests pass; skip the descendant check; roll back without a kept release; write data into the code tree. |
 | Live | After acceptance and merge, one real deploy of a main revision on this machine. Operator-observed: the page updates itself, the code row turns green, and a deliberately failing candidate on a scratch branch is refused without touching the running release. |
 
-## Operator decisions needed
+## Operator decisions (accepted defaults, 2026-10-13)
 
 1. **Refresh interval** for the open page. Proposed: every 60 seconds.
 2. **Stale limit** for "collection stale". Proposed: 45 minutes (just over two collection intervals).
