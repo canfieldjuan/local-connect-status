@@ -140,3 +140,29 @@ Out of scope:
 3. **Deploy cadence.** Proposed: check at every collection tick (every 20 minutes). The alternative is
    once an hour.
 4. **Data root.** Proposed: `~/.local/share/local-connect-status/`.
+
+## Bootstrap and attempt finalization — proposed amendment, awaiting acceptance
+
+The accepted revision does not specify the first deployment when no `current` or previous
+release exists. The implementation is paused before coding this behavior.
+
+Proposed decision:
+
+- An empty deployment layout is permitted only for the operator's explicit first-deploy command.
+  A timer tick does not silently bootstrap. The command fetches main, extracts its exact head,
+  builds from that revision's lock, and runs that revision's full suite.
+- With no kept release, the first collection must also finish and render successfully before
+  publishing `current`. Existing per-source failures are still allowed. A bootstrap failure leaves
+  `current` absent; it must never claim a rollback without a kept release.
+- Extraction failures, including disk-full, are recorded as `env-failed` with the actual reason.
+  A failed bootstrap collection is also `env-failed`, with the collection/render failure named.
+- Each attempt gets one terminal `deployment` record: `deployed` after its first collection passes
+  (or has only existing per-source failures), otherwise the applicable failure. A normal candidate
+  switch can be pending while its first collection runs under the same lock; if that collection
+  fails, the one terminal outcome is `rolled-back` after restoring the kept release.
+- Manual rollback refuses without a kept release. It does not append a fictitious `rolled-back`
+  record. All later deployment switches retain the previous release as R4 requires.
+
+Alternative: the operator supplies a separately tested seed release before using the deployer;
+first deployment then always has an existing `current` and a kept fallback. This requires explicit
+seed/cut-over semantics and commands before implementation.
