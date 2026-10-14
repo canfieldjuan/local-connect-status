@@ -56,6 +56,31 @@ plus a mutation bypassing the report. The original settling evidence and operato
 condition still apply. No Record field, verdict, skip/retry, historical row, evidence
 identity or other receipt changes are authorized by this amendment.
 
+## Accepted amendment — new unavailable harness reason identity
+
+Operator decision relayed verbatim by oversight on PR #30, 2026-10-14:
+"Yes, narrow amendment (Recommended)". The accepted option was: "New unavailable rows count
+as new when the harness reason changes. The same fault repeated still collapses into one row.
+Reasons must not contain anything that changes every run, such as times or process IDs, and
+a test proves it. History, test failures and retry rules are unchanged."
+
+Before code, this separate amendment adds `lcstatus/evidence.py:Record.identity` to scope,
+only for new `automated_test` / `unavailable` rows with a nonempty `detail.harness_reason`.
+Their content identity includes that reason. Phase is not added: it already participates in
+the owner-produced reason when needed, and a phase-only difference is not a new fault.
+Series identity, check fingerprints, skip/decided predicates and all other kinds/verdicts
+remain unchanged. Old rows are never rewritten or reinterpreted.
+
+The classifier owns a stable reason descriptor: ISO/compact run timestamps, explicit process
+ID tokens and measured elapsed-duration tokens are replaced with stable placeholders; raw
+external environment-setup stderr is diagnostic detail, not the identity-bearing reason.
+Prerequisite names, exit codes, exception types, signal names and fixed timeout limits retain
+their meaning. Execution logs/timing metadata do not enter identity. Fixture runs differing
+only in timestamps, process IDs or measured duration must collapse; a truly changed reason
+must append, preserving the previous JSONL bytes. Untagged historical unavailable rows and
+all failures retain their existing identity behavior. A mutation dropping the reason from
+identity must fail this test. No additional verdict, schema field or retry rule is added.
+
 ## Problem and inspected evidence
 
 At dashboard main `08009142732676253d6dcb1ebc8d595264ef0ea2`:
