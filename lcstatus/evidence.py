@@ -355,7 +355,9 @@ class Record:
         key = {
             "kind": self.kind,
             "repo": self.repo,
-            "revision": "" if self.kind == "installed_observation" else self.revision,
+            "revision": "" if (self.kind == "installed_observation" or
+                               self.kind == "revision" and self.repo == "local-connect-status"
+                               and self.source.get("type") == "dashboard_deploy") else self.revision,
             "platform": self.platform,
             "condition_ids": sorted(self.condition_ids),
             "source": stable_source,

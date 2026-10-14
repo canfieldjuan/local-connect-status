@@ -367,7 +367,7 @@ function render(view){
       const cls={red:'p-bad',amber:'p-warn',green:'p-ok',neutral:'p-mute'}[a.color];
       const couplingCls={red:'p-bad',green:'p-ok',neutral:'p-mute'}[a.coupled_color];
       const prs=a.merges.flatMap(m=>m.prs||[]).map(n=>'#'+n).join(', ');
-      return `<div class="card"><h3>${esc(a.name)}</h3><p><span class="pill ${cls}">${esc(a.label)}</span>${a.revision?'<code>'+esc(a.revision)+'</code>':''}</p><p>Lag: ${esc(a.lag)} ${esc(prs)}${a.oldest_age_days!=null?' · oldest age: '+esc(a.oldest_age_days.toFixed(2))+' days':''}</p><p>Coupled set: <span class="pill ${couplingCls}">${esc(a.coupled)}</span></p><details><summary>Installed evidence</summary><pre>${esc(JSON.stringify({hashes:a.hashes,missing:a.missing,errors:a.errors,promotion_id:a.promotion_id,superseded:a.superseded},null,2))}</pre></details></div>`;
+      return `<div class="card" id="installed-${esc(a.app)}"><h3>${esc(a.name)}</h3><p><span class="pill ${cls}">${esc(a.label)}</span>${a.revision?'<code>'+esc(a.revision)+'</code>':''}</p><p>Lag: ${esc(a.lag)} ${esc(prs)}${a.oldest_age_days!=null?' · oldest age: '+esc(a.oldest_age_days.toFixed(2))+' days':''}</p><p>Coupled set: <span class="pill ${couplingCls}">${esc(a.coupled)}</span></p><details><summary>Installed evidence</summary><pre>${esc(JSON.stringify({hashes:a.hashes,missing:a.missing,errors:a.errors,promotion_id:a.promotion_id,superseded:a.superseded},null,2))}</pre></details></div>`;
     }).join('')}</div>`;
   }
   const show = view==='overview'? p.tasks : view==='release' ? p.tasks.filter(t=>t.layer==='release') : p.tasks.filter(t=>t.app===view);

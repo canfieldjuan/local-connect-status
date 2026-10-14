@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tarfile
 import time
+import tempfile
+from contextlib import contextmanager
 import uuid
 from pathlib import Path
 
@@ -42,7 +44,7 @@ class Deployer:
         self.cat = catmod.load(Path(__file__).resolve().parent.parent / 'catalogue.json')
         self.last_summary = ''
 
-    def environment(self) -> dict[str, str]:
+    def environment(self, *, sandbox: Path | None = None) -> dict[str, str]:
         env = dict(os.environ)
         for name in ('PYTHONPATH', 'PYTHONHOME', 'UV_PROJECT_ENVIRONMENT', 'LCSTATUS_STAGED_DEPLOYMENT',
                      'LCSTATUS_RENDER_RECEIPT', 'LCSTATUS_COLLECTION_LOCK_FD'):
@@ -50,7 +52,27 @@ class Deployer:
         env.update({ROOT_ENV: str(self.paths.root), 'PYTHONDONTWRITEBYTECODE': '1',
                     'UV_CACHE_DIR': str(self.paths.cache / 'deploy-uv'), 'UV_PYTHON_DOWNLOADS': 'never',
                     'GIT_TERMINAL_PROMPT': '0'})
+        if sandbox is not None:
+            locations = {
+                ROOT_ENV: sandbox / 'runtime', 'HOME': sandbox / 'home',
+                'XDG_DATA_HOME': sandbox / 'home/.local/share',
+                'XDG_CONFIG_HOME': sandbox / 'home/.config',
+                'XDG_CACHE_HOME': sandbox / 'home/.cache',
+                'XDG_STATE_HOME': sandbox / 'home/.local/state',
+                'XDG_RUNTIME_DIR': sandbox / 'runtime-dir', 'TMPDIR': sandbox / 'tmp',
+                'UV_CACHE_DIR': sandbox / 'uv-cache',
+            }
+            for name, location in locations.items():
+                location.mkdir(parents=True, exist_ok=True, mode=0o700)
+                env[name] = str(location)
         return env
+
+    @contextmanager
+    def candidate_environment(self, context: dict, phase: str):
+        self.paths.cache.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f"candidate-{context['attempt']}-{phase}-",
+                                         dir=self.paths.cache) as directory:
+            yield self.environment(sandbox=Path(directory))
 
     def run(self, args: list[str], *, cwd: Path, timeout: int | None = None,
             env: dict[str, str] | None = None, pass_fds: tuple[int, ...] = ()) -> subprocess.CompletedProcess:
@@ -127,11 +149,14 @@ class Deployer:
             source['attempt'] = attempt
         return source
 
-    def observation(self, head: str, deployed: str | None) -> None:
-        self.store.add(Record(kind='revision', repo='local-connect-status', revision=head,
-                              verdict='pass', condition_ids=[self.cat['dashboard']['condition']['id']],
-                              source=self.source(), summary=f'dashboard {deployed or "absent"} -> main {head}',
-                              detail={'deployed': deployed, 'main': head}))
+    def observation(self, head: str | None, deployed: str | None, *, error: str | None = None,
+                    phase: str | None = None) -> None:
+        self.store.add(Record(kind='revision', repo='local-connect-status', revision=head or '',
+                              verdict='unavailable' if error else 'pass',
+                              condition_ids=[self.cat['dashboard']['condition']['id']], source=self.source(),
+                              summary=(f'dashboard {deployed or "absent"} -> main {head}'
+                                       + (f'; {phase}: {error}' if error else '')),
+                              detail={'deployed': deployed, 'main': head, 'error': error, 'phase': phase}))
 
     def outcome(self, context: dict, outcome: str, reason: str, *, deployed: str | None,
                 catalogue: dict | None = None) -> Record:
@@ -178,15 +203,18 @@ class Deployer:
 
     def build(self, tree: Path, context: dict) -> None:
         # No unlocked resolution and no build backend downloaded outside the locked environment.
-        result = self.command(['uv', 'sync', '--locked', '--group', 'dev', '--no-install-project',
-                               '--python', sys.executable], cwd=tree, timeout=600)
+        with self.candidate_environment(context, 'build') as env:
+            result = self.command(['uv', 'sync', '--locked', '--group', 'dev', '--no-install-project',
+                                   '--python', sys.executable], cwd=tree, timeout=600, env=env)
         atomic_write(self.paths.data / 'logs' / f"deploy-{context['attempt']}-env.log",
                      (result.stdout or '') + (result.stderr or ''))
         if result.returncode:
             raise StepFailed((result.stderr or result.stdout).strip() or 'candidate environment failed')
 
     def suite(self, tree: Path, context: dict) -> bool:
-        result = self.command([str(tree / '.venv/bin/python'), '-m', 'pytest'], cwd=tree, timeout=1800)
+        with self.candidate_environment(context, 'suite') as env:
+            result = self.command([str(tree / '.venv/bin/python'), '-m', 'pytest'],
+                                  cwd=tree, timeout=1800, env=env)
         output = (result.stdout or '') + (result.stderr or '')
         atomic_write(self.paths.data / 'logs' / f"deploy-{context['attempt']}-suite.log", output)
         lines = [line.strip('= ') for line in output.splitlines() if line.strip()]
@@ -253,8 +281,11 @@ class Deployer:
         if previous:
             self.switch('current', previous)
             self.finalize(context, 'rolled-back', 'interrupted first collection; restored kept release', previous)
+        elif context.get('bootstrap_ready') and self.pin('current') == context['candidate']:
+            # First collection and terminal rendering completed before publication. Finish the
+            # interrupted append truthfully; do not invent a rollback without a kept release.
+            self.finalize(context, 'deployed', context['test_summary'], context['candidate'])
         else:
-            # Bootstrap never switches until collection and terminal rendering have succeeded.
             self.finalize(context, 'env-failed', 'interrupted bootstrap; no initial current published', None)
 
     def context(self, candidate: str, head: str, previous: str | None) -> dict:
@@ -281,7 +312,8 @@ class Deployer:
             head = self.fetch()
         except (OSError, StepFailed, subprocess.TimeoutExpired) as exc:
             context = self.context('', '', current)
-            self.finalize(context, 'env-failed', f'fetch main failed: {exc}', current, render=False)
+            self.observation(None, current, error=str(exc), phase='fetch')
+            print(f'main not observed: {exc}', file=sys.stderr)
             return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         self.observation(head, current)
         context = self.context(head, head, current)
@@ -289,7 +321,12 @@ class Deployer:
                           for r in self.store.all())
         if current == head or rolled_back:
             return self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
-        lineage = self.git('rev-list', '--first-parent', head).splitlines()
+        try:
+            lineage = self.git('rev-list', '--first-parent', head).splitlines()
+        except (OSError, StepFailed, subprocess.TimeoutExpired) as exc:
+            self.observation(None, current, error=str(exc), phase='lineage')
+            print(f'main ancestry not observed: {exc}', file=sys.stderr)
+            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 1
         if current is not None and current not in lineage:
             self.finalize(context, 'not-descendant', 'main does not descend from current on its first-parent history',
                           current, render=False)
@@ -323,6 +360,8 @@ class Deployer:
             record = self.outcome(context, 'deployed', context['test_summary'], deployed=head)
             self.collect(head, context, render_only=True, staged=record)
             if current is None:
+                context['bootstrap_ready'] = True
+                atomic_write(self.pending, json.dumps(context))
                 self.switch('current', head)
             self.store = Store(self.paths.data / 'records.jsonl')
             self.append(record)

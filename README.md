@@ -399,3 +399,12 @@ as part of this cut-over. Per-request exact commands are supplied with the merge
 Tests use fixture repositories, fake environment builds and temporary data roots. The final
 repository suite is the gate; there is no CI. Required mutation receipts cover an early switch,
 a skipped descendant check, rollback without a kept release, and code-tree runtime writes.
+
+
+Main fetch and first-parent-history read failures are observations, never attempts for an empty
+candidate. The Dashboard code row is amber `main not observed` for that tick, with the source
+reason; recovery is retained across heads. A real candidate failure still stays red until a later
+successful deployment (accepted Option B). Build and suite subprocesses receive independent
+per-attempt temporary data/HOME/XDG/cache roots; only collection receives the live root. A pending
+bootstrap records readiness after the first collection/render and before publication so recovery
+can finish an interrupted terminal append as one successful deployment, without a fake rollback.

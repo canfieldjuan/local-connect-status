@@ -410,3 +410,119 @@ def test_explicit_legacy_record_directory_selects_all_runtime_paths_without_live
     assert (isolated / 'records/.lock').is_file()
     assert (isolated / 'report/status.json').is_file()
     assert not sentinel.exists()
+
+
+def test_fetch_failure_is_an_observation_and_unchanged_head_recovery_is_retained(world, monkeypatch):
+    work, paths, deployer, command = world
+    head = bootstrap(world)
+    # Establish a current==main observation before the failure to exercise a return to the
+    # identical earlier observation, not just the initial absent->head bootstrap observation.
+    assert deployer.tick(collect=True) == 0
+    fetch = deployer.fetch
+    monkeypatch.setattr(deployer, 'fetch', lambda: (_ for _ in ()).throw(StepFailed('fixture fetch 502')))
+    assert deployer.tick(collect=True) == 0
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['color'] == 'amber' and code['label'] == 'main not observed'
+    assert code['main'] is None and code['deployed'] == head and '502' in code['reason']
+    assert len(attempts(paths)) == 1
+    monkeypatch.setattr(deployer, 'fetch', fetch)
+    assert deployer.tick(collect=True) == 0
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['color'] == 'green' and code['main'] == code['deployed'] == head
+    rows = [r for r in Store(paths.data / 'records.jsonl').all() if r.kind == 'revision']
+    assert [r.verdict for r in rows][-3:] == ['pass', 'unavailable', 'pass']
+    assert len(attempts(paths)) == 1 and len(command.suite_checks) == 1
+
+
+def test_lineage_read_failure_is_an_observation_and_kept_collection_runs(world, monkeypatch):
+    work, paths, deployer, command = world
+    old = bootstrap(world); new = commit(work)
+    original = deployer.git
+    def corrupt_history(*args):
+        if args[0] == 'rev-list': raise StepFailed('fixture unreadable ancestor')
+        return original(*args)
+    monkeypatch.setattr(deployer, 'git', corrupt_history)
+    before = command.events.count('collection')
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == old
+    assert command.events.count('collection') == before + 1
+    assert len(attempts(paths)) == 1
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['color'] == 'amber' and code['label'] == 'main not observed'
+    assert 'unreadable ancestor' in code['reason']
+    monkeypatch.setattr(deployer, 'git', original)
+    assert deployer.tick(collect=True) == 0
+    assert attempts(paths)[-1].revision == new and attempts(paths)[-1].detail['outcome'] == 'deployed'
+
+
+def test_real_failed_candidate_remains_red_when_main_moves_until_a_later_deploy(world):
+    work, paths, deployer, command = world
+    old = bootstrap(world); failed = commit(work, 'fail')
+    assert deployer.tick(collect=True) == 0
+    assert attempts(paths)[-1].detail['outcome'] == 'tests-failed'
+    assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'red'
+    # Option B: a real candidate failure cannot be cleared by a successful lookup alone.
+    later = commit(work, 'pass')
+    deployer.observation(later, old)
+    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
+    deployer.observation(old, old)
+    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == later
+    assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'green'
+
+
+def test_candidate_build_and_suite_writes_use_private_data_home_xdg_and_cleanup(world):
+    work, paths, deployer, command = world
+    (work / 'tests/test_candidate_root.py').write_text(
+        "import os\nfrom pathlib import Path\ndef test_candidate_write():\n"
+        " Path(os.environ['LCSTATUS_DATA_ROOT']).joinpath('suite-sentinel').write_text('candidate')\n")
+    git(work, 'add', '.');git(work, 'commit', '-m', 'candidate writes its configured root')
+    original = deployer.command
+    seen = []
+    def observe_environment(args, *, cwd, **kwargs):
+        env = kwargs.get('env')
+        if args[0] == 'uv' or args[-2:] == ['-m', 'pytest']:
+            phase = 'build' if args[0] == 'uv' else 'suite'
+            seen.append((phase, dict(env)))
+            if phase == 'build':
+                Path(env['LCSTATUS_DATA_ROOT']).joinpath('build-sentinel').write_text('candidate build')
+        return original(args, cwd=cwd, **kwargs)
+    deployer.command = observe_environment
+    assert deployer.tick(bootstrap=True) == 0
+    assert not (paths.root / 'build-sentinel').exists()
+    assert not (paths.root / 'suite-sentinel').exists()
+    assert [phase for phase, _ in seen] == ['build', 'suite']
+    roots = []
+    for phase, env in seen:
+        root = Path(env['LCSTATUS_DATA_ROOT'])
+        assert root != paths.root and root.is_relative_to(paths.cache)
+        sandbox = root.parent; roots.append(sandbox)
+        for name in ('HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME',
+                     'XDG_RUNTIME_DIR', 'TMPDIR', 'UV_CACHE_DIR'):
+            assert Path(env[name]).is_relative_to(sandbox), (phase, name, env[name])
+        assert 'LCSTATUS_COLLECTION_LOCK_FD' not in env
+        assert not sandbox.exists(), 'candidate roots must be cleaned after the phase'
+    assert roots[0] != roots[1]
+
+
+def test_interrupted_bootstrap_after_publication_finishes_one_deployed_record_without_rollback(world, monkeypatch):
+    work, paths, deployer, command = world
+    head = git(work, 'rev-parse', 'HEAD')
+    append = deployer.append
+    def interrupted(record):
+        raise KeyboardInterrupt('fixture interruption after publication')
+    monkeypatch.setattr(deployer, 'append', interrupted)
+    with pytest.raises(KeyboardInterrupt, match='after publication'):
+        deployer.tick(bootstrap=True)
+    assert paths.current.resolve().name == head
+    assert not paths.previous.exists() and attempts(paths) == []
+    context = json.loads(deployer.pending.read_text())
+    assert context['bootstrap_ready'] is True
+    monkeypatch.setattr(deployer, 'append', append)
+    command.expected_current = head
+    assert deployer.tick(collect=True) == 0
+    assert not deployer.pending.exists() and not paths.previous.exists()
+    assert len(attempts(paths)) == 1 and attempts(paths)[0].detail['outcome'] == 'deployed'
+    assert attempts(paths)[0].source['attempt'] == context['attempt']
+    assert len(command.suite_checks) == 1
