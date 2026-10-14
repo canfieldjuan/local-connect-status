@@ -454,3 +454,9 @@ and permanently excludes that SHA. Completed publication still recovers one `dep
 Deployment attempts persist a wall-clock start so recovered durations survive reboot. Legacy
 pending contexts without that start record an unavailable duration with its reason; they do not
 convert a previous boot's monotonic clock into elapsed time. Existing terminal records stay intact.
+
+Own user units require an absolute data-root path using ASCII letters/digits, interior spaces,
+and `/ . _ @ + , : ~ = - %`. Other characters, including apostrophes and dollar signs, refuse
+before unit files or starts; percent escaping and the real systemd-parser fixture remain.
+Release cleanup is deferred by the operator; issue #27 tracks the measured size and planning
+trigger for a separately accepted retention contract. No automatic release deletion is added.

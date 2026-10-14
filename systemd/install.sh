@@ -16,11 +16,11 @@ DATA_ROOT="${LCSTATUS_DATA_ROOT:-$HOME/.local/share/local-connect-status}"
 export LCSTATUS_DATA_ROOT="$DATA_ROOT"
 export PYTHONDONTWRITEBYTECODE=1
 DATA_ROOT="$(PYTHONPATH="$HERE/.." python3 - <<'PYROOT'
-import os
+import os, re
 from lcstatus.paths import Paths
 root = os.environ['LCSTATUS_DATA_ROOT']
-if root != root.strip() or any(ord(c) < 32 or ord(c) == 127 or c in ('\\', '"') for c in root):
-    raise SystemExit('unit data root refuses surrounding whitespace and control characters, backslash, or double quote')
+if root != root.strip() or not os.path.isabs(root) or re.fullmatch(r'[A-Za-z0-9 ./_@+,:~=%-]+', root) is None:
+    raise SystemExit('unit data root requires an absolute path and refuses surrounding whitespace and control characters or unsupported path characters')
 print(Paths.configured().root)
 PYROOT
 )"

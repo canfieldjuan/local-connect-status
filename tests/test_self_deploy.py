@@ -835,7 +835,7 @@ def test_published_release_persistence_error_recovers_one_truthful_deployed_reco
     assert len(command.suite_checks) == suites
 
 
-@pytest.mark.parametrize('suffix', [' ', '\t', '\n', '\\invalid', '"invalid'])
+@pytest.mark.parametrize('suffix', [' ', '\t', '\n', '\\invalid', '"invalid', "'invalid", '$NAME', '${NAME}'])
 def test_installer_refuses_unrepresentable_root_without_writing_or_starting_units(tmp_path, suffix):
     home = tmp_path / 'fixture-home'; home.mkdir()
     bins = tmp_path / 'fake-bin'; bins.mkdir()
@@ -847,6 +847,21 @@ def test_installer_refuses_unrepresentable_root_without_writing_or_starting_unit
                                      FIXTURE_CALLS=str(calls), PATH=str(bins)+os.pathsep+os.environ['PATH']),
                             capture_output=True, text=True)
     assert result.returncode != 0 and 'whitespace and control' in result.stderr
+    assert not list((home / '.config/systemd/user').glob('*.service'))
+    assert not calls.exists()
+
+
+def test_installer_refuses_relative_root_before_writing_or_starting_units(tmp_path):
+    home = tmp_path / 'fixture-home';home.mkdir()
+    bins = tmp_path / 'fake-bin';bins.mkdir()
+    calls = tmp_path / 'calls'
+    (bins / 'systemctl').write_text('#!/bin/sh\nprintf "%s\n" "$*" >> "$FIXTURE_CALLS"\n')
+    (bins / 'systemctl').chmod(0o755)
+    result = subprocess.run(['bash', str(ROOT / 'systemd/install.sh'), '--no-start'],
+                            env=dict(os.environ, HOME=str(home), LCSTATUS_DATA_ROOT='relative-root',
+                                     FIXTURE_CALLS=str(calls), PATH=str(bins)+os.pathsep+os.environ['PATH']),
+                            capture_output=True, text=True)
+    assert result.returncode != 0 and 'absolute path' in result.stderr
     assert not list((home / '.config/systemd/user').glob('*.service'))
     assert not calls.exists()
 
