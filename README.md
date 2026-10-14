@@ -121,6 +121,34 @@ uv run pytest                                # this project's own tests
 Exit status 0 means every source was read; 2 means something could not be read and the
 report says which. A failed fetch or GitHub query never looks like a clean empty result.
 
+**Harness faults (Contract 12).** One execution-outcome classifier serves pytest, cargo and
+both cross-app acceptance runners. A failed product check needs the framework's counted
+failure report, or the acceptance adapter's typed native-assertion receipt. Kills, usage/no-tests,
+dependency fetch, build, Xvfb, missing licence and other unproved exits are `unavailable`, with
+their harness reason. The page says `check unavailable: harness fault (<reason>)` in its existing
+not-checked styling. A signal alone is not proof that the cause was OOM.
+The connect-contracts unittest step in PDF acceptance emits its native counted result through
+an LCS adapter: a counted failure stops the later steps as `fail`; errors-only, missing reports
+and fetch faults stop as `unavailable`. Both reports use the same classifier. A pytest failure
+with a teardown error remains a counted failure.
+The unittest adapter preserves the framework's native exit status, including no tests;
+it prints counts only after the native run returns normally. An empty suite's nonzero exit
+is unavailable and stops the later steps. The final acceptance record retains the contracts counts.
+
+For new unavailable rows, a changed harness reason is a new observation; an identical fault
+still collapses. Reasons exclude variable timestamps, process IDs and elapsed durations;
+environment setup output remains diagnostic detail. History, failure identity and retry rules
+remain unchanged.
+
+The adapters execute untouched product scripts as `__main__` in the same product interpreter/venv;
+fixture subprocess tests compare direct/adapted success, output, arguments, module identity and
+side effects. They observe native assertions without turning arbitrary exceptions or a cleanup
+fault into product-failure proof. Existing positive success gates remain. Counts come from
+reports, never a nonzero exit. Historical JSONL rows retain their original verdicts and wording;
+only new observations change. The once-per-revision skip/retry rule is unchanged, including
+acceptance failures staying retryable. Merging dashboard changes is a release through Contract 11's
+next-tick tested deployment and rollback; live repair is an operator action.
+
 ## Where it runs
 
 Installed as **user systemd units** (`systemd/install.sh`), matching the other Local

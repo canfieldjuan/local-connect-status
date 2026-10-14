@@ -166,7 +166,7 @@ def test_timeout_and_startup_failure_name_only_what_was_written(tmp_path: Path, 
     monkeypatch.setattr("lcstatus.verify.subprocess.run",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("heavy step bypassed run_owned_group")))
     record = runner.cargo_lib("ds.lib", {"repo": "ip"}, REV, ["condition"], ["task"])
-    assert record.verdict == "unavailable" and record.summary == "timeout in npm run build"
+    assert record.verdict == "unavailable" and record.summary == "harness fault: timeout in npm run build"
     written = list((tmp_path / "logs").iterdir())
     assert written == [Path(record.log_path)]
     assert "installed" in written[0].read_text()

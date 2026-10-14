@@ -17,7 +17,7 @@ from lcstatus.evidence import Record
 
 
 def test_junit_counts_and_exit_code_decide(tmp_path: Path):
-    # A tiny "suite" that prints a passing line but exits 1: the collector's rule is exit first.
+    # A historical row keeps its original verdict; new executing runners use Contract 12.
     junit = tmp_path / "j.xml"
     junit.write_text('<testsuites><testsuite tests="3" failures="0" errors="0" skipped="1"/></testsuites>')
     import xml.etree.ElementTree as ET
@@ -335,9 +335,20 @@ def test_cross_app_runner_rejects_zero_exit_without_complete_proof(tmp_path: Pat
     )
     record = _accept(runner, trees, revisions)
 
-    assert record.verdict == "fail"
-    assert record.summary == "acceptance process exited zero without complete proof"
+    assert record.verdict == "unavailable"
+    assert_harness_summary(record, "acceptance process exited zero without complete proof")
     assert "acceptance_proof" not in record.detail
+
+
+def assert_harness_summary(record, expected):
+    assert record.summary == "harness fault: " + expected
+    assert record.detail["harness_reason"] == expected
+
+
+def _failure_receipt(runner, check):
+    from lcstatus.outcomes import ACCEPTANCE_PREFIX
+    return ACCEPTANCE_PREFIX + json.dumps(dict(schema_version=1, type='product_failure',
+        runner=runner, checks={check:False}, failed_checks=[check]))
 
 
 def _never_run(*args, **kwargs):
@@ -406,7 +417,7 @@ def test_cross_app_runner_records_unavailable_without_installed_entitlement(tmp_
 
     assert record.verdict == "unavailable"
     expected = host_home / ".config" / "local-connect" / "entitlement-v1.json"
-    assert record.summary == f"no installed Connect entitlement at {expected}"
+    assert_harness_summary(record, f"no installed Connect entitlement at {expected}")
     assert record.participants == {repo: revisions[repo].sha for repo in trees}
     assert not (runner.cache / "xapp-homes").exists()
 
@@ -428,7 +439,8 @@ def test_cross_app_runner_records_unavailable_for_expired_or_not_yet_valid_entit
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == prefix + stamp
+    assert_harness_summary(record, prefix + '<timestamp>')
+    assert record.detail['harness_diagnostic'] == prefix + stamp
 
 
 def _payload(raw: bytes) -> str:
@@ -472,7 +484,7 @@ def test_cross_app_runner_records_unavailable_for_malformed_entitlement(tmp_path
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == f"installed Connect entitlement unreadable: {reason}"
+    assert_harness_summary(record, f"installed Connect entitlement unreadable: {reason}")
 
 
 def test_cross_app_runner_inherited_xdg_config_home_does_not_leak(tmp_path: Path, monkeypatch):
@@ -524,7 +536,7 @@ def test_cross_app_runner_contains_parser_exhaustion_in_the_payload(tmp_path: Pa
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == "installed Connect entitlement unreadable: payload is not base64url JSON"
+    assert_harness_summary(record, "installed Connect entitlement unreadable: payload is not base64url JSON")
 
 
 def test_cross_app_runner_records_unavailable_without_configuration_root(tmp_path: Path, monkeypatch):
@@ -538,7 +550,7 @@ def test_cross_app_runner_records_unavailable_without_configuration_root(tmp_pat
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == "installed Connect entitlement unreadable: neither XDG_CONFIG_HOME nor HOME is set"
+    assert_harness_summary(record, "installed Connect entitlement unreadable: neither XDG_CONFIG_HOME nor HOME is set")
 
 
 def test_cross_app_runner_removes_partially_staged_entitlement_when_staging_fails(tmp_path: Path, monkeypatch):
@@ -561,7 +573,7 @@ def test_cross_app_runner_removes_partially_staged_entitlement_when_staging_fail
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == "installed Connect entitlement unreadable: could not stage (OSError)"
+    assert_harness_summary(record, "installed Connect entitlement unreadable: could not stage (OSError)")
     assert not created["target"].exists()
     assert not verify.WATCHER_COMPAT_PATH.exists()
 
@@ -577,7 +589,7 @@ def test_cross_app_runner_relative_xdg_config_home_is_unreadable(tmp_path: Path,
     record = _accept(runner, trees, revisions)
 
     assert record.verdict == "unavailable"
-    assert record.summary == "installed Connect entitlement unreadable: configuration root is not absolute: relative/config"
+    assert_harness_summary(record, "installed Connect entitlement unreadable: configuration root is not absolute: relative/config")
 
 
 @pytest.mark.parametrize("outcome, verdict", [
@@ -599,7 +611,8 @@ def test_cross_app_runner_removes_staged_entitlement_on_every_exit(tmp_path: Pat
         if outcome == "oserror":
             raise PermissionError()
         return subprocess.CompletedProcess(cmd, {"pass": 0, "fail": 1, "isolation": 97}[outcome],
-                                           stdout=_complete_invoice_proof() if outcome == "pass" else "", stderr="")
+                                           stdout=(_complete_invoice_proof() if outcome == "pass" else
+                                                   _failure_receipt("accept_ew_ip", "ledger_one_entry") if outcome == "fail" else ""), stderr="")
 
     monkeypatch.setattr(verify.subprocess, "run", completed)
     record = _accept(runner, trees, revisions)
@@ -622,9 +635,9 @@ def test_cross_app_runner_records_watcher_decision_line(tmp_path: Path, monkeypa
                         lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, stdout=stdout, stderr=""))
     record = _accept(runner, trees, revisions)
 
-    assert record.verdict == "fail"          # the product's verdict stands; the line only explains it
+    assert record.verdict == "unavailable"  # a rejected licence is a harness prerequisite
     assert record.detail["watcher_decision"] == "missing"
-    assert record.summary.startswith("STOP")
+    assert_harness_summary(record, "accept_ew_ip: missing or invalid product-failure proof (exit 1)")
 
     monkeypatch.setattr(verify.subprocess, "run",
                         lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout=_complete_invoice_proof(), stderr=""))
@@ -644,7 +657,7 @@ def test_invoice_handoff_timeout_writes_nothing_and_names_no_log(tmp_path: Path,
 
     record = _accept(runner, trees, revisions)
 
-    assert (record.verdict, record.summary, record.log_path) == ("unavailable", "timeout", None)
+    assert (record.verdict, record.summary, record.log_path) == ("unavailable", "harness fault: timeout", None)
     assert list((tmp_path / "logs").iterdir()) == []
 
 
@@ -672,7 +685,7 @@ def test_pdf_handoff_timeout_keeps_gathered_output_under_the_execution_name(tmp_
 
     def steps(cmd, **kwargs):
         if cmd[:2] == ["/tools/uv", "run"]:
-            return subprocess.CompletedProcess(cmd, 0, stdout="contracts fixtures ok\n", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout="contracts fixtures ok\n" + _contracts_success(), stderr="")
         raise subprocess.TimeoutExpired(cmd, 3600)
 
     _heavy_steps_through(monkeypatch, steps)
@@ -686,7 +699,7 @@ def test_pdf_handoff_timeout_keeps_gathered_output_under_the_execution_name(tmp_
     )
 
     assert record.verdict == "unavailable"
-    assert record.summary == "timeout in /tools/npm install --silent"
+    assert_harness_summary(record, "timeout in /tools/npm install --silent")
     written = list((tmp_path / "logs").iterdir())
     assert written == [Path(record.log_path)]                # exactly the file this execution wrote
     assert "contracts fixtures ok" in written[0].read_text()
@@ -700,6 +713,11 @@ def _heavy_steps_through(monkeypatch, fake):
     monkeypatch.setattr(verify, "run_owned_group", lambda cmd, **kwargs: fake(cmd, **kwargs))
     monkeypatch.setattr(verify.subprocess, "run",
                         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("heavy step bypassed run_owned_group")))
+
+
+def _contracts_success():
+    """Native counted-report fixture for the accepted Contract 12 unittest amendment."""
+    return 'LCSTATUS_UNITTEST_RESULT {"schema_version":1,"runner":"accept_ew_ds","phase":"contracts-test","tests":2,"failures":0,"errors":0,"skipped":0}\n'
 
 
 def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
@@ -753,7 +771,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
 
     def completed(cmd, **kwargs):
         calls.append((cmd, kwargs))
-        stdout = '{"all_checks":true}\n' if "connect-local-proof.py" in " ".join(cmd) else ""
+        stdout = _contracts_success() if cmd[0] == "/tools/uv" else ('{"all_checks":true}\n' if "connect-local-proof.py" in " ".join(cmd) else "")
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     _heavy_steps_through(monkeypatch, completed)
@@ -766,7 +784,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
         "xapp.accept_ew_to_ds", check, revisions, ["condition"], ["task"],
     )
 
-    assert record.verdict == "pass" and record.executed == 1 and record.failed == 0
+    assert record.verdict == "pass" and record.executed is None and record.failed is None
     assert record.participants == {repo: revisions[repo].sha for repo in trees}
     assert calls[0][0][:5] == [
         "/tools/uv", "run", "--quiet", "--with-requirements",
@@ -777,7 +795,8 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
     assert calls[2][0] == ["/tools/npm", "run", "desktop:build:no-bundle"]
     proof_cmd, proof_kwargs = calls[3]
     assert proof_cmd[:2] == ["/tools/xvfb-run", "-a"]
-    assert str(trees["eom-email-watcher"] / "scripts/connect-local-proof.py") in proof_cmd
+    assert proof_cmd[3] == "-c"
+    assert str(trees["eom-email-watcher"] / "scripts/connect-local-proof.py") in proof_cmd[4]
     assert str(trees["document-summarizer"] / "src-tauri/target/release/document-summarizer") in proof_cmd
     assert str(trees["connect-contracts"] / "entitlements/v1/fixtures/test-keyring.json") in proof_cmd
     assert proof_kwargs["cwd"] == trees["eom-email-watcher"]
@@ -787,7 +806,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
     assert record.detail["document_summarizer_tree"] == str(trees["document-summarizer"])
 
 
-def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, monkeypatch):
+def test_pdf_handoff_runner_records_unproved_nonzero_as_unavailable(tmp_path: Path, monkeypatch):
     import lcstatus.verify as verify
     from lcstatus.sources import Revision
 
@@ -810,7 +829,7 @@ def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, mon
     def completed(cmd, **kwargs):
         calls.append(cmd)
         if len(calls) < 4:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 0, stdout=_contracts_success() if cmd[0] == "/tools/uv" else "", stderr="")
         return subprocess.CompletedProcess(cmd, 17, stdout="", stderr="proof broke\n")
 
     _heavy_steps_through(monkeypatch, completed)
@@ -823,9 +842,9 @@ def test_pdf_handoff_runner_records_nonzero_proof_as_failure(tmp_path: Path, mon
         ["condition"], ["task"],
     )
 
-    assert record.verdict == "fail" and record.exit_code == 17
-    assert record.summary == "proof broke"
-    assert record.executed == 1 and record.failed == 1
+    assert record.verdict == "unavailable" and record.exit_code == 17
+    assert_harness_summary(record, "accept_ew_ds: missing or invalid product-failure proof (exit 17)")
+    assert record.executed is None and record.failed is None
     assert record.participants == {repo: revisions[repo].sha for repo in trees}
 
 
@@ -1087,7 +1106,7 @@ def test_pytest_clears_inherited_python_paths_and_records_startup_error(tmp_path
         Revision("ip", "a" * 40, "2026-09-11T00:00:00+00:00", "head"), ["condition"], ["task"],
     )
     assert record.verdict == "unavailable"
-    assert record.summary == "could not start: FileNotFoundError"
+    assert_harness_summary(record, "could not start: FileNotFoundError")
     assert "PYTHONPATH" not in captured and "PYTHONHOME" not in captured
     assert captured["PYTHONNOUSERSITE"] == "1"
 
@@ -1116,7 +1135,7 @@ def test_pytest_missing_configured_file_is_unavailable_before_environment(tmp_pa
     )
 
     assert record.verdict == "unavailable"
-    assert record.summary == "configured pytest target absent at this revision: tests/test_removed.py"
+    assert_harness_summary(record, "configured pytest target absent at this revision: tests/test_removed.py")
 
 
 def test_pytest_existing_node_selector_runs_in_exact_tree(tmp_path: Path, monkeypatch):
@@ -1179,7 +1198,7 @@ def test_cargo_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkey
         Revision("ds", "b" * 40, "2026-09-11T00:00:00+00:00", "head"), ["condition"], ["task"],
     )
     assert record.verdict == "unavailable"
-    assert record.summary == "could not start npm install --silent: FileNotFoundError"
+    assert_harness_summary(record, "could not start npm install --silent: FileNotFoundError")
 
 
 def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, monkeypatch):
@@ -1221,7 +1240,7 @@ def test_cross_app_startup_error_becomes_unavailable_evidence(tmp_path: Path, mo
         "xapp.accept", {"repo": "invoice-processor", "participants": list(trees)}, revisions, ["condition"], ["task"]
     )
     assert record.verdict == "unavailable"
-    assert record.summary == "could not start: FileNotFoundError"
+    assert_harness_summary(record, "could not start: FileNotFoundError")
     assert not verify.WATCHER_COMPAT_PATH.exists()
 
 
@@ -1304,7 +1323,8 @@ def test_pdf_proof_runs_in_an_isolated_home(tmp_path: Path, monkeypatch, outcome
             raise subprocess.TimeoutExpired(cmd, 1800)
         if is_proof and outcome == "oserror":
             raise PermissionError()
-        return subprocess.CompletedProcess(cmd, 1 if (is_proof and outcome == "fail") else 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1 if (is_proof and outcome == "fail") else 0,
+                                           stdout=_contracts_success() if cmd[0] == "/tools/uv" else (_failure_receipt("accept_ew_ds", "job_completed") if is_proof and outcome == "fail" else ""), stderr="")
 
     owned: list = []
     _heavy_steps_through(monkeypatch, lambda cmd, **kwargs: (owned.append(cmd), step(cmd, **kwargs))[1])
@@ -1342,7 +1362,7 @@ def test_pdf_contracts_step_honours_the_interpreter_pin(tmp_path: Path, monkeypa
             repos["connect-contracts"]["python"] = pin
         runner, trees = _pdf_runner(work, monkeypatch, repos)
         calls = []
-        fake = lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1]  # noqa: E731
+        fake = lambda cmd, **kwargs: (calls.append(cmd), subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", ""))[1]  # noqa: E731
         _heavy_steps_through(monkeypatch, fake)
         _run_pdf(runner, trees)
         assert calls[0][:3 + len(expected) + 1] == ["/tools/uv", "run", "--quiet", *expected, "--with-requirements"]
@@ -1352,7 +1372,7 @@ def test_pdf_proof_home_that_cannot_be_prepared_is_unavailable(tmp_path: Path, m
     import lcstatus.verify as verify
 
     runner, trees = _pdf_runner(tmp_path, monkeypatch)
-    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", "")  # noqa: E731
     _heavy_steps_through(monkeypatch, lambda cmd, **kwargs: (_ for _ in ()).throw(AssertionError("proof must not start"))
                          if "connect-local-proof.py" in " ".join(cmd) else ok(cmd))
     (tmp_path / "cache" / "xapp-homes" / "pdf-stuck").mkdir(parents=True)
@@ -1362,14 +1382,14 @@ def test_pdf_proof_home_that_cannot_be_prepared_is_unavailable(tmp_path: Path, m
                         else real_rmtree(path, *a, **k))
     record = _run_pdf(runner, trees)
     assert record.verdict == "unavailable"
-    assert record.summary == "could not prepare the proof's isolated home: PermissionError"
+    assert_harness_summary(record, "could not prepare the proof's isolated home: PermissionError")
 
 
 def test_pdf_proof_home_removal_failure_is_said_out_loud(tmp_path: Path, monkeypatch, capsys):
     import lcstatus.verify as verify
 
     runner, trees = _pdf_runner(tmp_path, monkeypatch)
-    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", "")  # noqa: E731
+    ok = lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, _contracts_success() if cmd[0] == "/tools/uv" else "", "")  # noqa: E731
     _heavy_steps_through(monkeypatch, ok)
     monkeypatch.setattr(verify.shutil, "rmtree", lambda path, *a, **k: (_ for _ in ()).throw(PermissionError("busy")))
     record = _run_pdf(runner, trees)

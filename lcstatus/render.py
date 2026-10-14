@@ -91,6 +91,7 @@ def condition_payload(status: Any) -> dict[str, Any]:
         missing = evidence.get("detail", {}).get("missing", [])
         label = "release incomplete" if missing else "no release published"
     condition["label"] = label
+    condition["label"] = status.harness_label() or condition["label"]
     return condition
 
 
@@ -272,7 +273,7 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
                         evs += f" ({ev['executed']} run, {ev.get('failed') or 0} failed, {ev.get('skipped') or 0} skipped)"
                     if ev.get("summary"):
                         evs += f" — {ev['summary']}"
-                w(f"| {markdown_cell(c['proves'])} | {c['label']} | {markdown_cell(evs)} |")
+                w(f"| {markdown_cell(c['proves'])} | {markdown_cell(c['label'])} | {markdown_cell(evs)} |")
             w("")
     if p["recent_changes"]:
         w("## Recent changes observed")
