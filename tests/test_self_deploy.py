@@ -608,3 +608,26 @@ def test_installer_refuses_unrepresentable_root_without_writing_or_starting_unit
     assert result.returncode != 0 and 'whitespace and control' in result.stderr
     assert not list((home / '.config/systemd/user').glob('*.service'))
     assert not calls.exists()
+
+
+def test_repository_release_contract_runs_unchanged_inside_an_exact_git_archive(tmp_path):
+    paths = Paths.configured(tmp_path / 'runtime')
+    lock = collection_lock(paths.data, wait=False)
+    with lock:
+        paths.cache.mkdir(parents=True)
+        git(tmp_path, 'clone', '--mirror', str(ROOT), str(paths.cache / 'dashboard.git'))
+        head = git(ROOT, 'rev-parse', 'HEAD')
+        deployer = Deployer(paths, lock, repository=str(ROOT))
+        tree = deployer.extract(head)
+        assert git(tree, 'rev-parse', 'HEAD') == head
+        assert git(tree, 'ls-files', 'tests/test_release_contract.py', 'catalogue.json').splitlines() == [
+            'catalogue.json', 'tests/test_release_contract.py']
+        assert (tree / 'tests/test_release_contract.py').read_bytes() == (ROOT / 'tests/test_release_contract.py').read_bytes()
+        assert git(tree, 'status', '--porcelain') == ''
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+        env.pop('PYTHONPATH', None)
+        result = subprocess.run([sys.executable, '-m', 'pytest', 'tests/test_release_contract.py'],
+                                cwd=tree, env=env, capture_output=True, text=True, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert 'passed' in result.stdout
+        assert git(tree, 'status', '--porcelain') == ''

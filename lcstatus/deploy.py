@@ -192,6 +192,21 @@ class Deployer:
                 tar.extractall(tree, filter='data')
             if not (tree / 'uv.lock').is_file():
                 raise StepFailed('candidate has no own uv.lock')
+            # The preserved repository suite scans tracked files with git ls-files. Give the
+            # exact archive an independent local index/HEAD; copy objects only from our owned
+            # mirror, never fetch a network or weaken that scan. Suppress user templates/hooks.
+            metadata_env = self.environment()
+            metadata_env.update({'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'})
+            commands = (
+                ['git', 'init', '--quiet', '--template=', '--initial-branch=main', str(tree)],
+                ['git', '-C', str(tree), '-c', 'core.hooksPath=/dev/null', 'fetch', '--no-tags',
+                 str(self.mirror), sha],
+                ['git', '-C', str(tree), '-c', 'core.hooksPath=/dev/null', 'reset', '--mixed', '--quiet', sha],
+            )
+            for command in commands:
+                result = self.command(command, cwd=self.paths.root, timeout=120, env=metadata_env)
+                if result.returncode:
+                    raise StepFailed(f'local exact-revision index failed: {result.stderr or result.stdout}')
             candidate_catalogue = catmod.load(tree / 'catalogue.json')
             if 'dashboard' not in candidate_catalogue:
                 raise StepFailed('candidate has no deployment condition')

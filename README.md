@@ -416,3 +416,11 @@ characters are refused before shell normalization. Fixture units are checked by 
 parser without installing or starting them. A completed collection-ready marker is persisted only
 after first collection and terminal render succeed; publication and terminal append/unlink are
 separate phases, so a persistence error leaves the pending context for one truthful recovery.
+
+
+An exact archive gets an independent local Git HEAD/index from the owned dashboard mirror, using
+only local objects, with user templates/hooks suppressed. This keeps the existing tracked-file
+commercial scan unchanged in a release; its original assertions and regex remain the gate.
+The final suite is run from the exact extracted revision as well as the fixture archive regression.
+Node and systemd-analyze must be available on this local host for the page and generated-unit
+regression gates; missing tools are explicit gate failures, never silent passes or skipped tests.
