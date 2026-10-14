@@ -207,26 +207,18 @@ before implementing B. Local-only Vercel retirement and every live cut-over rest
 
 Non-blocking retry/cache and interpreter-portability suggestions remain deferred.
 
-## Release retention — proposed amendment (not accepted)
+## Release retention — accepted deferral (Option B)
 
-R4 requires keeping the previous release. It does not decide when older release trees may be
-deleted. Automatic review raised accumulation of unreferenced trees; oversight proposed cleanup,
-but the operator has not accepted a retention/deletion policy. No cleanup behavior is implemented
-under this proposal.
+The operator chose B: defer cleanup and keep the accepted Contract 11 scope. R4 continues to
+retain current and previous; older release trees remain. No automatic release deletion is added.
+The unaccepted automatic-cleanup alternative remains in proposal commit `254497b` history.
 
-Operator choices:
+Track a separately accepted retention contract in
+[issue #27](https://github.com/canfieldjuan/local-connect-status/issues/27). Oversight measured a
+scratch release at approximately nine MB; this is not a measurement of the live installation.
+The operator's planning trigger is to add retention before approximately fifty releases, or when
+free space on `/` falls below twenty GB, whichever comes first. These triggers do not add a
+monitor, notification, page label or cleanup behavior to Contract 11.
 
-- **A — Accept bounded automatic cleanup.** After a successful deployment's terminal record is
-  appended, remove only release directories not referenced by `current`, `previous`, or pending
-  recovery. Keep any in-flight candidate. Enumerate only the owned `releases/` directory, do not
-  follow symlinks, and refuse a path outside it. Preserve all append-only records, test/environment/
-  collection logs, and the owned repository mirror; only obsolete extracted code, environment and
-  duplicate release metadata are removed. A cleanup error is logged without altering the truthful
-  deployment outcome. Fixtures prove retained pins/pending survive and obsolete releases are
-  removed; a mutant that prunes current must fail. This adds release cleanup to the Scope list.
-- **B — Defer automatic cleanup.** Keep the accepted scope: current and previous are retained,
-  older trees remain, and cleanup belongs to a later separately accepted contract/operator action.
-  No automatic deletion is added to this implementation.
-
-This proposal is its own commit before any cleanup code. Operator acceptance is required before
-implementing A. Oversight remains review-only and cannot substitute for that acceptance.
+This acceptance is recorded separately from implementation. Oversight agreed that deferral plus
+this issue is non-blocking; automatic cleanup would require a later contract acceptance.
