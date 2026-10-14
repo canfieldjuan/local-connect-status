@@ -202,6 +202,8 @@ def report_md(p: dict[str, Any], cat: dict[str, Any]) -> str:
           f"main `{code['main'] or 'unobserved'}`; last outcome: {code['outcome'] or 'none'} "
           f"at `{code.get('attempt_revision') or 'none'}`; "
           f"{markdown_cell(code['reason'] or '')}")
+        if code.get("observation_error"):
+            w(f"Main lookup error: {markdown_cell(code['observation_error'])}")
         w("")
     w("## Where the code is")
     w("")
@@ -352,7 +354,7 @@ function render(view){
   const root=document.getElementById('root'); const p=liveData;
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.view===view));
   let h='';
-  if(p.dashboard_code){const c=p.dashboard_code;h+=`<div class="banner"><b>Dashboard code</b>: <span class="pill ${{green:'p-ok',amber:'p-warn',red:'p-bad'}[c.color]}">${esc(c.label)}</span> deployed <code>${esc(c.deployed||'absent')}</code> · main <code>${esc(c.main||'unobserved')}</code> · last attempt: ${esc(c.outcome||'none')} at <code>${esc(c.attempt_revision||'none')}</code> ${esc(c.reason||'')}</div>`;}
+  if(p.dashboard_code){const c=p.dashboard_code;h+=`<div class="banner"><b>Dashboard code</b>: <span class="pill ${{green:'p-ok',amber:'p-warn',red:'p-bad'}[c.color]}">${esc(c.label)}</span> deployed <code>${esc(c.deployed||'absent')}</code> · main <code>${esc(c.main||'unobserved')}</code> · last attempt: ${esc(c.outcome||'none')} at <code>${esc(c.attempt_revision||'none')}</code> ${esc(c.reason||'')}${c.observation_error?` · main lookup error: ${esc(c.observation_error)}`:''}</div>`;}
 
   if(p.source_failures&&p.source_failures.length){h+=`<div class="banner bad"><b>Some sources could not be read on the last run.</b> Affected rows are not treated as freshly verified; each row shows the applicable current attempt or last proven result.<ul style="margin:6px 0 0 18px">${p.source_failures.map(f=>`<li>${esc(f.repo)}: ${esc(f.what)} — ${esc(f.why)}</li>`).join('')}</ul></div>`;}
   const m=p.catalogue_mapping||{}, gaps=m.gaps||[], unchecked=m.unchecked||[];

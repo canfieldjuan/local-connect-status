@@ -11,6 +11,10 @@ def test_page_refresh_preserves_view_scroll_and_details_and_marks_age_and_failed
     cat = {'release': {'target': 'fixture', 'automate_scope': {'decision': 'fixture', 'note': 'fixture'}}}
     payload = status_payload(cat, [], {}, [], {'last_run_at': '2026-10-13T12:00:00+00:00'}, {}, [])
     payload['rendered_at'] = 'fixture-first'
+    payload['dashboard_code'] = {'color': 'red', 'label': 'tests-failed', 'deployed': 'old',
+                                'main': None, 'outcome': 'tests-failed', 'attempt_revision': 'failed',
+                                'reason': 'fixture candidate failure',
+                                'observation_error': 'fixture main lookup outage'}
     payload['installed_apps'] = [{'app':'email-watcher','name':'Fixture watcher','color':'neutral',
                                  'label':'not installed','revision':None,'coupled_color':'neutral',
                                  'coupled':'not compared','merges':[],'lag':'no promotion'}]
@@ -42,6 +46,9 @@ assert.equal(timers.filter(t=>t[1]===60000).length,1);
  assert.equal(calls[0][1].credentials,'omit');assert.equal(calls[0][1].cache,'no-store');
  assert.equal(context.location.hash,'#email-watcher');assert.deepEqual(scroll,[[12,940]]);assert.equal(detail.open,true);assert.equal(installedDetail.open,true);
  assert.match(elements.root.innerHTML,/id="installed-email-watcher"/);
+ assert.match(elements.root.innerHTML,/p-bad.*tests-failed/);
+ assert.match(elements.root.innerHTML,/fixture candidate failure/);
+ assert.match(elements.root.innerHTML,/main lookup error: fixture main lookup outage/);
  // Same rendered timestamp must not churn the DOM or move the scroll.
  await context.refresh();assert.equal(scroll.length,1);
  now=Date.parse('2026-10-13T12:45:00Z');context.freshness();

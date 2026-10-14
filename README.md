@@ -378,8 +378,10 @@ failure is `env-failed` with the actual reason, never a fictitious rollback. Man
 `current/.venv/bin/python -m lcstatus.deploy --rollback` refuses unless a distinct tested kept
 release exists. One terminal `deployment` record names each attempt, SHA, outcome, duration and
 suite summary. The typed `dashboard.code` condition and `dashboard.deploy` check drive the
-Dashboard code row: green at main, amber while ahead, red for a failed/rolled-back current main that is not deployed. A newer
-untried main is amber; confirmed deployed equals main is green (directly accepted Option A). Product-release and installed-promotion evidence rules are unchanged.
+Dashboard code row: a real failed or rolled-back attempt stays red until a later successful
+deployment (directly accepted Option B). Moving main, observing deployed equals main, or a lookup
+outage cannot clear that failure. Otherwise it is green at main and amber while ahead or unobserved.
+Product-release and installed-promotion evidence rules are unchanged.
 
 The loopback page fetches its own `status.json` every sixty seconds with caching disabled and
 redirects refused. Changed rendered timestamps update the existing view, open evidence details
@@ -402,9 +404,10 @@ a skipped descendant check, rollback without a kept release, and code-tree runti
 
 
 Main fetch and first-parent-history read failures are observations, never attempts for an empty
-candidate. The Dashboard code row is amber `main not observed` for that tick, with the source
-reason; recovery is retained across heads. A failed current main is red while undeployed; a newer untried head is amber, and
-confirmed deployed equals main is green (directly accepted Option A). Build and suite subprocesses receive independent
+candidate. Without a real failed attempt, the Dashboard code row is amber `main not observed`,
+with the source reason; recovery is retained across heads. A real failed attempt keeps its red
+label and original reason while a lookup outage is exposed separately as `observation_error`
+in JSON, Markdown and the page. Only a later successful deployment clears it. Build and suite subprocesses receive independent
 per-attempt temporary data/HOME/XDG/cache roots; only collection receives the live root. A pending
 bootstrap records readiness after the first collection/render and before publication so recovery
 can finish an interrupted terminal append as one successful deployment, without a fake rollback.
@@ -431,3 +434,6 @@ metadata failure records one real-candidate environment failure without switchin
 collection from the kept current release; unavailable persistence propagates with any pending
 context retained. The own-unit root validator also refuses backslash/double-quote characters that
 systemd cannot use in an executable path, before any unit is written or started.
+
+Self-deployment requires Python 3.11.4 or newer for safe archive extraction; the project and lock
+declare the same minimum.

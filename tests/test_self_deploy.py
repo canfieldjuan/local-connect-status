@@ -477,22 +477,22 @@ def test_lineage_read_failure_is_an_observation_and_kept_collection_runs(world, 
     assert attempts(paths)[-1].revision == new and attempts(paths)[-1].detail['outcome'] == 'deployed'
 
 
-def test_failed_current_main_is_red_new_untried_main_is_amber_and_deployed_main_is_green(world):
+def test_failed_attempt_stays_red_across_main_changes_until_later_deploy(world):
     work, paths, deployer, command = world
     old = bootstrap(world); failed = commit(work, 'fail')
     assert deployer.tick(collect=True) == 0
     assert attempts(paths)[-1].detail['outcome'] == 'tests-failed'
     assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'red'
-    # Directly accepted Option A: current-main attribution changes with the observed head.
+    # Directly accepted Option B: only a later successful deployment clears a real failure.
     deployer.observation(failed, old)
     assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
     later = commit(work, 'pass')
     deployer.observation(later, old)
     status = dashboard_status(fixture_catalogue(), deployer.store.all())
-    assert status['color'] == 'amber' and status['label'] == 'main ahead'
+    assert status['color'] == 'red' and status['label'] == 'tests-failed'
     assert status['attempt_revision'] == failed and status['outcome'] == 'tests-failed'
     deployer.observation(old, old)
-    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'green'
+    assert dashboard_status(fixture_catalogue(), deployer.store.all())['color'] == 'red'
     assert deployer.tick(collect=True) == 0
     assert paths.current.resolve().name == later
     assert json.loads((paths.site / 'status.json').read_text())['dashboard_code']['color'] == 'green'
@@ -530,6 +530,82 @@ def test_candidate_build_and_suite_writes_use_private_data_home_xdg_and_cleanup(
         assert 'LCSTATUS_COLLECTION_LOCK_FD' not in env
         assert not sandbox.exists(), 'candidate roots must be cleaned after the phase'
     assert roots[0] != roots[1]
+
+
+@pytest.mark.parametrize('outcome', ['tests-failed', 'env-failed', 'rolled-back', 'not-descendant'])
+def test_real_failure_keeps_label_and_reason_through_lookup_outage_until_later_deploy(world, outcome):
+    work, paths, deployer, command = world
+    old = bootstrap(world)
+    failed = commit(work)
+    deployer.append(deployer.outcome(deployer.context(failed, failed, old), outcome,
+                                    'fixture candidate failure', deployed=old))
+    for head, error in [(failed, None), ('b' * 40, None), (old, None),
+                        (None, 'fixture main lookup outage')]:
+        deployer.observation(head, old, error=error)
+        code = dashboard_status(fixture_catalogue(), deployer.store.all())
+        assert (code['color'], code['label'], code['reason']) == (
+            'red', outcome, 'fixture candidate failure')
+        assert code['attempt_revision'] == failed and code['observation_error'] == error
+    render.render_all(paths.site, fixture_catalogue(), [], deployer.store.all(), {}, [], {}, {})
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['color'] == 'red' and code['reason'] == 'fixture candidate failure'
+    assert code['observation_error'] == 'fixture main lookup outage'
+    report = (paths.site / 'report.md').read_text()
+    assert 'fixture candidate failure' in report
+    assert 'Main lookup error: fixture main lookup outage' in report
+    later = commit(work)
+    assert deployer.tick(collect=True) == 0
+    code = json.loads((paths.site / 'status.json').read_text())['dashboard_code']
+    assert code['color'] == 'green' and code['deployed'] == later
+    assert code['observation_error'] is None
+
+
+@pytest.mark.parametrize('malformed', [None, [], 'invalid', {}, {'id': None}, {'id': []},
+                                     {'id': 42}, {'id': ''}, {'id': 'dashboard.code', 'check': []},
+                                     {'id': 'dashboard.code', 'check': None},
+                                     {'id': 'dashboard.code', 'check': 42}])
+def test_malformed_candidate_dashboard_is_one_env_failure_and_kept_collection_continues(world, malformed):
+    work, paths, deployer, command = world
+    old = bootstrap(world)
+    cat = fixture_catalogue()
+    cat['dashboard']['condition'] = malformed
+    (work / 'catalogue.json').write_text(json.dumps(cat))
+    new = commit(work)
+    before = command.events.count('collection')
+    assert deployer.tick(collect=True) == 0
+    assert paths.current.resolve().name == old
+    assert command.events.count('collection') == before + 1
+    assert len(attempts(paths)) == 2
+    assert attempts(paths)[-1].revision == new
+    assert attempts(paths)[-1].detail['outcome'] == 'env-failed'
+    assert 'catalogue invalid' in attempts(paths)[-1].detail['reason']
+    assert not (paths.releases / new).exists()
+
+
+@pytest.mark.parametrize('dashboard', [None, [], 'invalid', 42])
+def test_dashboard_shape_is_rejected_by_catalogue_owner(tmp_path, dashboard):
+    from lcstatus.catalogue import load
+    cat = fixture_catalogue();cat['dashboard'] = dashboard
+    path = tmp_path / 'catalogue.json';path.write_text(json.dumps(cat))
+    with pytest.raises(ValueError, match='dashboard must be an object'):
+        load(path)
+
+
+def test_valid_dashboard_condition_still_participates_in_duplicate_id_validation(tmp_path):
+    from lcstatus.catalogue import load
+    cat = fixture_catalogue()
+    cat['tasks'] = [{'id': 'fixture', 'app': 'bundle', 'layer': 'standalone',
+                     'conditions': [dict(cat['dashboard']['condition'])]}]
+    path = tmp_path / 'catalogue.json';path.write_text(json.dumps(cat))
+    with pytest.raises(ValueError, match='duplicate condition id dashboard.code'):
+        load(path)
+
+
+def test_safe_archive_python_minimum_matches_locked_environment():
+    import tomllib
+    project = tomllib.loads((ROOT / 'pyproject.toml').read_text())
+    lock = tomllib.loads((ROOT / 'uv.lock').read_text())
+    assert project['project']['requires-python'] == lock['requires-python'] == '>=3.11.4'
 
 
 def test_interrupted_bootstrap_after_publication_finishes_one_deployed_record_without_rollback(world, monkeypatch):
