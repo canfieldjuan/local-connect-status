@@ -106,14 +106,24 @@ class Deployer:
             raise StepFailed('fetched main did not name an exact revision')
         return sha
 
-    def release(self, sha: str) -> Path:
+    def release(self, sha: str, *, receipt_fd: int | None = None, receipt_only: bool = False) -> Path:
+        """One reader/validator of release receipts.
+
+        Pins, switching and recovery require the kept environment. Retention's
+        obsolete-tree ownership requires only the passing receipt (Contract 13
+        R1), read through its already-open, no-follow descriptor.
+        """
         if not is_full_sha(sha):
             raise ValueError('release requires a full lowercase SHA')
         tree = self.paths.releases / sha
-        receipt = json.loads((tree / '.release.json').read_text())
-        if receipt.get('revision') != sha or receipt.get('tests') != 'pass':
+        if receipt_fd is None:
+            receipt = json.loads((tree / '.release.json').read_text())
+        else:
+            with os.fdopen(os.dup(receipt_fd), 'r') as stream:
+                receipt = json.load(stream)
+        if not isinstance(receipt, dict) or receipt.get('revision') != sha or receipt.get('tests') != 'pass':
             raise ValueError('release has no passing exact-revision suite receipt')
-        if not (tree / '.venv/bin/python').is_file():
+        if not receipt_only and not (tree / '.venv/bin/python').is_file():
             raise ValueError('kept release environment is missing')
         return tree
 

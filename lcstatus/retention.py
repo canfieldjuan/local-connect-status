@@ -131,15 +131,10 @@ class Retention:
             with os.fdopen(receipt_fd, 'r') as receipt:
                 if signature(os.fstat(receipt.fileno())) != signature(info):
                     raise Refused(f'release receipt changed: {sha}')
-                try:
-                    value = json.load(receipt)
-                except (ValueError, UnicodeError) as exc:
-                    raise Refused(f'malformed release receipt: {sha}') from exc
+                self.deployer.release(sha, receipt_fd=receipt.fileno(), receipt_only=True)
                 if (signature(os.fstat(receipt.fileno())) != signature(info)
                         or signature(entry_stat(fd, '.release.json')) != signature(info)):
                     raise Refused(f'release receipt changed: {sha}')
-            if not isinstance(value, dict) or value.get('revision') != sha or value.get('tests') != 'pass':
-                raise Refused(f'conflicting release receipt: {sha}')
             return signature(info)
         finally:
             os.close(fd)
