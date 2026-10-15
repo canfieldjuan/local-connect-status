@@ -495,8 +495,39 @@ convert a previous boot's monotonic clock into elapsed time. Existing terminal r
 Own user units require an absolute data-root path using ASCII letters/digits, interior spaces,
 and `/ . _ @ + , : ~ = - %`. Other characters, including apostrophes and dollar signs, refuse
 before unit files or starts; percent escaping and the real systemd-parser fixture remain.
-Release cleanup is deferred by the operator; issue #27 tracks the measured size and planning
-trigger for a separately accepted retention contract. No automatic release deletion is added.
+Release retention is defined by accepted [Contract 13](docs/contracts/13-release-retention.md).
+After a completed ordinary collection tick, cleanup keeps `current`, `previous` (when present),
+and a distinct executing controller release. It removes only obsolete full-SHA directories
+with controller ownership evidence, in SHA order. Any pending deployment journal blocks it.
+Bootstrap, recovery, failed deployment/lookup, heavy-only ticks and manual rollback never prune.
+The first tick using a controller with retention enables the hook; an older controller cannot
+clean up retroactively in the tick that deploys this feature.
+
+Operator commands, using the configured external runtime root:
+
+```sh
+LCSTATUS_DATA_ROOT="$HOME/.local/share/local-connect-status" \
+  "$HOME/.local/share/local-connect-status/current/.venv/bin/python" -m lcstatus.retention
+LCSTATUS_DATA_ROOT="$HOME/.local/share/local-connect-status" \
+  "$HOME/.local/share/local-connect-status/current/.venv/bin/python" -m lcstatus.retention --apply
+```
+
+An explicit `--data-root PATH` selects another existing runtime. Preview is the default: it
+reports protected releases, candidates, skipped entries and refusals without deletion or
+evidence/log append. Neither command initializes a missing layout, fetches, deploys or renders.
+Both use the collection lock and refuse contention. Do not run them against a developer or
+product checkout.
+
+Apply records its plan before deleting in an exclusive `data/logs/retention-<id>.jsonl`, then
+appends completed removals, errors and a terminal summary. Records, old logs, mirrors, shared
+caches, site and pins remain untouched. Unknown names and unproven trees survive; ambiguous
+receipts or SHA-named symlinks refuse the plan. Descriptor-relative deletion never follows
+nested links, refuses mount boundaries and changed entries, and stops on any fault. Linux
+descriptor/mount primitives are required; there is no unsafe fallback. Partial completion is
+reported honestly. A journal fault stops further deletion. Manual errors return nonzero;
+automatic errors report to stderr/journal without changing the completed deployment outcome,
+page label or collection return. No age/free-space threshold, process scan or shared-cache
+cleanup is added. The earlier approximate size and disk-pressure figures were planning triggers.
 
 If recovery restores the previous release, that controller ends its tick immediately after the
 rollback record. A later tick starts through the restored release before fetching or deploying

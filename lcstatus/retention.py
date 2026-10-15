@@ -36,6 +36,15 @@ def signature(info) -> tuple:
     return identity(info) + (info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def mount_id(fd: int) -> str:
+    # Linux exposes the mount identity of this already-open descriptor. Unlike
+    # st_dev alone, this also detects a bind mount on the same filesystem.
+    for line in Path(f'/proc/self/fdinfo/{fd}').read_text().splitlines():
+        if line.startswith('mnt_id:'):
+            return line.split(':', 1)[1].strip()
+    raise Refused('safe mount identity is unavailable')
+
+
 def directory_flags() -> int:
     if (not hasattr(os, 'O_NOFOLLOW') or not hasattr(os, 'O_DIRECTORY')
             or not {os.open, os.stat, os.unlink, os.rmdir, os.mkdir} <= os.supports_dir_fd
@@ -67,7 +76,11 @@ class Journal:
                          0o600, dir_fd=logs_fd)
             self.file = os.fdopen(fd, 'w', encoding='utf-8')
             self.path = str(data / 'logs' / name)
-            os.fsync(logs_fd)
+            try:
+                os.fsync(logs_fd)
+            except OSError:
+                self.file.close()
+                raise
 
     def append(self, event: str, **payload) -> None:
         self.file.write(json.dumps({'event': event, **payload}, sort_keys=True) + '\n')
@@ -94,6 +107,8 @@ class Retention:
             try:
                 if signature(os.fstat(fd)) != signature(before):
                     raise Refused(f'entry changed while opening: {name}')
+                if mount_id(fd) != mount_id(parent):
+                    raise Refused(f'nested mount boundary: {name}')
                 children = {child: self._snapshot(fd, child, device) for child in sorted(os.listdir(fd))}
                 if signature(os.fstat(fd)) != signature(before):
                     raise Refused(f'directory changed while planning: {name}')
@@ -103,13 +118,13 @@ class Retention:
             raise Refused(f'entry changed while planning: {name}')
         return signature(before), children
 
-    def _receipt(self, root: int, sha: str) -> bool:
+    def _receipt(self, root: int, sha: str) -> tuple | None:
         fd = os.open(sha, directory_flags(), dir_fd=root)
         try:
             try:
                 info = entry_stat(fd, '.release.json')
             except FileNotFoundError:
-                return False
+                return None
             if not stat.S_ISREG(info.st_mode):
                 raise Refused(f'conflicting release receipt: {sha}')
             receipt_fd = os.open('.release.json', os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
@@ -120,9 +135,12 @@ class Retention:
                     value = json.load(receipt)
                 except (ValueError, UnicodeError) as exc:
                     raise Refused(f'malformed release receipt: {sha}') from exc
+                if (signature(os.fstat(receipt.fileno())) != signature(info)
+                        or signature(entry_stat(fd, '.release.json')) != signature(info)):
+                    raise Refused(f'release receipt changed: {sha}')
             if not isinstance(value, dict) or value.get('revision') != sha or value.get('tests') != 'pass':
                 raise Refused(f'conflicting release receipt: {sha}')
-            return True
+            return signature(info)
         finally:
             os.close(fd)
 
@@ -162,13 +180,19 @@ class Retention:
             if not is_full_sha(name) or not stat.S_ISDIR(info.st_mode):
                 result['skipped'][name] = 'not a full-SHA real release directory'
                 continue
-            owned = self._receipt(root, name) or name in terminal
+            if info.st_dev != device:
+                raise Refused(f'different-device boundary: {name}')
+            receipt = self._receipt(root, name)
+            owned = receipt is not None or name in terminal
             if name in protected:
                 continue
             if not owned:
                 result['skipped'][name] = 'no controller ownership evidence'
                 continue
-            snapshots[name] = self._snapshot(root, name, device)
+            snapshot = self._snapshot(root, name, device)
+            if receipt is not None and snapshot[1].get('.release.json', (None,))[0] != receipt:
+                raise Refused(f'release receipt changed after ownership check: {name}')
+            snapshots[name] = snapshot
         result['candidates'] = sorted(snapshots)
         return snapshots
 
@@ -184,6 +208,8 @@ class Retention:
         try:
             if signature(os.fstat(fd)) != expected or os.fstat(fd).st_dev != device:
                 raise Refused(f'directory changed before removal: {name}')
+            if mount_id(fd) != mount_id(parent):
+                raise Refused(f'nested mount boundary: {name}')
             if sorted(os.listdir(fd)) != sorted(children):
                 raise Refused(f'directory entries changed before removal: {name}')
             for child, child_snapshot in children.items():
@@ -205,12 +231,16 @@ class Retention:
         result = {'outcome': 'planned', 'protected': [], 'candidates': [], 'skipped': {},
                   'deleted': [], 'errors': []}
         journal = None
+        journal_attempted = False
+        locked = False
+        removing = None
         try:
             require_layout(self.paths)
             lock = collection_lock(self.paths.data, wait=False, inherited_fd=self.deployer.lock.fileno())
             if lock is None:
                 raise Refused('collection lock is held by another collector')
             with lock, ExitStack() as stack:
+                locked = True
                 root_fd = os.open(self.paths.root, directory_flags())
                 stack.callback(os.close, root_fd)
                 fd = os.open('releases', directory_flags(), dir_fd=root_fd)
@@ -224,6 +254,7 @@ class Retention:
                     result['errors'].append(str(exc))
                     snapshots = {}
                 if apply:
+                    journal_attempted = True
                     journal = Journal(self.paths.data)
                     result['journal'] = journal.path
                     journal.append('start', protected=result['protected'], candidates=result['candidates'],
@@ -236,8 +267,10 @@ class Retention:
                             raise Refused('owned releases root changed after planning')
                         if os.path.lexists(self.deployer.pending):
                             raise Refused('pending deployment journal blocks retention')
+                        removing = sha
                         self._remove_candidate(fd, sha, snapshot, os.fstat(fd).st_dev)
                         result['deleted'].append(sha)
+                        removing = None
                         journal.append('deleted', revision=sha)
                     if not result['errors']:
                         result['outcome'] = 'applied'
@@ -245,17 +278,28 @@ class Retention:
                                    errors=result['errors'])
         except (OSError, ValueError) as exc:
             result['errors'].append(str(exc))
-            result['outcome'] = 'partial' if result['deleted'] else 'refused'
-            if journal:
+            if removing:
+                result['incomplete'] = removing
+            result['outcome'] = 'partial' if result['deleted'] or removing else 'refused'
+            if apply and locked and (journal is not None or not journal_attempted):
                 try:
+                    if journal is None:
+                        journal = Journal(self.paths.data)
+                        result['journal'] = journal.path
+                        journal.append('start', protected=result['protected'], candidates=result['candidates'],
+                                       skipped=result['skipped'])
                     journal.append('error', reason=str(exc))
                     journal.append('finished', outcome=result['outcome'], deleted=result['deleted'],
-                                   errors=result['errors'])
+                                   errors=result['errors'], incomplete=removing)
                 except (OSError, ValueError) as journal_exc:
                     result['errors'].append(f'retention journal fault: {journal_exc}')
         finally:
             if journal:
-                journal.close()
+                try:
+                    journal.close()
+                except OSError as exc:
+                    result['errors'].append(f'retention journal close fault: {exc}')
+                    result['outcome'] = 'partial' if result['deleted'] or removing else 'refused'
         for error in result['errors']:
             print(f'retention: {error}', file=sys.stderr)
         return result
