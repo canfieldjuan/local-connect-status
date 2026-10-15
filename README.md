@@ -506,11 +506,15 @@ clean up retroactively in the tick that deploys this feature.
 Operator commands, using the configured external runtime root:
 
 ```sh
-LCSTATUS_DATA_ROOT="$HOME/.local/share/local-connect-status" \
-  "$HOME/.local/share/local-connect-status/current/.venv/bin/python" -m lcstatus.retention
-LCSTATUS_DATA_ROOT="$HOME/.local/share/local-connect-status" \
-  "$HOME/.local/share/local-connect-status/current/.venv/bin/python" -m lcstatus.retention --apply
+(cd ~/.local/share/local-connect-status/current &&
+  ./.venv/bin/python -m lcstatus.retention --data-root ~/.local/share/local-connect-status)
+(cd ~/.local/share/local-connect-status/current &&
+  ./.venv/bin/python -m lcstatus.retention --data-root ~/.local/share/local-connect-status --apply)
 ```
+
+The subshell selects the deployed module, matching the user unit's working directory, and
+leaves the caller's directory unchanged. Its environment does not install this project into
+site-packages; selecting its Python alone does not select its code.
 
 An explicit `--data-root PATH` selects another existing runtime. Preview is the default: it
 reports protected releases, candidates, skipped entries and refusals without deletion or
