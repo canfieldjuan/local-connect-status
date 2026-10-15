@@ -365,6 +365,15 @@ class Deployer:
         return 0
 
     def tick(self, *, bootstrap: bool = False, collect: bool = False, heavy_only: bool = False) -> int:
+        self._retention_ready = False
+        had_pending = os.path.lexists(self.pending)
+        result = self._tick(bootstrap=bootstrap, collect=collect, heavy_only=heavy_only)
+        if collect and not bootstrap and not heavy_only and not had_pending and self._retention_ready:
+            from .retention import Retention
+            Retention(self).run(apply=True)
+        return result
+
+    def _tick(self, *, bootstrap: bool, collect: bool, heavy_only: bool) -> int:
         if self.recover():
             return 0  # The next tick starts through the restored current release's controller.
         current = self.pin('current')
@@ -384,7 +393,9 @@ class Deployer:
         rolled_back = any(r.kind == 'deployment' and r.revision == head and r.detail.get('outcome') == 'rolled-back'
                           for r in self.store.all())
         if current == head or rolled_back:
-            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
+            result = self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
+            self._retention_ready = current == head and not rolled_back
+            return result
         try:
             lineage = self.git('rev-list', '--first-parent', head).splitlines()
         except (OSError, StepFailed, subprocess.TimeoutExpired) as exc:
@@ -454,6 +465,7 @@ class Deployer:
         self.store = Store(self.paths.data / 'records.jsonl')
         self.append(record)
         self.pending.unlink()
+        self._retention_ready = True
         return result
 
 
