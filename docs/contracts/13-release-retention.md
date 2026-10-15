@@ -1,8 +1,23 @@
 # Contract 13 — Bounded retention of dashboard release trees
 
-Status: **proposed, not accepted**, 2026-10-14. No retention code is authorized until Juan
-accepts this policy and that acceptance is recorded separately before implementation.
+Status: **accepted by Juan**, 2026-10-14. Acceptance is recorded in this separate
+contract-only commit before implementation.
 Tracks [issue #27](https://github.com/canfieldjuan/local-connect-status/issues/27).
+
+## Operator acceptance
+
+Oversight relayed the operator's decision verbatim in
+[PR #32](https://github.com/canfieldjuan/local-connect-status/pull/32#issuecomment-6184105483)
+and mailbox receipt `a9e0cf506cb5459abdf64c7ddd8921bd`:
+
+"Live + previous only (Recommended)"
+
+The selected option read: "As written. The simplest rule, enough for the existing automatic
+rollback. Everything older and provably owned is cleaned after each successful update."
+
+This accepts the contract as proposed at `36f3a0df051752a617fe9bff4837dacabe2b5a37`, all
+five defaults and the automatic post-merge live effect below. Oversight's two non-blocking
+notes require no policy change. No additional obsolete-release window is added.
 
 ## Starting point and evidence
 
