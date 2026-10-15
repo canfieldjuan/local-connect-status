@@ -106,14 +106,24 @@ class Deployer:
             raise StepFailed('fetched main did not name an exact revision')
         return sha
 
-    def release(self, sha: str) -> Path:
+    def release(self, sha: str, *, receipt_fd: int | None = None, receipt_only: bool = False) -> Path:
+        """One reader/validator of release receipts.
+
+        Pins, switching and recovery require the kept environment. Retention's
+        obsolete-tree ownership requires only the passing receipt (Contract 13
+        R1), read through its already-open, no-follow descriptor.
+        """
         if not is_full_sha(sha):
             raise ValueError('release requires a full lowercase SHA')
         tree = self.paths.releases / sha
-        receipt = json.loads((tree / '.release.json').read_text())
-        if receipt.get('revision') != sha or receipt.get('tests') != 'pass':
+        if receipt_fd is None:
+            receipt = json.loads((tree / '.release.json').read_text())
+        else:
+            with os.fdopen(os.dup(receipt_fd), 'r') as stream:
+                receipt = json.load(stream)
+        if not isinstance(receipt, dict) or receipt.get('revision') != sha or receipt.get('tests') != 'pass':
             raise ValueError('release has no passing exact-revision suite receipt')
-        if not (tree / '.venv/bin/python').is_file():
+        if not receipt_only and not (tree / '.venv/bin/python').is_file():
             raise ValueError('kept release environment is missing')
         return tree
 
@@ -365,6 +375,15 @@ class Deployer:
         return 0
 
     def tick(self, *, bootstrap: bool = False, collect: bool = False, heavy_only: bool = False) -> int:
+        self._retention_ready = False
+        had_pending = os.path.lexists(self.pending)
+        result = self._tick(bootstrap=bootstrap, collect=collect, heavy_only=heavy_only)
+        if collect and not bootstrap and not heavy_only and not had_pending and self._retention_ready:
+            from .retention import Retention
+            Retention(self).run(apply=True)
+        return result
+
+    def _tick(self, *, bootstrap: bool, collect: bool, heavy_only: bool) -> int:
         if self.recover():
             return 0  # The next tick starts through the restored current release's controller.
         current = self.pin('current')
@@ -384,7 +403,9 @@ class Deployer:
         rolled_back = any(r.kind == 'deployment' and r.revision == head and r.detail.get('outcome') == 'rolled-back'
                           for r in self.store.all())
         if current == head or rolled_back:
-            return self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
+            result = self.collect(current, context, heavy_only=heavy_only) if collect and current else 0
+            self._retention_ready = current == head and not rolled_back
+            return result
         try:
             lineage = self.git('rev-list', '--first-parent', head).splitlines()
         except (OSError, StepFailed, subprocess.TimeoutExpired) as exc:
@@ -454,6 +475,7 @@ class Deployer:
         self.store = Store(self.paths.data / 'records.jsonl')
         self.append(record)
         self.pending.unlink()
+        self._retention_ready = True
         return result
 
 

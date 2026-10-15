@@ -488,7 +488,7 @@ class Store:
 LOCK_NAME = ".lock"
 
 
-def collection_lock(data: Path, *, wait: bool) -> Any:
+def collection_lock(data: Path, *, wait: bool, inherited_fd: int | None = None) -> Any:
     """Take the one lock every writer of `data/` holds (contract 08 B5): the collector and the
     observation script acquire it here, so its path and its waiting cannot drift apart.
 
@@ -497,7 +497,7 @@ def collection_lock(data: Path, *, wait: bool) -> Any:
     on stderr before it blocks, so a run that seems stuck names what it is waiting for.
     """
     data = Path(data)
-    inherited = os.environ.get("LCSTATUS_COLLECTION_LOCK_FD")
+    inherited = inherited_fd if inherited_fd is not None else os.environ.get("LCSTATUS_COLLECTION_LOCK_FD")
     if inherited is not None:
         fd = int(inherited)
         held = os.fstat(fd)
