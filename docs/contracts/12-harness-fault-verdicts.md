@@ -297,3 +297,94 @@ Every message uses registered sender `lcs-harness-14`, repository
 `canfieldjuan/local-connect-status`, and the actual contract/implementation PR number.
 Commit this proposal by itself, open the contract-only PR, request Juan's acceptance via
 oversight, and stop. Record an accepted operator decision in its own commit before code.
+
+## Proposed amendment — PDF proof entitlement input (awaiting Juan's acceptance)
+
+This section is a proposal for [release work order #7](https://github.com/canfieldjuan/local-connect-status/issues/7#issuecomment-6207926575),
+not authorization to change the runner. The accepted execution-parity, classification,
+receipt, history and retry requirements above remain binding.
+
+### Evidence and source owners
+
+The recorded PDF attempt `bd512894b39eda50919681d4`, at `2026-10-15T08:33:44Z`, used
+Email Watcher `43a850d8b00cddfdad2a767b7b27fc792707b010`, Document Summarizer
+`62cc1ca69ea097a0fe87ab12a51c7251ac7c330e`, and connect-contracts
+`0f77f8a77e6fb014f0d563645ebdbb83ce6dbc3b`. Its contracts step counted 79 tests with
+no failures or errors, and the provider build completed. The proof then raised
+`The supplied active Connect entitlement does not include automations` before reaching
+its product-check report. Contract 12 correctly classified this as unavailable, not fail.
+This historical log establishes the observed input fault; no fresh end-to-end reproduction
+or passing product proof is claimed by this proposal.
+
+- Dashboard commit `26ccfebc0739f1fab9065f0c37f15c04cbccb522` introduced the selection of
+  `entitlements/v1/fixtures/valid/active.json` in `Runner.accept_ew_ds`. At dashboard
+  `5ea0363a7b4516e0702dc7eefe129926ec333353`, that owner is `lcstatus/verify.py:942`,
+  and the active-input selection is at line 958. At the recorded contracts revision,
+  this public signed fixture grants only `connect.capability_exchange`.
+- Email Watcher commit `b538f8febbb016363bf324348381d6d481e78ad9` introduced the additional
+  entitlement precondition in `scripts/connect-local-proof.py::main`, together with
+  Contract Watch execution and its native `contract_watch_*` product checks. At the recorded
+  Email Watcher revision, the precondition is at lines 604–608. Its product contract,
+  `docs/CONTRACT_WATCH_AUTOMATION_CONTRACT.md`, was accepted in commit
+  `490195aa3170906f7b3024d25731ebb12e7f0e10` and requires both
+  `connect.capability_exchange` and `connect.automations` for that path.
+- At the recorded contracts revision, the existing signed fixture
+  `entitlements/v1/fixtures/valid/active-automations.json` grants both features and is
+  paired with the existing fixture keyring. No fixture is fabricated or re-signed here.
+
+The dashboard's input selection predates the product's expanded proof. Contract 12 explicitly
+preserves the existing fixtures and arguments. Supplying the additional feature therefore
+needs acceptance even though the unavailable classification itself is correct. The proposed
+fix belongs to `Runner.accept_ew_ds`; the classifier and the product precondition do not need
+a workaround.
+
+### Proposed bounded change
+
+Authorize `Runner.accept_ew_ds` to supply the exact declared connect-contracts tree's
+`entitlements/v1/fixtures/valid/active-automations.json` as `--active-entitlement`.
+Keep `test-keyring.json`, `valid/expired.json`, the PDF, participant identities, contracts
+test step, provider build, stand-in model and software rendering unchanged.
+
+Require the automations fixture as an input before preparation. If absent, return the
+existing unavailable input-fault observation naming that path; do not fall back to
+`active.json`, an installed licence, another revision, or generated entitlement bytes.
+The product remains the owner of signature, validity-window and feature validation.
+
+Execute the unmodified exact product script with the accepted adapter's `__main__`
+semantics in the same interpreter/venv, with the existing isolated HOME/XDG and process
+ownership. Exercise its full current proof, including its native Contract Watch checks;
+do not bypass its feature guard or remove checks. The existing completed zero-exit PDF
+success rule and witnessed native `require_proof_checks` failure rule remain unchanged.
+The proof's precondition, startup or licence fault without a native product-failure receipt
+remains unavailable under the shared classifier.
+
+This does not add a catalogue check, condition or gate, or grant installed automation,
+real-model, OCR, human-demo, Windows, promotion or public-release evidence. In particular,
+the stand-in-model exact-tree proof cannot satisfy the separate installed automation demos.
+Existing catalogue claims and labels retain their current owners and meanings. Old records
+are untouched; normal collector-code identity and retry rules apply to new executions.
+
+Implementation scope, only after acceptance: `Runner.accept_ew_ds` in `lcstatus/verify.py`
+and regression fixtures in `tests/test_verify_parsing.py`. No product edits, fixture edits,
+classifier/adapter changes, new diagnostics, live-system actions or catalogue changes.
+
+### Settling evidence after acceptance
+
+All regression executions use temporary runtime roots, synthetic exact-revision trees and
+stub preparation tools. They never install or execute the live apps or use a real licence.
+
+| Requirement | Evidence |
+|---|---|
+| Exact proof input | Fail-first runner fixture inspects the actual proof argv and fixture bytes: the automations-enabled input comes from the declared contracts revision; legacy `active.json` remains present with different bytes and cannot be selected. All three participant revisions remain bound. |
+| Missing required fixture | With legacy `active.json` present but the automations fixture absent, record unavailable naming the missing input before any environment/build/proof step. No fallback or product-failure claim. |
+| Success and product-failure twins | A fixture script with the native feature precondition succeeds with the required input through the real acceptance adapter; a witnessed false native product check still yields fail. Preserve the accepted adapter parity test and all existing PDF success requirements. |
+| Harness-fault twin | A feature-rejected input without a native product-check report remains unavailable through the shared classifier; do not weaken or reinterpret that guard. |
+| Source-owner mutations | Reverting the input selection to `active.json` must fail the input/success regression; adding a fallback to it must fail the missing-input regression. |
+| Exact-tree reproduction | In task-owned scratch roots, reproduce the recorded input rejection at the recorded participant revisions, then observe the newly authorized input through the same runner. Record actual outcomes; another fault is not a pass and is classified before further work. No product source edits or live-cache hardlinks. |
+| Release gate and live proof | Full repository suite once on the final changed head with the repository .venv; bot reconciled, exact-head oversight PASS, clean local/remote head and zero unresolved threads before merge commit. After merge, read the next deployment and PDF records, report their actual state, and post live evidence. |
+
+Commit and open this amendment by itself, then ask Juan through oversight to accept the
+fixture change and bounded proof scope. Stop before implementation, test gates or a fresh
+product-proof execution. If accepted, record the operator's decision verbatim in its own
+commit before changing code. If rejected or deferred, retain the current unavailable check
+and return to the approved release work order; do not substitute a narrower proof silently.
