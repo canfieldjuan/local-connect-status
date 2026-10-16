@@ -397,7 +397,17 @@ product-proof execution stopped pending acceptance. The operator's acceptance ab
 recorded verbatim in its own commit before code. Implement only this accepted fixture
 change and bounded proof scope; do not substitute a narrower proof silently.
 
-## Proposed amendment — select the documented PDF proof build (awaiting acceptance)
+## Accepted amendment — select the documented PDF proof build
+
+Juan's decision, relayed verbatim by oversight on PR #33, 2026-10-16:
+"Accept (Recommended)". The accepted option was: "Only this check's build command changes
+to Document Summarizer's documented proof build; it stays a throwaway test binary (never
+installed), with the same licence, proof and pass/fail rules. Then it's tested, reviewed
+and merged together with the licence fix."
+
+The decision covers proposal commit `4e2e947669a58d6f365172671044d23f1d0697d1` and is
+recorded in [oversight's acceptance comment](https://github.com/canfieldjuan/local-connect-status/pull/33#issuecomment-6221064006).
+This acceptance is committed separately before the build-command implementation.
 
 This is a second, separate decision. The entitlement amendment above is accepted and its
 bounded implementation is committed at `8f29710fcff37473e9d215a5a8dd9eee612d2b70`.
@@ -433,7 +443,7 @@ loopback fixture model configuration. No real model, operator settings or GPU is
 or proposed. The remaining mismatch is the dashboard's build-command selection, owned by
 `Runner.accept_ew_ds`, rather than a product defect or a verdict-classifier defect.
 
-### Proposed additional authorization
+### Accepted additional authorization
 
 Change only this runner's provider build command from `desktop:build:no-bundle` to the
 exact provider tree's existing `desktop:build:connect-proof`. Keep the accepted entitlement
@@ -472,8 +482,7 @@ of the accepted entitlement amendment remain binding.
   merge as a merge commit. Read and post actual live deployment and next PDF-record
   evidence; do not operate the live service or fabricate closure.
 
-This proposal is committed separately before any build-command implementation. Ask Juan
-through oversight to accept this additional bounded input change, then stop. Acceptance
-must be recorded verbatim in its own commit before code. If declined or deferred, retain
-the current unavailable result and request disposition of the partial entitlement fix;
+The proposal was committed separately before any build-command implementation, and work
+stopped for Juan's acceptance through oversight. The acceptance above is recorded verbatim
+in its own commit before code. Implement only this accepted additional build selection;
 do not silently select another build or narrow the proof.
