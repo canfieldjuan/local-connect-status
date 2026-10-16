@@ -955,7 +955,7 @@ class Runner:
         proof = ew_tree / "scripts" / "connect-local-proof.py"
         pdf = ds_tree / "src-tauri" / "tests" / "fixtures" / "structured_report.pdf"
         keyring = contracts_tree / "entitlements" / "v1" / "fixtures" / "test-keyring.json"
-        active = contracts_tree / "entitlements" / "v1" / "fixtures" / "valid" / "active.json"
+        active = contracts_tree / "entitlements" / "v1" / "fixtures" / "valid" / "active-automations.json"
         expired = contracts_tree / "entitlements" / "v1" / "fixtures" / "valid" / "expired.json"
         contract_requirements = contracts_tree / "requirements-dev.txt"
         required = (proof, pdf, keyring, active, expired, contract_requirements)
