@@ -298,10 +298,19 @@ Every message uses registered sender `lcs-harness-14`, repository
 Commit this proposal by itself, open the contract-only PR, request Juan's acceptance via
 oversight, and stop. Record an accepted operator decision in its own commit before code.
 
-## Proposed amendment — PDF proof entitlement input (awaiting Juan's acceptance)
+## Accepted amendment — PDF proof entitlement input
 
-This section is a proposal for [release work order #7](https://github.com/canfieldjuan/local-connect-status/issues/7#issuecomment-6207926575),
-not authorization to change the runner. The accepted execution-parity, classification,
+Juan's decision, relayed verbatim by oversight on PR #33, 2026-10-16:
+"Accept the change (Recommended)". The accepted option was: "Dashboard supplies the
+automations-enabled test licence from the exact contracts revision; refuses (unavailable)
+if it's missing, no fallback; full proof unchanged. Then it's built with tests and merged
+on green + review."
+
+The decision covers proposal head `e8f5881bc00d439262b1eb82095b3b5a1a0138ae` and is recorded
+in [oversight's acceptance comment](https://github.com/canfieldjuan/local-connect-status/pull/33#issuecomment-6208219112).
+This acceptance is committed by itself before implementation for
+[release work order #7](https://github.com/canfieldjuan/local-connect-status/issues/7#issuecomment-6207926575).
+The accepted execution-parity, classification,
 receipt, history and retry requirements above remain binding.
 
 ### Evidence and source owners
@@ -338,7 +347,7 @@ needs acceptance even though the unavailable classification itself is correct. T
 fix belongs to `Runner.accept_ew_ds`; the classifier and the product precondition do not need
 a workaround.
 
-### Proposed bounded change
+### Accepted bounded change
 
 Authorize `Runner.accept_ew_ds` to supply the exact declared connect-contracts tree's
 `entitlements/v1/fixtures/valid/active-automations.json` as `--active-entitlement`.
@@ -383,8 +392,7 @@ stub preparation tools. They never install or execute the live apps or use a rea
 | Exact-tree reproduction | In task-owned scratch roots, reproduce the recorded input rejection at the recorded participant revisions, then observe the newly authorized input through the same runner. Record actual outcomes; another fault is not a pass and is classified before further work. No product source edits or live-cache hardlinks. |
 | Release gate and live proof | Full repository suite once on the final changed head with the repository .venv; bot reconciled, exact-head oversight PASS, clean local/remote head and zero unresolved threads before merge commit. After merge, read the next deployment and PDF records, report their actual state, and post live evidence. |
 
-Commit and open this amendment by itself, then ask Juan through oversight to accept the
-fixture change and bounded proof scope. Stop before implementation, test gates or a fresh
-product-proof execution. If accepted, record the operator's decision verbatim in its own
-commit before changing code. If rejected or deferred, retain the current unavailable check
-and return to the approved release work order; do not substitute a narrower proof silently.
+The proposal was committed and opened by itself; implementation, test gates and fresh
+product-proof execution stopped pending acceptance. The operator's acceptance above is
+recorded verbatim in its own commit before code. Implement only this accepted fixture
+change and bounded proof scope; do not substitute a narrower proof silently.
