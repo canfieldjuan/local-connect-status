@@ -798,7 +798,7 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
     ]
     assert calls[0][1]["cwd"] == trees["connect-contracts"]
     assert calls[1][0] == ["/tools/npm", "install", "--silent"]
-    assert calls[2][0] == ["/tools/npm", "run", "desktop:build:no-bundle"]
+    assert calls[2][0] == ["/tools/npm", "run", "desktop:build:connect-proof"]
     proof_cmd, proof_kwargs = calls[3]
     assert proof_cmd[:2] == ["/tools/xvfb-run", "-a"]
     assert proof_cmd[3] == "-c"
@@ -1335,6 +1335,38 @@ def test_pdf_proof_requires_automations_input_before_preparation(tmp_path: Path,
     assert_harness_summary(record, f"cross-app proof input absent: {active}")
     assert record.executed is None and record.failed is None
     assert record.exit_code is None and record.log_path is None
+
+
+@pytest.mark.parametrize("fault", ["nonzero", "timeout"])
+def test_pdf_proof_build_fault_cannot_be_product_evidence(tmp_path: Path, monkeypatch, fault):
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    build = ["/tools/npm", "run", "desktop:build:connect-proof"]
+    calls = []
+
+    def step(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "/tools/uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout=_contracts_success(), stderr="")
+        if cmd == ["/tools/npm", "install", "--silent"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        assert cmd == build  # A failed build must stop before the native proof.
+        if fault == "timeout":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        return subprocess.CompletedProcess(cmd, 1,
+            stdout=_failure_receipt("accept_ew_ds", "contract_watch_completed_once"), stderr="build failed")
+
+    _heavy_steps_through(monkeypatch, step)
+    record = _run_pdf(runner, trees)
+
+    assert calls[-1] == build and len(calls) == 3
+    assert record.verdict == "unavailable"
+    assert record.failed is None and record.executed is None
+    assert "harness fault:" in record.summary
+    assert "desktop:build:connect-proof" in record.detail["harness_reason"]
+    if fault == "nonzero":
+        assert record.exit_code == 1
+    else:
+        assert "timeout" in record.detail["harness_reason"]
 
 
 @pytest.mark.parametrize("outcome", ["pass", "product-failure", "feature-rejected"])

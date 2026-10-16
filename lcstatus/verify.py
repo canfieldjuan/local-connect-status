@@ -991,7 +991,7 @@ class Runner:
               "--with-requirements", str(contract_requirements),
               "python", "-c", unittest_bootstrap()], contracts_tree, 1200),
             ([npm, "install", "--silent"], ds_tree, 1200),
-            ([npm, "run", "desktop:build:no-bundle"], ds_tree, 3600),
+            ([npm, "run", "desktop:build:connect-proof"], ds_tree, 3600),
         ]
         output: list[str] = []
         started = time.time()
