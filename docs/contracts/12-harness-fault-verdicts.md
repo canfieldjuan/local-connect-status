@@ -297,3 +297,192 @@ Every message uses registered sender `lcs-harness-14`, repository
 `canfieldjuan/local-connect-status`, and the actual contract/implementation PR number.
 Commit this proposal by itself, open the contract-only PR, request Juan's acceptance via
 oversight, and stop. Record an accepted operator decision in its own commit before code.
+
+## Accepted amendment — PDF proof entitlement input
+
+Juan's decision, relayed verbatim by oversight on PR #33, 2026-10-16:
+"Accept the change (Recommended)". The accepted option was: "Dashboard supplies the
+automations-enabled test licence from the exact contracts revision; refuses (unavailable)
+if it's missing, no fallback; full proof unchanged. Then it's built with tests and merged
+on green + review."
+
+The decision covers proposal head `e8f5881bc00d439262b1eb82095b3b5a1a0138ae` and is recorded
+in [oversight's acceptance comment](https://github.com/canfieldjuan/local-connect-status/pull/33#issuecomment-6208219112).
+This acceptance is committed by itself before implementation for
+[release work order #7](https://github.com/canfieldjuan/local-connect-status/issues/7#issuecomment-6207926575).
+The accepted execution-parity, classification,
+receipt, history and retry requirements above remain binding.
+
+### Evidence and source owners
+
+The recorded PDF attempt `bd512894b39eda50919681d4`, at `2026-10-15T08:33:44Z`, used
+Email Watcher `43a850d8b00cddfdad2a767b7b27fc792707b010`, Document Summarizer
+`62cc1ca69ea097a0fe87ab12a51c7251ac7c330e`, and connect-contracts
+`0f77f8a77e6fb014f0d563645ebdbb83ce6dbc3b`. Its contracts step counted 79 tests with
+no failures or errors, and the provider build completed. The proof then raised
+`The supplied active Connect entitlement does not include automations` before reaching
+its product-check report. Contract 12 correctly classified this as unavailable, not fail.
+This historical log establishes the observed input fault; no fresh end-to-end reproduction
+or passing product proof is claimed by this proposal.
+
+- Dashboard commit `26ccfebc0739f1fab9065f0c37f15c04cbccb522` introduced the selection of
+  `entitlements/v1/fixtures/valid/active.json` in `Runner.accept_ew_ds`. At dashboard
+  `5ea0363a7b4516e0702dc7eefe129926ec333353`, that owner is `lcstatus/verify.py:942`,
+  and the active-input selection is at line 958. At the recorded contracts revision,
+  this public signed fixture grants only `connect.capability_exchange`.
+- Email Watcher commit `b538f8febbb016363bf324348381d6d481e78ad9` introduced the additional
+  entitlement precondition in `scripts/connect-local-proof.py::main`, together with
+  Contract Watch execution and its native `contract_watch_*` product checks. At the recorded
+  Email Watcher revision, the precondition is at lines 604–608. Its product contract,
+  `docs/CONTRACT_WATCH_AUTOMATION_CONTRACT.md`, was accepted in commit
+  `490195aa3170906f7b3024d25731ebb12e7f0e10` and requires both
+  `connect.capability_exchange` and `connect.automations` for that path.
+- At the recorded contracts revision, the existing signed fixture
+  `entitlements/v1/fixtures/valid/active-automations.json` grants both features and is
+  paired with the existing fixture keyring. No fixture is fabricated or re-signed here.
+
+The dashboard's input selection predates the product's expanded proof. Contract 12 explicitly
+preserves the existing fixtures and arguments. Supplying the additional feature therefore
+needs acceptance even though the unavailable classification itself is correct. The proposed
+fix belongs to `Runner.accept_ew_ds`; the classifier and the product precondition do not need
+a workaround.
+
+### Accepted bounded change
+
+Authorize `Runner.accept_ew_ds` to supply the exact declared connect-contracts tree's
+`entitlements/v1/fixtures/valid/active-automations.json` as `--active-entitlement`.
+Keep `test-keyring.json`, `valid/expired.json`, the PDF, participant identities, contracts
+test step, provider build, stand-in model and software rendering unchanged.
+
+Require the automations fixture as an input before preparation. If absent, return the
+existing unavailable input-fault observation naming that path; do not fall back to
+`active.json`, an installed licence, another revision, or generated entitlement bytes.
+The product remains the owner of signature, validity-window and feature validation.
+
+Execute the unmodified exact product script with the accepted adapter's `__main__`
+semantics in the same interpreter/venv, with the existing isolated HOME/XDG and process
+ownership. Exercise its full current proof, including its native Contract Watch checks;
+do not bypass its feature guard or remove checks. The existing completed zero-exit PDF
+success rule and witnessed native `require_proof_checks` failure rule remain unchanged.
+The proof's precondition, startup or licence fault without a native product-failure receipt
+remains unavailable under the shared classifier.
+
+This does not add a catalogue check, condition or gate, or grant installed automation,
+real-model, OCR, human-demo, Windows, promotion or public-release evidence. In particular,
+the stand-in-model exact-tree proof cannot satisfy the separate installed automation demos.
+Existing catalogue claims and labels retain their current owners and meanings. Old records
+are untouched; normal collector-code identity and retry rules apply to new executions.
+
+Implementation scope, only after acceptance: `Runner.accept_ew_ds` in `lcstatus/verify.py`
+and regression fixtures in `tests/test_verify_parsing.py`. No product edits, fixture edits,
+classifier/adapter changes, new diagnostics, live-system actions or catalogue changes.
+
+### Settling evidence after acceptance
+
+All regression executions use temporary runtime roots, synthetic exact-revision trees and
+stub preparation tools. They never install or execute the live apps or use a real licence.
+
+| Requirement | Evidence |
+|---|---|
+| Exact proof input | Fail-first runner fixture inspects the actual proof argv and fixture bytes: the automations-enabled input comes from the declared contracts revision; legacy `active.json` remains present with different bytes and cannot be selected. All three participant revisions remain bound. |
+| Missing required fixture | With legacy `active.json` present but the automations fixture absent, record unavailable naming the missing input before any environment/build/proof step. No fallback or product-failure claim. |
+| Success and product-failure twins | A fixture script with the native feature precondition succeeds with the required input through the real acceptance adapter; a witnessed false native product check still yields fail. Preserve the accepted adapter parity test and all existing PDF success requirements. |
+| Harness-fault twin | A feature-rejected input without a native product-check report remains unavailable through the shared classifier; do not weaken or reinterpret that guard. |
+| Source-owner mutations | Reverting the input selection to `active.json` must fail the input/success regression; adding a fallback to it must fail the missing-input regression. |
+| Exact-tree reproduction | In task-owned scratch roots, reproduce the recorded input rejection at the recorded participant revisions, then observe the newly authorized input through the same runner. Record actual outcomes; another fault is not a pass and is classified before further work. No product source edits or live-cache hardlinks. |
+| Release gate and live proof | Full repository suite once on the final changed head with the repository .venv; bot reconciled, exact-head oversight PASS, clean local/remote head and zero unresolved threads before merge commit. After merge, read the next deployment and PDF records, report their actual state, and post live evidence. |
+
+The proposal was committed and opened by itself; implementation, test gates and fresh
+product-proof execution stopped pending acceptance. The operator's acceptance above is
+recorded verbatim in its own commit before code. Implement only this accepted fixture
+change and bounded proof scope; do not substitute a narrower proof silently.
+
+## Accepted amendment — select the documented PDF proof build
+
+Juan's decision, relayed verbatim by oversight on PR #33, 2026-10-16:
+"Accept (Recommended)". The accepted option was: "Only this check's build command changes
+to Document Summarizer's documented proof build; it stays a throwaway test binary (never
+installed), with the same licence, proof and pass/fail rules. Then it's tested, reviewed
+and merged together with the licence fix."
+
+The decision covers proposal commit `4e2e947669a58d6f365172671044d23f1d0697d1` and is
+recorded in [oversight's acceptance comment](https://github.com/canfieldjuan/local-connect-status/pull/33#issuecomment-6221064006).
+This acceptance is committed separately before the build-command implementation.
+
+This is a second, separate decision. The entitlement amendment above is accepted and its
+bounded implementation is committed at `8f29710fcff37473e9d215a5a8dd9eee612d2b70`.
+Its final-head suite passed once: 614 tests in 189.89 seconds. The two required entitlement
+mutants failed their regressions. This proposal does not claim that the real PDF proof passed.
+
+### Observed next fault and owner
+
+The task-owned scratch baseline reproduced the historical rejection using the exact recorded
+three participant revisions above. After only the accepted entitlement selection changed,
+the actual runner passed that precondition and again counted 79 successful contracts tests,
+but the PDF invocation stopped with `MODEL_CONFIG_INVALID`,
+`The configured local model runtime is unavailable.` It did not reach a witnessed native
+product-failure assertion, so the shared classifier correctly returned unavailable.
+
+At dashboard `8f29710`, `Runner.accept_ew_ds` in `lcstatus/verify.py:994` selects
+`npm run desktop:build:no-bundle`; that selection was introduced by dashboard commit
+`26ccfebc0739f1fab9065f0c37f15c04cbccb522`. It builds the ordinary provider without its
+opt-in fixture runtime.
+
+Document Summarizer commit `15781d340a71c7d6420bab6e2543b977415d25af` introduced the
+separate proof build and runtime boundary. At the recorded provider revision,
+`src-tauri/src/connect/provider.rs::select_connect_runtime_source` (lines 111–130) selects
+persisted product settings when that feature is absent, regardless of the proof environment.
+`provider_runtime_factory` (lines 132–149) supplies the compiled-feature observation to that
+owner. This is intentional product behavior. `docs/PR-CONNECT-PROOF-RUNTIME.md` describes
+the same empty-settings fault and explicitly requires `npm run desktop:build:connect-proof`
+for this deterministic cross-process proof; `package.json:12` defines it as
+`tauri build --no-bundle --features connect-proof-runtime`.
+
+Email Watcher's exact proof already supplies the versioned fixture mode, digest and
+loopback fixture model configuration. No real model, operator settings or GPU is required
+or proposed. The remaining mismatch is the dashboard's build-command selection, owned by
+`Runner.accept_ew_ds`, rather than a product defect or a verdict-classifier defect.
+
+### Accepted additional authorization
+
+Change only this runner's provider build command from `desktop:build:no-bundle` to the
+exact provider tree's existing `desktop:build:connect-proof`. Keep the accepted entitlement
+input, contracts test step, npm preparation, isolated proof directories, exact revisions,
+adapter, native full proof and classification rules unchanged. Do not edit any product,
+introduce another runtime, copy model settings, use a real model, install the proof binary,
+publish an artifact, bypass runtime admission, add fallback behavior, or weaken checks.
+
+The feature-enabled binary remains a task-local acceptance artifact. This is a stand-in-model
+exact-tree check, not evidence about the normal production build, model qualification,
+installed apps, real-model operation or human demos. No catalogue claim, condition, release
+gate or label changes. The existing unavailable result remains honest until fresh admitted
+evidence supersedes it.
+
+Implementation scope, if accepted: the build command in `Runner.accept_ew_ds` and the
+existing runner regression fixtures in `tests/test_verify_parsing.py`. All other boundaries
+of the accepted entitlement amendment remain binding.
+
+### Required evidence after acceptance
+
+- A fail-first runner regression checks the actual build argv selects the dedicated proof
+  build and still binds the provider output, full native proof, exact participants and the
+  accepted automations entitlement. Preserve all existing assertions; update the expected
+  build command only to the newly accepted command.
+- Stub-tool failure/timeout controls remain unavailable through the shared classifier;
+  successful preparation alone cannot produce a proof pass. Keep the native success,
+  product-failure and harness-fault twins, including the missing-entitlement refusal.
+- A source-owner mutation selecting the ordinary no-bundle build must fail the build-argv
+  regression. Retain the entitlement-selection and fallback mutations.
+- After that code change, run the actual full proof in the existing task-owned scratch
+  roots at the recorded participant revisions with the dedicated proof build. No product
+  source changes or live-cache hardlinks. Report its actual terminal outcome; another fault
+  must be classified before advancing.
+- Run the full repository suite once on the final changed head with the repository .venv.
+  Reconcile the bot, obtain exact-head oversight PASS and zero unresolved threads, then
+  merge as a merge commit. Read and post actual live deployment and next PDF-record
+  evidence; do not operate the live service or fabricate closure.
+
+The proposal was committed separately before any build-command implementation, and work
+stopped for Juan's acceptance through oversight. The acceptance above is recorded verbatim
+in its own commit before code. Implement only this accepted additional build selection;
+do not silently select another build or narrow the proof.

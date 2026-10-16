@@ -740,6 +740,12 @@ def _pdf_handoff_trees(tmp_path: Path) -> dict[str, Path]:
     (fixtures / "valid").mkdir(parents=True)
     for path in (fixtures / "test-keyring.json", fixtures / "valid/active.json", fixtures / "valid/expired.json"):
         path.write_text("{}")
+    (fixtures / "valid/active.json").write_text(json.dumps({
+        "features": ["connect.capability_exchange"],
+    }))
+    (fixtures / "valid/active-automations.json").write_text(json.dumps({
+        "features": ["connect.capability_exchange", "connect.automations"],
+    }))
     (trees["connect-contracts"] / "requirements-dev.txt").write_text("jsonschema==4.25.1\n")
     return trees
 
@@ -792,13 +798,18 @@ def test_pdf_handoff_runner_binds_real_proof_to_all_exact_trees(tmp_path: Path, 
     ]
     assert calls[0][1]["cwd"] == trees["connect-contracts"]
     assert calls[1][0] == ["/tools/npm", "install", "--silent"]
-    assert calls[2][0] == ["/tools/npm", "run", "desktop:build:no-bundle"]
+    assert calls[2][0] == ["/tools/npm", "run", "desktop:build:connect-proof"]
     proof_cmd, proof_kwargs = calls[3]
     assert proof_cmd[:2] == ["/tools/xvfb-run", "-a"]
     assert proof_cmd[3] == "-c"
     assert str(trees["eom-email-watcher"] / "scripts/connect-local-proof.py") in proof_cmd[4]
     assert str(trees["document-summarizer"] / "src-tauri/target/release/document-summarizer") in proof_cmd
     assert str(trees["connect-contracts"] / "entitlements/v1/fixtures/test-keyring.json") in proof_cmd
+    active = trees["connect-contracts"] / "entitlements/v1/fixtures/valid/active-automations.json"
+    assert proof_cmd[proof_cmd.index("--active-entitlement") + 1] == str(active)
+    assert json.loads(active.read_text())["features"] == ["connect.capability_exchange", "connect.automations"]
+    assert json.loads(active.with_name("active.json").read_text())["features"] == ["connect.capability_exchange"]
+    assert proof_cmd[proof_cmd.index("--expired-entitlement") + 1] == str(active.with_name("expired.json"))
     assert proof_kwargs["cwd"] == trees["eom-email-watcher"]
     assert proof_kwargs["env"]["LIBGL_ALWAYS_SOFTWARE"] == "1"
     assert proof_kwargs["env"]["WEBKIT_DISABLE_DMABUF_RENDERER"] == "1"
@@ -1301,6 +1312,128 @@ def _run_pdf(runner, trees):
     return runner.accept_ew_ds("xapp.accept_ew_to_ds",
                                {"participants": list(trees), "repo": "eom-email-watcher", "heavy": True},
                                revisions, ["condition"], ["task"])
+
+
+def test_pdf_proof_requires_automations_input_before_preparation(tmp_path: Path, monkeypatch):
+    import lcstatus.verify as verify
+
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    active = trees["connect-contracts"] / "entitlements/v1/fixtures/valid/active-automations.json"
+    active.unlink()
+    assert active.with_name("active.json").is_file()  # A legacy fixture cannot be a fallback.
+
+    def preparation_must_not_start(*args, **kwargs):
+        raise AssertionError("missing proof input must stop before preparation")
+
+    monkeypatch.setattr(verify, "find_tool", preparation_must_not_start)
+    monkeypatch.setattr(runner, "_venv", preparation_must_not_start)
+    _heavy_steps_through(monkeypatch, preparation_must_not_start)
+
+    record = _run_pdf(runner, trees)
+
+    assert record.verdict == "unavailable"
+    assert_harness_summary(record, f"cross-app proof input absent: {active}")
+    assert record.executed is None and record.failed is None
+    assert record.exit_code is None and record.log_path is None
+
+
+@pytest.mark.parametrize("fault", ["nonzero", "timeout"])
+def test_pdf_proof_build_fault_cannot_be_product_evidence(tmp_path: Path, monkeypatch, fault):
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    build = ["/tools/npm", "run", "desktop:build:connect-proof"]
+    calls = []
+
+    def step(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "/tools/uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout=_contracts_success(), stderr="")
+        if cmd == ["/tools/npm", "install", "--silent"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        assert cmd == build  # A failed build must stop before the native proof.
+        if fault == "timeout":
+            raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+        return subprocess.CompletedProcess(cmd, 1,
+            stdout=_failure_receipt("accept_ew_ds", "contract_watch_completed_once"), stderr="build failed")
+
+    _heavy_steps_through(monkeypatch, step)
+    record = _run_pdf(runner, trees)
+
+    assert calls[-1] == build and len(calls) == 3
+    assert record.verdict == "unavailable"
+    assert record.failed is None and record.executed is None
+    assert "harness fault:" in record.summary
+    assert "desktop:build:connect-proof" in record.detail["harness_reason"]
+    if fault == "nonzero":
+        assert record.exit_code == 1
+    else:
+        assert "timeout" in record.detail["harness_reason"]
+
+
+@pytest.mark.parametrize("outcome", ["pass", "product-failure", "feature-rejected"])
+def test_pdf_proof_entitlement_and_native_assertion_twins(tmp_path: Path, monkeypatch, outcome):
+    import lcstatus.verify as verify
+
+    runner, trees = _pdf_runner(tmp_path, monkeypatch)
+    proof = trees["eom-email-watcher"] / "scripts/connect-local-proof.py"
+    # Synthetic product, with a native prerequisite and assertion hook. The actual adapter
+    # and interpreter execute it; preparation tools alone are stubbed. No signed licence.
+    proof.write_text(textwrap.dedent('''
+        import argparse
+        import json
+        import sys
+        from pathlib import Path
+
+        def require_proof_checks(checks):
+            if not all(checks.values()):
+                raise RuntimeError("product check failed")
+
+        def main():
+            parser = argparse.ArgumentParser()
+            parser.add_argument("--active-entitlement", type=Path, required=True)
+            args, _ = parser.parse_known_args()
+            features = json.loads(args.active_entitlement.read_text())["features"]
+            if "connect.automations" not in features:
+                raise RuntimeError("The supplied active Connect entitlement does not include automations")
+            outcome = Path(__file__).with_suffix(".outcome").read_text()
+            require_proof_checks({"contract_watch_completed_once": outcome != "product-failure"})
+            print(json.dumps({"all_checks": True, "interpreter": sys.executable}))
+
+        if __name__ == "__main__":
+            main()
+    '''))
+    proof.with_suffix(".outcome").write_text(outcome)
+    if outcome == "feature-rejected":
+        active = trees["connect-contracts"] / "entitlements/v1/fixtures/valid/active-automations.json"
+        active.write_bytes(active.with_name("active.json").read_bytes())
+    interpreter = tmp_path / "venv/bin/python"
+    interpreter.symlink_to(sys.executable)
+    execute = verify.run_owned_group
+    proof_calls = []
+
+    def step(cmd, **kwargs):
+        if cmd[0] == "/tools/uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout=_contracts_success(), stderr="")
+        if cmd[0] == "/tools/npm":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        assert cmd[:3] == ["/tools/xvfb-run", "-a", str(interpreter)]
+        proof_calls.append(cmd)
+        return execute(cmd[2:], **kwargs)  # This fixture script needs no display server.
+
+    monkeypatch.setattr(verify, "run_owned_group", step)
+    record = _run_pdf(runner, trees)
+
+    assert len(proof_calls) == 1
+    assert record.participants == {repo: char * 40 for repo, char in zip(trees, "abc")}
+    assert record.verdict == {"pass": "pass", "product-failure": "fail", "feature-rejected": "unavailable"}[outcome]
+    log = Path(record.log_path).read_text()
+    if outcome == "pass":
+        assert f'"interpreter": "{interpreter}"' in log and '"all_checks": true' in log
+    elif outcome == "product-failure":
+        assert '"failed_checks": ["contract_watch_completed_once"]' in log
+    else:
+        assert "The supplied active Connect entitlement does not include automations" in log
+        assert_harness_summary(record, "accept_ew_ds: missing or invalid product-failure proof (exit 1)")
+        assert "LCSTATUS_ACCEPTANCE_RESULT " not in log
 
 
 @pytest.mark.parametrize("outcome", ["pass", "fail", "timeout", "oserror"])
