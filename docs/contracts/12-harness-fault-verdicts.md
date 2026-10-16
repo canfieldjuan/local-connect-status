@@ -396,3 +396,84 @@ The proposal was committed and opened by itself; implementation, test gates and 
 product-proof execution stopped pending acceptance. The operator's acceptance above is
 recorded verbatim in its own commit before code. Implement only this accepted fixture
 change and bounded proof scope; do not substitute a narrower proof silently.
+
+## Proposed amendment — select the documented PDF proof build (awaiting acceptance)
+
+This is a second, separate decision. The entitlement amendment above is accepted and its
+bounded implementation is committed at `8f29710fcff37473e9d215a5a8dd9eee612d2b70`.
+Its final-head suite passed once: 614 tests in 189.89 seconds. The two required entitlement
+mutants failed their regressions. This proposal does not claim that the real PDF proof passed.
+
+### Observed next fault and owner
+
+The task-owned scratch baseline reproduced the historical rejection using the exact recorded
+three participant revisions above. After only the accepted entitlement selection changed,
+the actual runner passed that precondition and again counted 79 successful contracts tests,
+but the PDF invocation stopped with `MODEL_CONFIG_INVALID`,
+`The configured local model runtime is unavailable.` It did not reach a witnessed native
+product-failure assertion, so the shared classifier correctly returned unavailable.
+
+At dashboard `8f29710`, `Runner.accept_ew_ds` in `lcstatus/verify.py:994` selects
+`npm run desktop:build:no-bundle`; that selection was introduced by dashboard commit
+`26ccfebc0739f1fab9065f0c37f15c04cbccb522`. It builds the ordinary provider without its
+opt-in fixture runtime.
+
+Document Summarizer commit `15781d340a71c7d6420bab6e2543b977415d25af` introduced the
+separate proof build and runtime boundary. At the recorded provider revision,
+`src-tauri/src/connect/provider.rs::select_connect_runtime_source` (lines 111–130) selects
+persisted product settings when that feature is absent, regardless of the proof environment.
+`provider_runtime_factory` (lines 132–149) supplies the compiled-feature observation to that
+owner. This is intentional product behavior. `docs/PR-CONNECT-PROOF-RUNTIME.md` describes
+the same empty-settings fault and explicitly requires `npm run desktop:build:connect-proof`
+for this deterministic cross-process proof; `package.json:12` defines it as
+`tauri build --no-bundle --features connect-proof-runtime`.
+
+Email Watcher's exact proof already supplies the versioned fixture mode, digest and
+loopback fixture model configuration. No real model, operator settings or GPU is required
+or proposed. The remaining mismatch is the dashboard's build-command selection, owned by
+`Runner.accept_ew_ds`, rather than a product defect or a verdict-classifier defect.
+
+### Proposed additional authorization
+
+Change only this runner's provider build command from `desktop:build:no-bundle` to the
+exact provider tree's existing `desktop:build:connect-proof`. Keep the accepted entitlement
+input, contracts test step, npm preparation, isolated proof directories, exact revisions,
+adapter, native full proof and classification rules unchanged. Do not edit any product,
+introduce another runtime, copy model settings, use a real model, install the proof binary,
+publish an artifact, bypass runtime admission, add fallback behavior, or weaken checks.
+
+The feature-enabled binary remains a task-local acceptance artifact. This is a stand-in-model
+exact-tree check, not evidence about the normal production build, model qualification,
+installed apps, real-model operation or human demos. No catalogue claim, condition, release
+gate or label changes. The existing unavailable result remains honest until fresh admitted
+evidence supersedes it.
+
+Implementation scope, if accepted: the build command in `Runner.accept_ew_ds` and the
+existing runner regression fixtures in `tests/test_verify_parsing.py`. All other boundaries
+of the accepted entitlement amendment remain binding.
+
+### Required evidence after acceptance
+
+- A fail-first runner regression checks the actual build argv selects the dedicated proof
+  build and still binds the provider output, full native proof, exact participants and the
+  accepted automations entitlement. Preserve all existing assertions; update the expected
+  build command only to the newly accepted command.
+- Stub-tool failure/timeout controls remain unavailable through the shared classifier;
+  successful preparation alone cannot produce a proof pass. Keep the native success,
+  product-failure and harness-fault twins, including the missing-entitlement refusal.
+- A source-owner mutation selecting the ordinary no-bundle build must fail the build-argv
+  regression. Retain the entitlement-selection and fallback mutations.
+- After that code change, run the actual full proof in the existing task-owned scratch
+  roots at the recorded participant revisions with the dedicated proof build. No product
+  source changes or live-cache hardlinks. Report its actual terminal outcome; another fault
+  must be classified before advancing.
+- Run the full repository suite once on the final changed head with the repository .venv.
+  Reconcile the bot, obtain exact-head oversight PASS and zero unresolved threads, then
+  merge as a merge commit. Read and post actual live deployment and next PDF-record
+  evidence; do not operate the live service or fabricate closure.
+
+This proposal is committed separately before any build-command implementation. Ask Juan
+through oversight to accept this additional bounded input change, then stop. Acceptance
+must be recorded verbatim in its own commit before code. If declined or deferred, retain
+the current unavailable result and request disposition of the partial entitlement fix;
+do not silently select another build or narrow the proof.
