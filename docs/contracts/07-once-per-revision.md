@@ -217,3 +217,116 @@ its details differ (eight `unavailable` rows for the invoice acceptance at today
 ~40 lines in `collect.py`, ~20 in `evidence.py`, ~70 in `verify.py` (one runner table with the decided
 rule, one base function, five runners calling it, the collector fingerprint), ~320 lines of tests, README
 paragraph.
+
+## Proposed amendment — collector-owned runner environment (issue #34)
+
+Status: **proposal, pending Juan's acceptance; no implementation authorized by this text**.
+The accepted contract above remains binding until that acceptance is recorded in its own commit.
+Oversight proposed this amendment in mailbox note `f92c47d3`; that note is review guidance, not an
+operator decision. Juan has authorized the bounded issue #34 PATH repair and review/deployment work,
+but has not yet accepted this change to B1's input identity.
+
+### Evidence and owning boundary
+
+Both shipped collector services omitted `/usr/local/sbin`, `/usr/sbin` and `/sbin` from `PATH`.
+OCR record `df752bfb36f6eb394c3f6d8e` at source
+`9e4f422c72f4af748a63a4232600f93a80750b33` counted eight packaging-test failures and 345 passes:
+the inherited environment prevented dpkg from finding `ldconfig` and `start-stop-daemon`.
+The routine unit's declaration originated in `26ccfebc0739f1fab9065f0c37f15c04cbccb522`,
+`systemd/local-connect-status.service:10`; the heavy unit's in
+`acf4fee059d1e79ee58d155d22f24821cf3e6d92`, `systemd/local-connect-status-heavy.service:10`.
+Those declarations own the PATH repair; the product tests must remain intact.
+
+The independent input-identity gap belongs to
+`lcstatus/verify.py::collector_package_fingerprint`, currently lines 457–468. The package-only
+fingerprint/loaded-code boundary dates to `65328d48` (the earlier fingerprint owner to `9c571187`).
+It reads importable Python modules but no owned service declarations. Thus a unit-only repair
+leaves the existing counted failure decided at unchanged source, even though its cause was repaired.
+Adding a document-ocr exception, altering `decided`, or editing history would bypass that owner.
+
+### Proposed B1 extension
+
+Extend the existing **one** collector fingerprint owner to cover both:
+
+- the same importable `lcstatus` modules covered today; and
+- the shipped `[Service]` **`Environment=` and `ExecStart=` directives**, with unit identity and
+  directive order retained, in **both** `systemd/local-connect-status.service` and
+  `systemd/local-connect-status-heavy.service` from the same exact collector release.
+
+These directives are collector-owned inputs, distinguished from B6's unbounded host environment.
+User tool locations, standard system PATH directories and the runner invocation are consequently
+inputs to `collector_code`. Do not enumerate particular tools, checks or products. The existing
+`collector_code` source field and `series_identity()` remain the wire and lookup owners: no new
+record field, verdict, store, label rule or parallel run-key definition.
+
+Preserve the loaded-input guarantee: compute the combined fingerprint when the process imports its
+collector, stamp planned and actual rows through the same `run_base`, and compare the same combined
+inputs again after acquiring the collection lock. A relevant change on disk after loading must use
+the existing exit-3 refusal before checks/state writes; it must not silently stamp old execution with
+new input identity. Missing/unreadable required unit inputs must refuse rather than silently reverting
+to the package-only fingerprint. Comments and unrelated non-directive unit text are not runner
+environment inputs. Host tool binaries/versions, network, licences, umask, arbitrary ambient variables,
+manager drop-ins and the web-only service are not newly fingerprinted or inferred from these files.
+
+### Observable behaviour, cost and unchanged boundaries
+
+After deployment of a changed owned directive, a previously decided local result belongs to the old
+series. The normal collector creates the new planned series at the current source heads and runs the
+selected local checks once. An unchanged directive set/package keeps the same series and skips
+decided results. An actual result replaces no historical evidence; old rows remain append-only.
+`verify.decided`, positive framework-count/proof requirements, retry semantics and explicit force
+flags are unchanged. A repaired environment is a new input, not permission to rerun an unchanged gate.
+
+**Cost:** the first rollout of this amendment changes the fingerprint once and runs the full regular
+local selection once. Each later relevant unit change likewise costs one full regular local collection,
+as a collector-code change already does. Both units feed one conservative fingerprint; changing either
+invalidates local results as a class. No CPU/wall-time estimate is invented from the partial OCR run.
+Heavy checks remain on their own timer/selection; this does not start them during a routine tick or
+authorize a manual heavy/model run. Cheap observation/API reads continue as before.
+
+The #34 rollout must pair the reviewed code with installation of its reviewed units through the
+existing installer and user-manager `daemon-reload`. A new release's shipped directive bytes alone
+are not evidence that the manager loaded them: verify loaded PATH and command values independently.
+The post-repair OCR receipt must be produced by the regular collector under those loaded values,
+with real counts, current exact source and the new fingerprint. No install, smoke observation,
+promotion or OCR #18 measurement is authorized. No one-shot rerun, history repair or live hand edit
+is substituted for the class fix. Before rollout, resolve sequencing so an automatic first collection
+under the old manager environment is not mistaken for evidence of the repaired environment.
+
+### Settling evidence required before merge
+
+All automated tests use fixture collector packages, fixture units, fake runners and temporary stores;
+they neither install units nor execute real package tools or product apps.
+
+| Case | Required evidence |
+| --- | --- |
+| Only the routine unit's `Environment=` changes | New collector fingerprint/series; an old counted failure or pass does not suppress the selected current-head check; actual row matches planned series. |
+| Only the heavy unit's `Environment=` changes | Same identity invalidation, proving neither unit is omitted; routine selection still does not launch heavy checks. |
+| Only either unit's `ExecStart=` changes | Fingerprint changes for each unit; existing exact planned/actual identity enforcement remains. |
+| Both relevant unit inputs and package unchanged | Fingerprint/series stable; decided local check skipped and store does not grow. |
+| Only comments or unrelated unit text changes | No environment-input change; no accidental invalidation from that text. |
+| A relevant unit input changes after import, before lock acquisition | Existing exit 3; no local runner/state writes, preserving the loaded-input rule. |
+| Required unit input missing or unreadable | Refusal, no package-only fallback or fabricated identity. |
+| New collector records after an environment change | Real outcome appended under the new existing `collector_code` field; historical rows byte-for-byte retained. |
+
+Required mutants: omit the routine unit; omit the heavy unit; omit `Environment=`; omit `ExecStart=`.
+Each must fail its owning regression. Retain the existing package-module, loaded-code, run-base,
+decided-result, participant and explicit-force regressions; port their fixture inputs without weakening
+their original assertions. The #34 PATH regression and both old-PATH restoration mutants remain.
+The full repository suite runs once on the final implementation head using the existing repo `.venv`,
+then the normal exact-head review/PASS, zero-thread, merge-commit, deployment and rollback gates apply.
+
+### Scope and decision checkpoint
+
+Proposed additions to Contract 07 scope: the two shipped collector unit directive inputs and their
+fingerprint fixtures; the existing owner in `verify.py`, its existing loaded-input check in `collect.py`,
+tests and README. The only unit behaviour change in this item remains #34's standard PATH repair.
+No product repository, OCR assertion, catalogue, schema/wire, status, skip/retry or deployment-switch
+rule changes are proposed.
+
+**STOP for Juan's explicit acceptance or rejection**, relayed verbatim through oversight. Recommend
+accepting the class fix with its one-collection cost; the alternative is to retain B6's current boundary
+and separately decide whether a single named forced run is authorized, which would leave future
+collector-environment fixes outside the run identity. This proposal authorizes neither implementation
+nor merge/deployment. Keep draft PR #35 held so any accepted implementation and PATH repair can
+ship together in one reviewed deployment.
