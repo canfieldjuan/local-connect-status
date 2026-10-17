@@ -183,10 +183,14 @@ def main(argv: list[str] | None = None) -> int:
     if lock_fh is None:
         print("another collection is running; not starting a second one", file=sys.stderr)
         return 3
-    if collector_package_fingerprint(COLLECTOR_PACKAGE) != LOADED_COLLECTOR_CODE:
-        # The tree was updated after this process imported its code (contract 07 B1 rev 4): rows
-        # stamped now would claim code that did not produce them.  The next tick runs the new code.
-        print("the collector's code changed after this process loaded it; not running", file=sys.stderr)
+    try:
+        current_inputs = collector_package_fingerprint(COLLECTOR_PACKAGE)
+    except (OSError, ValueError) as exc:
+        print(f"the collector's loaded inputs cannot be verified; not running: {exc}", file=sys.stderr)
+        return 3
+    if current_inputs != LOADED_COLLECTOR_CODE:
+        # A changed module or owned unit would stamp execution with inputs it did not load.
+        print("the collector's code or runner settings changed after loading; not running", file=sys.stderr)
         return 3
     # Read after the lock (contract 06 B3): a run that waited uses the catalogue current when it starts
     # working, not the one on disk when it started waiting.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -319,11 +320,16 @@ def test_every_input_that_produces_a_result_is_in_the_key(tmp_path: Path, monkey
     assert world.run() == []
 
 
-def test_collector_fingerprint_is_the_loaded_code(tmp_path: Path):
-    import shutil
+def copy_collector(tmp_path: Path) -> Path:
     real = verify.COLLECTOR_PACKAGE
     copy = tmp_path / "lcstatus"
     shutil.copytree(real, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(real.parent / "systemd", tmp_path / "systemd", symlinks=True)
+    return copy
+
+
+def test_collector_fingerprint_is_the_loaded_code(tmp_path: Path):
+    copy = copy_collector(tmp_path)
     assert verify.collector_package_fingerprint(copy) == verify.LOADED_COLLECTOR_CODE == verify.collector_fingerprint()
     baseline = verify.collector_package_fingerprint(copy)
     # things Python would not import: no change, and no crash
@@ -341,6 +347,127 @@ def test_collector_fingerprint_is_the_loaded_code(tmp_path: Path):
         edited.write_bytes(original)
     (copy / "extra_module.py").write_text("X = 1\n")                     # a new module counts too
     assert verify.collector_package_fingerprint(copy) != baseline
+
+
+@pytest.mark.parametrize("name", ["local-connect-status.service", "local-connect-status-heavy.service"])
+@pytest.mark.parametrize("directive", ["Environment", "ExecStart"])
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+def test_unit_only_change_invalidates_decided_local_results(tmp_path, monkeypatch, name, directive, verdict):
+    package = copy_collector(tmp_path / "release")
+    world = World(tmp_path / "runtime", monkeypatch)
+    world.tmp.mkdir()
+    world.verdict = verdict
+    world.checks["g.heavy"] = {**world.checks["g.pytest"], "heavy": True}
+    monkeypatch.setattr(world.collect, "COLLECTOR_PACKAGE", package)
+
+    def load_inputs():
+        loaded = verify.collector_package_fingerprint(package)
+        monkeypatch.setattr(verify, "LOADED_COLLECTOR_CODE", loaded)
+        monkeypatch.setattr(world.collect, "LOADED_COLLECTOR_CODE", loaded)
+        return loaded
+
+    baseline = load_inputs()
+    assert world.run() == ["g.pytest"]
+    assert world.run("--heavy-only") == ["g.heavy"]
+    before_rows = world.rows()
+    assert world.run() == []
+    assert world.run("--heavy-only") == []
+    assert world.rows() == before_rows
+    records = world.tmp / "data/records.jsonl"
+    history = records.read_bytes()
+    target = package.parent / "systemd" / name
+    original = target.read_text()
+    replacement = ("Environment=PATH=/fixture-extra:" if directive == "Environment"
+                   else "ExecStart=/fixture-wrapper ")
+    marker = "Environment=PATH=" if directive == "Environment" else "ExecStart="
+    target.write_text(original.replace(marker, replacement))
+    assert load_inputs() != baseline
+    assert world.run() == ["g.pytest"]  # heavy checks never escape their own selection
+    assert world.run() == []
+    assert world.run("--heavy-only") == ["g.heavy"]
+    assert world.run("--heavy-only") == []
+    assert records.read_bytes().startswith(history)  # old results are never rewritten
+    local_rows = [json.loads(line) for line in records.read_text().splitlines()
+                  if json.loads(line)["kind"] == "automated_test"]
+    assert {row["source"]["collector_code"] for row in local_rows} == {
+        baseline, verify.collector_fingerprint()}
+    assert not json.loads((world.tmp / "data/state.json").read_text())["last_failures"]
+
+
+def test_environment_fingerprint_ignores_unrelated_text_but_preserves_directive_order(tmp_path):
+    package = copy_collector(tmp_path)
+    target = tmp_path / "systemd/local-connect-status.service"
+    original = target.read_text()
+    baseline = verify.collector_package_fingerprint(package)
+    target.write_text(original + "\n# comment\n[Unit]\nDescription=not runner input\nEnvironment=OTHER_SECTION=ignored\n")
+    assert verify.collector_package_fingerprint(package) == baseline
+    (tmp_path / "systemd/local-connect-status-web.service").write_text("Environment=WEB=ignored\n")
+    assert verify.collector_package_fingerprint(package) == baseline
+    target.write_text(original.replace("ExecStart=", "Environment=ORDER=one\nEnvironment=ORDER=two\nExecStart="))
+    ordered = verify.collector_package_fingerprint(package)
+    assert ordered != baseline
+    target.write_text(target.read_text().replace("ORDER=one\nEnvironment=ORDER=two", "ORDER=two\nEnvironment=ORDER=one"))
+    assert verify.collector_package_fingerprint(package) != ordered
+
+
+def test_environment_fingerprint_covers_continued_directives(tmp_path):
+    package = copy_collector(tmp_path)
+    target = tmp_path / "systemd/local-connect-status.service"
+    original = target.read_text()
+    target.write_text(original.replace("ExecStart=", "Environment=FIRST=one \\\n# ignored in continuation\n SECOND=two\nExecStart="))
+    baseline = verify.collector_package_fingerprint(package)
+    target.write_text(target.read_text().replace("SECOND=two", "SECOND=changed"))
+    assert verify.collector_package_fingerprint(package) != baseline
+
+
+@pytest.mark.parametrize("name", ["local-connect-status.service", "local-connect-status-heavy.service"])
+@pytest.mark.parametrize("fault", ["missing", "unreadable"])
+def test_environment_fingerprint_refuses_missing_or_unreadable_units(tmp_path, monkeypatch, name, fault):
+    package = copy_collector(tmp_path)
+    target = package / "_unit_inputs" / name
+    if fault == "missing":
+        target.unlink()
+    else:
+        read = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError("fixture unit unreadable")
+            return read(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(OSError):
+        verify.collector_package_fingerprint(package)
+
+
+@pytest.mark.parametrize("fault", ["Environment", "ExecStart", "missing", "unreadable"])
+def test_environment_changed_after_import_refuses_before_records_or_state(tmp_path, monkeypatch, fault):
+    package = copy_collector(tmp_path / "release")
+    world = World(tmp_path / "runtime", monkeypatch)
+    world.tmp.mkdir()
+    loaded = verify.collector_package_fingerprint(package)
+    monkeypatch.setattr(world.collect, "COLLECTOR_PACKAGE", package)
+    monkeypatch.setattr(verify, "LOADED_COLLECTOR_CODE", loaded)
+    monkeypatch.setattr(world.collect, "LOADED_COLLECTOR_CODE", loaded)
+    assert world.run() == ["g.pytest"]
+    state = (world.tmp / "data/state.json").read_bytes()
+    records = (world.tmp / "data/records.jsonl").read_bytes()
+    target = package / "_unit_inputs/local-connect-status-heavy.service"
+    if fault == "missing":
+        target.unlink()
+    elif fault == "unreadable":
+        read = Path.read_text
+        def denied(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError("fixture unit unreadable")
+            return read(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "read_text", denied)
+    else:
+        target.write_text(target.read_text().replace(f"{fault}=", f"{fault}=fixture-change "))
+    world.calls = []
+    rc = world.collect.main(["--catalogue", str(world.tmp / "catalogue.json"),
+                             "--data", str(world.tmp / "data"), "--site", str(world.tmp / "site")])
+    assert rc == 3 and world.calls == []
+    assert (world.tmp / "data/state.json").read_bytes() == state
+    assert (world.tmp / "data/records.jsonl").read_bytes() == records
 
 
 def test_a_collector_whose_code_changed_under_it_exits_without_running(tmp_path: Path, monkeypatch):

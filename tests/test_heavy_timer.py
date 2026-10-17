@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import configparser
 import os
+import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -21,6 +23,28 @@ def unit(name: str) -> configparser.ConfigParser:
     parser.optionxform = str                                   # systemd keys are case-sensitive
     parser.read_string((SYSTEMD / name).read_text())
     return parser
+
+
+@pytest.mark.parametrize("name", ["local-connect-status.service", "local-connect-status-heavy.service"])
+def test_collector_unit_path_preserves_system_tools(name: str, tmp_path: Path):
+    environment = {}
+    for line in (SYSTEMD / name).read_text().splitlines():
+        key, _, value = line.partition("=")
+        if key == "Environment":
+            environment.update(assignment.split("=", 1) for assignment in shlex.split(value))
+    directories = environment["PATH"].split(":")
+    assert directories[:2] == ["%h/.local/bin", "%h/.cargo/bin"]
+    assert {"/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"} <= set(directories)
+
+    # Resolve inherited dpkg helpers in a fake filesystem, never invoke real package tools.
+    fixture_sbin = tmp_path / "usr/sbin"
+    fixture_sbin.mkdir(parents=True)
+    fixture_path = os.pathsep.join(str(tmp_path / directory.lstrip("/")) for directory in directories)
+    for helper in ("ldconfig", "start-stop-daemon"):
+        executable = fixture_sbin / helper
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        assert shutil.which(helper, path=fixture_path) == str(executable)
 
 
 def test_heavy_units_are_installed_and_bounded():
