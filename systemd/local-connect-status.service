@@ -7,7 +7,7 @@ Type=oneshot
 WorkingDirectory=%h/.local/share/local-connect-status/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=LCSTATUS_DATA_ROOT=%h/.local/share/local-connect-status
-Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=%h/.local/share/local-connect-status/current/.venv/bin/python -m lcstatus.deploy --collect
 # Runner subprocesses own their bounded timeouts so collection can record and render failures.
 TimeoutStartSec=infinity

@@ -7,7 +7,7 @@ Type=oneshot
 WorkingDirectory=%h/.local/share/local-connect-status/current
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=LCSTATUS_DATA_ROOT=%h/.local/share/local-connect-status
-Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # Waits for a routine tick to release the lock, then runs only the heavy checks (contract 06).
 ExecStart=%h/.local/share/local-connect-status/current/.venv/bin/python -m lcstatus.deploy --collect --heavy-only
 # As in the routine unit: every runner bounds each of its own steps and records a timeout as
