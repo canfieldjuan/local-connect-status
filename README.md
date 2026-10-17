@@ -158,11 +158,17 @@ Connect services on this machine:
   Each tick observes heads and reads CI runs, releases and release issues. A local check runs **once
   per revision**: when the store already holds a decided result — a pass, an inspection's reading, or a
   failure the test framework itself counted — for that exact check, its conditions, the catalogue entries
-  of the repositories it touches, the collector's own code and the revision(s), the tick prints
+  of the repositories it touches, the collector's own code/runner settings and the revision(s), the tick prints
   `unchanged` and does not re-run it. Any other result (a failure with no framework count, a skip, an
-  unknown or unavailable result) is retried every tick. A change to the collector's code runs every
-  local check once; a tick that finds its own code changed on disk after it started exits without
-  running. The host environment is not in that key: `--rerun` or `--checks` forces execution.
+  unknown or unavailable result) is retried every tick. The single collector fingerprint covers its
+  importable modules and both collector services' ordered `Environment=` and `ExecStart=` directives.
+  A relevant change costs one full regular local collection; heavy checks keep their own timer.
+  Unchanged inputs keep decided results skipped. Changed or unreadable required inputs after import
+  refuse before checks/state writes; old records stay intact. Arbitrary host environment is outside
+  this key: `--rerun` or `--checks` forces execution. Both service PATH values keep user tool directories
+  first, followed by the standard sbin/bin directories. A unit rollout must use the reviewed installer
+  and user-manager `daemon-reload` before the new-input collection: shipped unit bytes do not prove
+  the manager loaded them. Verify loaded settings independently; never substitute a forced OCR run.
 - `local-connect-status-web.service` — creates and serves generated `site/` on
   `http://127.0.0.1:8790/`, loopback only.
 

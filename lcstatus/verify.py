@@ -455,22 +455,45 @@ def decided(runner: str, row: Any) -> bool:
 
 
 def collector_package_fingerprint(package: Path) -> str:
-    """The collector's code: every module of the package Python would import (contract 07 B1).
+    """The collector's code and owned runner environment (contract 07 B1).
 
     The whole package is hashed on purpose, so a module that affects runners can never be left out.
     Only regular files named `<identifier>.py` count: an editor's `.#verify.py`, a broken link or a
-    cache file is not code this process runs.  A real module that cannot be read raises.
+    cache file is not code this process runs. The two collector units contribute their ordered
+    Service Environment/ExecStart directives. Required inputs that cannot be read raise.
     """
     digest = hashlib.sha256()
     for path in sorted(package.iterdir()):
         if path.suffix == ".py" and path.stem.isidentifier() and path.is_file():
             digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    for name in ("local-connect-status.service", "local-connect-status-heavy.service"):
+        path = package.parent / "systemd" / name
+        section, continued = "", ""
+        directives = []
+        for line in path.read_text().splitlines():
+            text = line.strip()
+            if not text or text.startswith(("#", ";")):
+                continue
+            text = continued + text
+            if text.endswith("\\"):
+                continued = text[:-1] + " "
+                continue
+            continued = ""
+            if text.startswith("[") and text.endswith("]"):
+                section = text[1:-1]
+                continue
+            key, separator, value = text.partition("=")
+            if section == "Service" and separator and key.strip() in ("Environment", "ExecStart"):
+                directives.append((key.strip(), value.strip()))
+        if continued or not {"Environment", "ExecStart"} <= {key for key, _ in directives}:
+            raise ValueError(f"collector unit has incomplete runner settings: {path}")
+        digest.update(b"\0unit\0" + name.encode() + b"\0" + json.dumps(directives).encode() + b"\0")
     return digest.hexdigest()[:24]
 
 
 COLLECTOR_PACKAGE = Path(__file__).resolve().parent
-# Fixed when this module is imported, so every row is stamped with the code that produced it even if
-# the tree is updated while the process runs; collect.py re-checks the disk after taking the lock.
+# Fixed at import so rows identify their loaded code/settings; collect.py checks the same owner
+# after taking the lock. Shipped settings identify inputs, not proof of the manager's loaded units.
 LOADED_COLLECTOR_CODE = collector_package_fingerprint(COLLECTOR_PACKAGE)
 
 
