@@ -220,11 +220,22 @@ paragraph.
 
 ## Proposed amendment — collector-owned runner environment (issue #34)
 
-Status: **proposal, pending Juan's acceptance; no implementation authorized by this text**.
-The accepted contract above remains binding until that acceptance is recorded in its own commit.
-Oversight proposed this amendment in mailbox note `f92c47d3`; that note is review guidance, not an
-operator decision. Juan has authorized the bounded issue #34 PATH repair and review/deployment work,
-but has not yet accepted this change to B1's input identity.
+Status: **accepted 2026-10-17 at 19:41 UTC**, operator: **"I accept"**.
+Accepted proposal identity: `795c9b9461b9703f9bd8e740e26e07d30b2a6e72`.
+The proposal text below is retained as accepted; its proposal/STOP language records the prior gate.
+Oversight proposed the amendment in mailbox note `f92c47d3`; Juan's separate acceptance below,
+not that review guidance, authorizes implementation.
+
+### Operator acceptance (recorded before implementation)
+
+Dot asked verbatim:
+
+> The PATH fix is ready in LCS #35: 618 tests passed, and both regressions caught the old settings. One contract gap blocks deployment: LCS currently reuses an old result even when its runner settings change. I recommend accepting amendment 795c9b9, which includes both services’ environment and launch commands in the check identity. A relevant change would trigger one fresh regular collection; history stays intact and heavy checks keep their existing schedule. Do you accept that amendment so the session can implement it and ship both fixes together?
+
+Juan replied verbatim: **"I accept"**, at 19:41 UTC on 2026-10-17,
+message `Sentinel_b119fd0314b0819184ac6939523fe29b`. Dot relayed the exact exchange to this
+session; this session relayed it through oversight in mailbox note `6e2e1cc2`.
+No additional heavy/model run or OCR #18 measurement is authorized by this acceptance.
 
 ### Evidence and owning boundary
 
