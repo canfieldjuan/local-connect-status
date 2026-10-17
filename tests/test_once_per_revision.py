@@ -324,7 +324,7 @@ def copy_collector(tmp_path: Path) -> Path:
     real = verify.COLLECTOR_PACKAGE
     copy = tmp_path / "lcstatus"
     shutil.copytree(real, copy, ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copytree(real.parent / "systemd", tmp_path / "systemd")
+    shutil.copytree(real.parent / "systemd", tmp_path / "systemd", symlinks=True)
     return copy
 
 
@@ -424,7 +424,7 @@ def test_environment_fingerprint_covers_continued_directives(tmp_path):
 @pytest.mark.parametrize("fault", ["missing", "unreadable"])
 def test_environment_fingerprint_refuses_missing_or_unreadable_units(tmp_path, monkeypatch, name, fault):
     package = copy_collector(tmp_path)
-    target = tmp_path / "systemd" / name
+    target = package / "_unit_inputs" / name
     if fault == "missing":
         target.unlink()
     else:
@@ -450,7 +450,7 @@ def test_environment_changed_after_import_refuses_before_records_or_state(tmp_pa
     assert world.run() == ["g.pytest"]
     state = (world.tmp / "data/state.json").read_bytes()
     records = (world.tmp / "data/records.jsonl").read_bytes()
-    target = package.parent / "systemd/local-connect-status-heavy.service"
+    target = package / "_unit_inputs/local-connect-status-heavy.service"
     if fault == "missing":
         target.unlink()
     elif fault == "unreadable":

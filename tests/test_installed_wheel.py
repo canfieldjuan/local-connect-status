@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -52,9 +53,9 @@ def installed(wheel, tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     env = dict(build_env, LCSTATUS_DATA_ROOT=str(tmp_path / "runtime"))
 
-    def run(code=None):
+    def run(code=None, *, collect_args=("--help",)):
         args = [str(python), "-I"]
-        args += ["-c", code] if code is not None else ["-m", "lcstatus.collect", "--help"]
+        args += ["-c", code] if code is not None else ["-m", "lcstatus.collect", *collect_args]
         return subprocess.run(args, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
 
     location = run("import lcstatus; print(lcstatus.__path__[0])")
@@ -65,7 +66,7 @@ def installed(wheel, tmp_path):
     return artifact, package, run
 
 
-def test_built_installed_wheel_imports_and_starts_with_exact_unit_inputs(installed):
+def test_built_installed_wheel_imports_and_starts_with_exact_unit_inputs(installed, tmp_path):
     artifact, package, run = installed
     started = run()
     assert started.returncode == 0, started.stdout + started.stderr
@@ -77,6 +78,16 @@ def test_built_installed_wheel_imports_and_starts_with_exact_unit_inputs(install
             expected = (ROOT / "systemd" / name).read_bytes()
             assert archive.read("lcstatus/_unit_inputs/" + name) == expected
             assert (package / "_unit_inputs" / name).read_bytes() == expected
+    catalogue = tmp_path / "catalogue.json"
+    catalogue.write_text(json.dumps({
+        "release": {"target": "fixture", "required_platforms": [],
+                    "automate_scope": {"decision": "fixture", "note": "fixture"}},
+        "repos": {}, "apps": {}, "tasks": [], "checks": {},
+    }))
+    collected = run(collect_args=["--catalogue", str(catalogue), "--no-fetch", "--no-local"])
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    status = json.loads((tmp_path / "runtime/site/status.json").read_text())
+    assert status["source_failures"] == [] and status["tasks"] == []
 
 
 @pytest.mark.parametrize("name", UNITS)

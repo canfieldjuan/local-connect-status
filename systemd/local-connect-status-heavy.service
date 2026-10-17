@@ -1,18 +1,1 @@
-[Unit]
-Description=Local Connect heavy checks (Rust suite, exact-tree PDF handoff), once per revision
-After=network-online.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=%h/.local/share/local-connect-status/current
-Environment=PYTHONDONTWRITEBYTECODE=1
-Environment=LCSTATUS_DATA_ROOT=%h/.local/share/local-connect-status
-Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Waits for a routine tick to release the lock, then runs only the heavy checks (contract 06).
-ExecStart=%h/.local/share/local-connect-status/current/.venv/bin/python -m lcstatus.deploy --collect --heavy-only
-# As in the routine unit: every runner bounds each of its own steps and records a timeout as
-# evidence; a unit limit would kill the run before it could record, save state or render.
-TimeoutStartSec=infinity
-Nice=19
-IOSchedulingClass=idle
-CPUWeight=20
+../lcstatus/_unit_inputs/local-connect-status-heavy.service

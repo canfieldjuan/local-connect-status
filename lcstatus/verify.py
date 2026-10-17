@@ -460,14 +460,15 @@ def collector_package_fingerprint(package: Path) -> str:
     The whole package is hashed on purpose, so a module that affects runners can never be left out.
     Only regular files named `<identifier>.py` count: an editor's `.#verify.py`, a broken link or a
     cache file is not code this process runs. The two collector units contribute their ordered
-    Service Environment/ExecStart directives. Required inputs that cannot be read raise.
+    Service Environment/ExecStart directives from this package's unit resources. The source-tree
+    installer links to the same files; wheels carry them directly. Unreadable required inputs raise.
     """
     digest = hashlib.sha256()
     for path in sorted(package.iterdir()):
         if path.suffix == ".py" and path.stem.isidentifier() and path.is_file():
             digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
     for name in ("local-connect-status.service", "local-connect-status-heavy.service"):
-        path = package.parent / "systemd" / name
+        path = package / "_unit_inputs" / name
         section, continued = "", ""
         directives = []
         for line in path.read_text().splitlines():

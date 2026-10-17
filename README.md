@@ -169,6 +169,11 @@ Connect services on this machine:
   first, followed by the standard sbin/bin directories. A unit rollout must use the reviewed installer
   and user-manager `daemon-reload` before the new-input collection: shipped unit bytes do not prove
   the manager loaded them. Verify loaded settings independently; never substitute a forced OCR run.
+  Both required collector units live in `lcstatus/_unit_inputs/`, included in the wheel's package;
+  the source installer paths in `systemd/` link to those same files. The fingerprint reads only its
+  own package's resources in either layout; missing resources refuse, with no sibling-directory
+  or package-only fallback. Installed-wheel tests build and install into temporary environments,
+  check startup and exact source/resource fingerprint parity, and prove missing inputs refuse.
 - `local-connect-status-web.service` — creates and serves generated `site/` on
   `http://127.0.0.1:8790/`, loopback only.
 

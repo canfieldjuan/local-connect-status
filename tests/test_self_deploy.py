@@ -87,7 +87,7 @@ def world(tmp_path):
     work = tmp_path / 'fixture-repository'; work.mkdir()
     git(work, 'init', '-b', 'main')
     shutil.copytree(ROOT / 'lcstatus', work / 'lcstatus', ignore=shutil.ignore_patterns('__pycache__'))
-    shutil.copytree(ROOT / 'systemd', work / 'systemd')
+    shutil.copytree(ROOT / 'systemd', work / 'systemd', symlinks=True)
     (work / 'catalogue.json').write_text(json.dumps(fixture_catalogue()))
     (work / 'uv.lock').write_text('fixture-lock\n')
     (work / 'pyproject.toml').write_text('[tool.pytest.ini_options]\naddopts="-q -p no:cacheprovider"\n')
