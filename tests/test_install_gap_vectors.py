@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 import tarfile
 
@@ -124,3 +125,116 @@ def test_return_event_cannot_cite_an_earlier_unused_sample(vector_case):
     payload["unrecorded_installs"][-1]["installed_observation_record_ids"] = [old_sample.record_id]
     with pytest.raises(ValueError, match="time binding"):
         install_gap.Gap.decode(payload).verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+@pytest.mark.parametrize("package_evidence", [True, False])
+def test_observed_event_requires_source_bound_package(vector_case, tmp_path, package_evidence):
+    _, payload, predecessor, records, candidate, at = vector_case
+    event = payload["unrecorded_installs"][0]
+    acceptance = tmp_path / "optional-acceptance.json"
+    acceptance.write_text(json.dumps({
+        "source": event["revision"], "verified_at": event["installed_at"],
+        "installed_bytes_match": True, "linux_installed_acceptance": "PASS",
+    }))
+    original_receipts = event["receipts"]
+    event["receipts"] = [{
+        "format": "ew-acceptance", "path": str(acceptance),
+        "sha256": hashlib.sha256(acceptance.read_bytes()).hexdigest(),
+    }]
+    if package_evidence:
+        event["receipts"].extend(original_receipts)
+    gap = install_gap.Gap.decode(payload)
+    if package_evidence:
+        gap.verify_history(predecessor, at, records, candidate)
+    else:
+        with pytest.raises(ValueError, match="event lacks source-bound package evidence"):
+            gap.verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_unobserved_event_must_precede_terminal_candidate(vector_case, tmp_path, offset):
+    _, payload, predecessor, records, candidate, at = vector_case
+    event = payload["unrecorded_installs"][-1]
+    terminal = next(row for row in records if row.kind == "installed_observation"
+                    and row.detail["installed"]["hashes"] == candidate)
+    records = [row for row in records if row.record_id not in event["installed_observation_record_ids"]]
+    event["installed_observation_record_ids"] = []
+    event["installed_at"] = (datetime.fromisoformat(terminal.recorded_at)
+                             + timedelta(seconds=offset)).isoformat()
+    receipt = tmp_path / "unobserved-install.json"
+    receipt.write_text(json.dumps({
+        "version": 1, "app": payload["app"], "repo": payload["repo"],
+        "platform": "linux", "installed": True,
+        **{key: event[key] for key in
+           ("revision", "installed_at", "package_sha256", "program_hashes")},
+    }))
+    event["receipts"].append({
+        "format": "installed-v1", "path": str(receipt),
+        "sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+    })
+    gap = install_gap.Gap.decode(payload)
+    if offset < 0:
+        gap.verify_history(predecessor, at, records, candidate)
+    else:
+        with pytest.raises(ValueError, match="terminal candidate boundary"):
+            gap.verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+@pytest.mark.parametrize("offset", [-1, 0])
+def test_predecessor_and_earlier_samples_are_outside_history(vector_case, offset):
+    _, payload, predecessor, records, candidate, at = vector_case
+    earlier = copy.deepcopy(records[2])
+    earlier.record_id = "f" * 24
+    earlier.recorded_at = (datetime.fromisoformat(predecessor.recorded_at)
+                           + timedelta(seconds=offset)).isoformat()
+    records.append(earlier)
+    install_gap.Gap.decode(payload).verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+def test_observation_detail_app_must_match_source(vector_case):
+    _, payload, predecessor, records, candidate, at = vector_case
+    records[2].detail["app"] = "other-app"
+    with pytest.raises(ValueError, match="attribution mismatch"):
+        install_gap.Gap.decode(payload).verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+@pytest.mark.parametrize("failure", ["missing", "errors"])
+def test_uncited_incomplete_tick_does_not_create_an_install(vector_case, failure):
+    _, payload, predecessor, records, candidate, at = vector_case
+    partial = copy.deepcopy(records[2])
+    partial.record_id = "f" * 24
+    partial.recorded_at = "2026-01-01T00:15:00+00:00"
+    if failure == "missing":
+        partial.detail["installed"]["missing"] = ["/usr/bin/eom-mail-engine"]
+    else:
+        partial.detail["installed"]["errors"] = {"/usr/bin/eom-mail-engine": "fixture read error"}
+    partial.detail["installed"]["hashes"] = candidate
+    records.append(partial)
+    install_gap.Gap.decode(payload).verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+def test_duplicate_retained_record_ids_are_ambiguous(vector_case):
+    _, payload, predecessor, records, candidate, at = vector_case
+    records.append(copy.deepcopy(records[2]))
+    with pytest.raises(ValueError, match="ambiguous retained observation IDs"):
+        install_gap.Gap.decode(payload).verify_history(predecessor, at, records, candidate)
+
+
+@pytest.mark.parametrize("vector_case", ["truthful_observed_prefix"], indirect=True)
+@pytest.mark.parametrize("offset", [-1, 0, 1])
+def test_first_event_strictly_follows_predecessor(vector_case, offset):
+    _, payload, predecessor, _, _, at = vector_case
+    payload["unrecorded_installs"][0]["installed_at"] = (
+        datetime.fromisoformat(predecessor.recorded_at) + timedelta(seconds=offset)).isoformat()
+    gap = install_gap.Gap.decode(payload)
+    if offset > 0:
+        gap.verify_window(predecessor, at)
+    else:
+        with pytest.raises(ValueError, match="outside its recorded predecessor/candidate interval"):
+            gap.verify_window(predecessor, at)

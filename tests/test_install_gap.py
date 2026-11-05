@@ -65,14 +65,14 @@ def gap_case(fixture, request):
     return f
 
 
-def record_gap(f, **changes):
+def record_gap(f, *, observed_at=NOW, **changes):
     f.gap_file.write_text(json.dumps(f.payload))
     events = f.payload["unrecorded_installs"]
     previous = events[-1].get("package", f.previous_package) if events else f.previous_package
     options = {"install_gap": ["fixture=" + str(f.gap_file)], "gap_record": [],
                "gate_record": f.gate_ids, "artifact": str(f.artifact),
                "rollback_package": ["fixture=" + previous]}
-    return recorder.record_promotion(args(f, **(options | changes)), f.cat, NOW,
+    return recorder.record_promotion(args(f, **(options | changes)), f.cat, observed_at,
                                      f.data, f.mirrors_root)
 
 
@@ -258,6 +258,53 @@ def test_orphan_gap_retry_and_stale_predecessor(gap_case, monkeypatch):
                     recorded_at="2026-10-13T12:01:00Z", record_id="")
     Store(f.data / "records.jsonl").add(newer)
     assert_refused(f, install_gap=[], gap_record=["fixture=" + orphan.record_id])
+
+
+@pytest.mark.parametrize("observed_at,expected", [
+    ("2026-10-13T11:59:59+00:00", 2),
+    (NOW, 0),
+    ("2026-10-13T07:00:00-05:00", 0),
+    ("2026-10-13T12:00:01+00:00", 2),
+    ("2026-10-13T12:00:30+00:00", 2),
+])
+def test_orphan_retry_preserves_original_observation_time(
+        gap_case, monkeypatch, capsys, observed_at, expected):
+    f = gap_case
+    real_add = Store.add
+
+    def fail_promotion(store, record):
+        if record.kind == "promotion":
+            raise OSError("fixture append failure")
+        return real_add(store, record)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Store, "add", fail_promotion)
+        assert record_gap(f) == 2
+    orphan = rows(f)[-1]
+    assert orphan.source["type"] == "promotion_gap"
+    capsys.readouterr()
+    if observed_at == "2026-10-13T12:00:30+00:00":
+        earlier_install = f.payload["unrecorded_installs"][0]["program_hashes"]
+        candidate = installed_programs([str(f.install)])["hashes"]
+        for at, hashes in [
+            ("2026-10-13T12:00:10+00:00", earlier_install),
+            ("2026-10-13T12:00:20+00:00", candidate),
+        ]:
+            real_add(Store(f.data / "records.jsonl"), Record(
+                kind="installed_observation", repo="fixture", revision="",
+                verdict="pass", platform="linux", recorded_at=at,
+                source={"type": "installed_program_hashes", "app": "fixture"},
+                detail={"app": "fixture", "installed": {
+                    "hashes": hashes, "missing": [], "errors": {}}},
+            ))
+    before = (f.data / "records.jsonl").read_bytes()
+    assert record_gap(f, observed_at=observed_at, install_gap=[],
+                      gap_record=["fixture=" + orphan.record_id]) == expected
+    if expected == 2:
+        assert "retry changed gap observation or gate inputs" in capsys.readouterr().err
+        assert (f.data / "records.jsonl").read_bytes() == before
+    else:
+        assert rows(f)[-1].detail["members"]["fixture"]["fallback"]["install_gap_record_id"] == orphan.record_id
 
 
 @pytest.mark.parametrize("damage", ["verdict", "condition", "task", "check", "null-check"])

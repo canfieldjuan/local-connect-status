@@ -225,7 +225,7 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
                 if (gap_record.source["gate_record_ids"] != sorted(set(args.gate_record)) or
                         gap_record.source["observed_by"] != args.observed_by or
                         gap_record.source["artifact"] != args.artifact or
-                        parse_aware_timestamp(gap_record.recorded_at, label="gap time") >
+                        parse_aware_timestamp(gap_record.recorded_at, label="gap time") !=
                         parse_aware_timestamp(observed_at, label="promotion time")):
                     raise ValueError("retry changed gap observation or gate inputs")
                 gap_records[app] = gap_record
