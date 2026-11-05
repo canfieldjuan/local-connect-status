@@ -1,0 +1,1337 @@
+{
+  "fixture_version": 1,
+  "contract_gap_version": 2,
+  "purpose": "Public declarative history-admission vectors; no live data, recorder execution, or claim of implemented behavior.",
+  "expansion": {
+    "app": "email-watcher",
+    "repo": "eom-email-watcher",
+    "platform": "linux",
+    "predecessor_identity": "A",
+    "predecessor_recorded_at": "2026-01-01T00:00:00+00:00",
+    "candidate_identity": "D",
+    "candidate_observed_at": "2026-01-01T00:50:00+00:00",
+    "history_attested_complete": true,
+    "rules": [
+      "Each case selects only its named observations, sorted by aware time; list order never cures a timestamp conflict.",
+      "Expand event identity from identities, materialize its named package receipt, and retain the final event package as fallback.",
+      "installed_receipt=installed-v1 materializes the full closed receipt from the event identity/time, with installed=true.",
+      "supplemental_acceptance materializes only source/time/equality/PASS flags and carries no installed hashes.",
+      "Package fixtures are deterministic USTAR archives with UTF-8 members, uid/gid/mtime zero, mode 0755 and member order as listed.",
+      "Observation rows include the admission fields of real Record objects; omitted Record fields use existing defaults.",
+      "Per-case observation subsets are synthetic snapshots, not the live store. IDs were minted by the existing Store, including return IDs.",
+      "All current candidate gates are assumed valid. Outcomes concern history admission only."
+    ]
+  },
+  "identities": {
+    "A": {
+      "revision": "ba64f76b2a4e105c01acbd8345083dd0de2b4df3",
+      "package_sha256": "306d3f8a139016af7bc21ef0966d9ec33e14106370967c8d25072f6aeeabae19",
+      "program_hashes": {
+        "/usr/bin/eom-email-watcher-desktop": "41d32c5dc2b113a8f202266218f713b56880806758ca69becf6407d72b4ca483",
+        "/usr/bin/eom-mail-engine": "2a7ebb85af4df8b94c7428fb0f6e3412949baf4d14472de039abfb9b5f8d0e8c"
+      },
+      "package_fixture": {
+        "format": "ustar",
+        "mtime": 0,
+        "mode": 493,
+        "members_utf8": {
+          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE A eom-email-watcher-desktop\n",
+          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE A eom-mail-engine\n"
+        }
+      }
+    },
+    "B": {
+      "revision": "d0cc242de3ca6319bcf78e6ae5722643325da9cc",
+      "package_sha256": "4c7900eb084b666f008e3b13f958fa09d73455a46d8d76f5b6798a98d1636fbb",
+      "program_hashes": {
+        "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+        "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+      },
+      "package_fixture": {
+        "format": "ustar",
+        "mtime": 0,
+        "mode": 493,
+        "members_utf8": {
+          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE B eom-email-watcher-desktop\n",
+          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE B eom-mail-engine\n"
+        }
+      }
+    },
+    "C": {
+      "revision": "a5228f320fc29f18f53982bb15b83275797e1248",
+      "package_sha256": "8acf1acaa9e355fe09b635b4fe7cb5a6304805f53d4204f6780b04a797e0e4f8",
+      "program_hashes": {
+        "/usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+        "/usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+      },
+      "package_fixture": {
+        "format": "ustar",
+        "mtime": 0,
+        "mode": 493,
+        "members_utf8": {
+          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE C eom-email-watcher-desktop\n",
+          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE C eom-mail-engine\n"
+        }
+      }
+    },
+    "D": {
+      "revision": "714aeb7057b16b4c1f88117c088db06bdc616ca2",
+      "package_sha256": "92c8abb8cfab01c342a200d339f7cbf00ebb99df846bac1627624c9c40acaf76",
+      "program_hashes": {
+        "/usr/bin/eom-email-watcher-desktop": "0a589f1266f833b2fe174cfc19eaa97680781524934df5f0c4e3644ec5cd34b2",
+        "/usr/bin/eom-mail-engine": "9be7bf6843f6ecc35d4ef0b1161cfe16d1af6560c8eb3feeb7f4d5a75f0ae846"
+      },
+      "package_fixture": {
+        "format": "ustar",
+        "mtime": 0,
+        "mode": 493,
+        "members_utf8": {
+          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE D eom-email-watcher-desktop\n",
+          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE D eom-mail-engine\n"
+        }
+      }
+    }
+  },
+  "package_receipts": {
+    "A": {
+      "source": "ba64f76b2a4e105c01acbd8345083dd0de2b4df3",
+      "package_sha256": "306d3f8a139016af7bc21ef0966d9ec33e14106370967c8d25072f6aeeabae19",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "41d32c5dc2b113a8f202266218f713b56880806758ca69becf6407d72b4ca483",
+        "usr/bin/eom-mail-engine": "2a7ebb85af4df8b94c7428fb0f6e3412949baf4d14472de039abfb9b5f8d0e8c"
+      }
+    },
+    "B": {
+      "source": "d0cc242de3ca6319bcf78e6ae5722643325da9cc",
+      "package_sha256": "4c7900eb084b666f008e3b13f958fa09d73455a46d8d76f5b6798a98d1636fbb",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+        "usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+      }
+    },
+    "C": {
+      "source": "a5228f320fc29f18f53982bb15b83275797e1248",
+      "package_sha256": "8acf1acaa9e355fe09b635b4fe7cb5a6304805f53d4204f6780b04a797e0e4f8",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+        "usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+      }
+    },
+    "D": {
+      "source": "714aeb7057b16b4c1f88117c088db06bdc616ca2",
+      "package_sha256": "92c8abb8cfab01c342a200d339f7cbf00ebb99df846bac1627624c9c40acaf76",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "0a589f1266f833b2fe174cfc19eaa97680781524934df5f0c4e3644ec5cd34b2",
+        "usr/bin/eom-mail-engine": "9be7bf6843f6ecc35d4ef0b1161cfe16d1af6560c8eb3feeb7f4d5a75f0ae846"
+      }
+    },
+    "B_wrong_digest": {
+      "source": "d0cc242de3ca6319bcf78e6ae5722643325da9cc",
+      "package_sha256": "8acf1acaa9e355fe09b635b4fe7cb5a6304805f53d4204f6780b04a797e0e4f8",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+        "usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+      }
+    },
+    "B_wrong_source": {
+      "source": "a5228f320fc29f18f53982bb15b83275797e1248",
+      "package_sha256": "4c7900eb084b666f008e3b13f958fa09d73455a46d8d76f5b6798a98d1636fbb",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+        "usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+      }
+    },
+    "B_wrong_map": {
+      "source": "d0cc242de3ca6319bcf78e6ae5722643325da9cc",
+      "package_sha256": "4c7900eb084b666f008e3b13f958fa09d73455a46d8d76f5b6798a98d1636fbb",
+      "program_hashes": {
+        "usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+        "usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+      }
+    }
+  },
+  "observations": {
+    "leading_A": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "41d32c5dc2b113a8f202266218f713b56880806758ca69becf6407d72b4ca483",
+            "/usr/bin/eom-mail-engine": "2a7ebb85af4df8b94c7428fb0f6e3412949baf4d14472de039abfb9b5f8d0e8c"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "33550a50c419dab3aa21e9af",
+      "recorded_at": "2026-01-01T00:01:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "early_D": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "0a589f1266f833b2fe174cfc19eaa97680781524934df5f0c4e3644ec5cd34b2",
+            "/usr/bin/eom-mail-engine": "9be7bf6843f6ecc35d4ef0b1161cfe16d1af6560c8eb3feeb7f4d5a75f0ae846"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "63d4e36508945d3c49e856cc",
+      "recorded_at": "2026-01-01T00:05:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "B_first": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "e2b5a19326ff2a752a8ea831",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "B_same_bytes_pin_error": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        },
+        "pin_error": "Fixture unrelated pin lookup failure"
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "ad56c736706e6fa59effcb30",
+      "recorded_at": "2026-01-01T00:11:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "unavailable"
+    },
+    "C_first": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+            "/usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "4909b2bcd6e5af8d916dc225",
+      "recorded_at": "2026-01-01T00:20:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "B_return": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "9cc41fa2866bf46706012b4e",
+      "recorded_at": "2026-01-01T00:30:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "A_return": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "41d32c5dc2b113a8f202266218f713b56880806758ca69becf6407d72b4ca483",
+            "/usr/bin/eom-mail-engine": "2a7ebb85af4df8b94c7428fb0f6e3412949baf4d14472de039abfb9b5f8d0e8c"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "7425517b3817a7e336e84505",
+      "recorded_at": "2026-01-01T00:31:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "C_later": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+            "/usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "ba34a88d54097a4698a4142b",
+      "recorded_at": "2026-01-01T00:35:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "terminal_D": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "0a589f1266f833b2fe174cfc19eaa97680781524934df5f0c4e3644ec5cd34b2",
+            "/usr/bin/eom-mail-engine": "9be7bf6843f6ecc35d4ef0b1161cfe16d1af6560c8eb3feeb7f4d5a75f0ae846"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "b87d60fc212e425e7cb0b723",
+      "recorded_at": "2026-01-01T00:40:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "wrong_app_B": {
+      "detail": {
+        "app": "other-app",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "a4b6fcaa91adc8413d513f71",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "other-app",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "wrong_repo_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "89e90c87caf6d5de9531f130",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "other-repo",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "windows_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "windows",
+      "record_id": "7c3c482fd127ce8650fe0053",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "wrong_kind_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "automated_test",
+      "platform": "linux",
+      "record_id": "a7f2b7319a8ce1d96e7a152a",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "partial_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e"
+          },
+          "missing": [
+            "/usr/bin/eom-mail-engine"
+          ]
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "06a792065862cd69372a2d03",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "hash_error_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {
+            "/usr/bin/eom-mail-engine": "OSError: fixture hash failure"
+          },
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "3619c6f7dddfad30ca72a7d0",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "unavailable"
+    },
+    "at_predecessor_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        }
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "7429c0d4de0a492df8fbfbe2",
+      "recorded_at": "2026-01-01T00:00:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "pass"
+    },
+    "after_candidate_B": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "d3f9aa58c07afbbce1994a08d99cf4eacfed3f0333d53de4d5bb8ca81f6f141e",
+            "/usr/bin/eom-mail-engine": "b49420ea72d29c646707355d55e4e20f20eb13b7f86ccb24fcf783fc6d9b0a8e"
+          },
+          "missing": []
+        },
+        "pin_error": "Fixture unrelated pin lookup failure"
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "1429fb41fbbf8af8306fffc2",
+      "recorded_at": "2026-01-01T00:51:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "unavailable"
+    },
+    "same_time_C": {
+      "detail": {
+        "app": "email-watcher",
+        "installed": {
+          "errors": {},
+          "hashes": {
+            "/usr/bin/eom-email-watcher-desktop": "f21c157bfcba61ee064a26995708837f2316b1674c2c66b4d6e494501cf3a68d",
+            "/usr/bin/eom-mail-engine": "573060ee85864332f8d75efae32136c29a2e73e58460b645873a7ab1c63dade5"
+          },
+          "missing": []
+        },
+        "pin_error": "Fixture unrelated pin lookup failure"
+      },
+      "kind": "installed_observation",
+      "platform": "linux",
+      "record_id": "5a4fbf2bb1159ae9ab6c2409",
+      "recorded_at": "2026-01-01T00:10:00+00:00",
+      "repo": "eom-email-watcher",
+      "revision": "",
+      "source": {
+        "app": "email-watcher",
+        "check": "fixture.observe.email-watcher",
+        "type": "installed_program_hashes"
+      },
+      "verdict": "unavailable"
+    }
+  },
+  "events": {
+    "B_first": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B"
+    },
+    "B_samples": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831",
+        "ad56c736706e6fa59effcb30"
+      ],
+      "package_receipt": "B"
+    },
+    "B_pin_only": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:11:00+00:00",
+      "installed_observation_record_ids": [
+        "ad56c736706e6fa59effcb30"
+      ],
+      "package_receipt": "B"
+    },
+    "C_first": {
+      "identity": "C",
+      "installed_at": "2026-01-01T00:20:00+00:00",
+      "installed_observation_record_ids": [
+        "4909b2bcd6e5af8d916dc225"
+      ],
+      "package_receipt": "C"
+    },
+    "B_return": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:30:00+00:00",
+      "installed_observation_record_ids": [
+        "9cc41fa2866bf46706012b4e"
+      ],
+      "package_receipt": "B"
+    },
+    "A_return": {
+      "identity": "A",
+      "installed_at": "2026-01-01T00:31:00+00:00",
+      "installed_observation_record_ids": [
+        "7425517b3817a7e336e84505"
+      ],
+      "package_receipt": "A"
+    },
+    "C_later": {
+      "identity": "C",
+      "installed_at": "2026-01-01T00:35:00+00:00",
+      "installed_observation_record_ids": [
+        "ba34a88d54097a4698a4142b"
+      ],
+      "package_receipt": "C"
+    },
+    "early_D": {
+      "identity": "D",
+      "installed_at": "2026-01-01T00:05:00+00:00",
+      "installed_observation_record_ids": [
+        "63d4e36508945d3c49e856cc"
+      ],
+      "package_receipt": "D"
+    },
+    "C_unseen": {
+      "identity": "C",
+      "installed_at": "2026-01-01T00:20:00+00:00",
+      "installed_observation_record_ids": [],
+      "package_receipt": "C",
+      "installed_receipt": "installed-v1"
+    },
+    "B_unknown_id": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "000000000000000000000000"
+      ],
+      "package_receipt": "B"
+    },
+    "B_wrong_app": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "a4b6fcaa91adc8413d513f71"
+      ],
+      "package_receipt": "B"
+    },
+    "B_wrong_repo": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "89e90c87caf6d5de9531f130"
+      ],
+      "package_receipt": "B"
+    },
+    "B_wrong_platform": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "7c3c482fd127ce8650fe0053"
+      ],
+      "package_receipt": "B"
+    },
+    "B_wrong_kind": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "a7f2b7319a8ce1d96e7a152a"
+      ],
+      "package_receipt": "B"
+    },
+    "B_partial": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "06a792065862cd69372a2d03"
+      ],
+      "package_receipt": "B"
+    },
+    "B_hash_error": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "3619c6f7dddfad30ca72a7d0"
+      ],
+      "package_receipt": "B"
+    },
+    "B_at_predecessor": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:00:00+00:00",
+      "installed_observation_record_ids": [
+        "7429c0d4de0a492df8fbfbe2"
+      ],
+      "package_receipt": "B"
+    },
+    "B_after_candidate": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "1429fb41fbbf8af8306fffc2"
+      ],
+      "package_receipt": "B"
+    },
+    "B_reuses_old_row": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:30:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B"
+    },
+    "B_wrong_package": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "C"
+    },
+    "B_wrong_digest": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B_wrong_digest"
+    },
+    "B_wrong_source": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B_wrong_source"
+    },
+    "B_wrong_map": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B_wrong_map"
+    },
+    "B_expected_only": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [],
+      "package_receipt": "B"
+    },
+    "B_source_only_acceptance": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [],
+      "package_receipt": "B",
+      "supplemental_acceptance": "source-only-ew-acceptance"
+    },
+    "B_with_optional_acceptance": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B",
+      "supplemental_acceptance": "source-only-ew-acceptance"
+    },
+    "B_claims_C_row": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "5a4fbf2bb1159ae9ab6c2409"
+      ],
+      "package_receipt": "B"
+    },
+    "B_next_event_boundary": {
+      "identity": "B",
+      "installed_at": "2026-01-01T00:09:00+00:00",
+      "installed_observation_record_ids": [
+        "e2b5a19326ff2a752a8ea831"
+      ],
+      "package_receipt": "B"
+    },
+    "C_starts_at_B_sample": {
+      "identity": "C",
+      "installed_at": "2026-01-01T00:10:00+00:00",
+      "installed_observation_record_ids": [
+        "4909b2bcd6e5af8d916dc225"
+      ],
+      "package_receipt": "C"
+    }
+  },
+  "cases": [
+    {
+      "name": "truthful_observed_prefix",
+      "observation_names": [
+        "leading_A",
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first"
+      ],
+      "expected": "accept",
+      "reason": "Collector B/C plus source-bound package receipts establish both installs without acceptance files."
+    },
+    {
+      "name": "omitted_first_install",
+      "observation_names": [
+        "leading_A",
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Attestation cannot erase observed B."
+    },
+    {
+      "name": "omitted_middle_install",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "B_return",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "B_return"
+      ],
+      "expected": "refuse",
+      "reason": "Matching B endpoints do not erase observed C."
+    },
+    {
+      "name": "repeated_transition",
+      "observation_names": [
+        "leading_A",
+        "B_first",
+        "C_first",
+        "B_return",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first",
+        "B_return"
+      ],
+      "expected": "accept",
+      "reason": "B/C/B is three events with a distinct retained return ID."
+    },
+    {
+      "name": "globally_deduplicated_return",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "B_return",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "The final B run is missing even though the identity set is B/C."
+    },
+    {
+      "name": "reordered_events",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "C_first",
+        "B_first"
+      ],
+      "expected": "refuse",
+      "reason": "Evidence order and event chronology disagree."
+    },
+    {
+      "name": "consecutive_matching_samples",
+      "observation_names": [
+        "B_first",
+        "B_same_bytes_pin_error",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_samples",
+        "C_first"
+      ],
+      "expected": "accept",
+      "reason": "Complete same-byte samples coalesce within B despite unrelated pin error."
+    },
+    {
+      "name": "overall_unavailable_but_hashes_complete",
+      "observation_names": [
+        "B_same_bytes_pin_error",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_pin_only",
+        "C_first"
+      ],
+      "expected": "accept",
+      "reason": "The bytes are complete; overall verdict and empty observed revision are not package proof requirements."
+    },
+    {
+      "name": "interior_predecessor_identity",
+      "observation_names": [
+        "leading_A",
+        "B_first",
+        "A_return",
+        "C_later",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "A_return",
+        "C_later"
+      ],
+      "expected": "accept",
+      "reason": "Returning to A after B is an intermediate install, not the leading boundary."
+    },
+    {
+      "name": "omitted_interior_predecessor",
+      "observation_names": [
+        "leading_A",
+        "B_first",
+        "A_return",
+        "C_later",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_later"
+      ],
+      "expected": "refuse",
+      "reason": "Removing every A would conceal its interior return."
+    },
+    {
+      "name": "earlier_candidate_identity",
+      "observation_names": [
+        "leading_A",
+        "early_D",
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "early_D",
+        "B_first",
+        "C_first"
+      ],
+      "expected": "accept",
+      "reason": "Only the terminal D run is the candidate boundary."
+    },
+    {
+      "name": "omitted_earlier_candidate",
+      "observation_names": [
+        "early_D",
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Removing every D would conceal the earlier candidate-byte install."
+    },
+    {
+      "name": "unseen_hash_bound_install",
+      "observation_names": [
+        "B_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_unseen"
+      ],
+      "expected": "accept",
+      "reason": "C has an independent closed installed-v1 receipt plus its package receipt."
+    },
+    {
+      "name": "unseen_transition_between_equal_samples",
+      "observation_names": [
+        "B_first",
+        "B_return",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_unseen",
+        "B_return"
+      ],
+      "expected": "accept",
+      "reason": "Separately witnessed C splits the two observed B samples into separate events."
+    },
+    {
+      "name": "unknown_record_id",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_unknown_id",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "The reference does not resolve in this store snapshot."
+    },
+    {
+      "name": "foreign_app",
+      "observation_names": [
+        "wrong_app_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_app",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Source/detail app differs."
+    },
+    {
+      "name": "foreign_repository",
+      "observation_names": [
+        "wrong_repo_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_repo",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Repository differs."
+    },
+    {
+      "name": "foreign_platform",
+      "observation_names": [
+        "windows_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_platform",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Windows observation cannot prove Linux installation."
+    },
+    {
+      "name": "wrong_record_kind",
+      "observation_names": [
+        "wrong_kind_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_kind",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "An automated_test is not an installed observation."
+    },
+    {
+      "name": "partial_program_map",
+      "observation_names": [
+        "partial_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_partial",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "A missing program cannot prove the complete event identity."
+    },
+    {
+      "name": "hashing_failure",
+      "observation_names": [
+        "hash_error_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_hash_error",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "A hash error cannot prove installation."
+    },
+    {
+      "name": "at_predecessor_boundary",
+      "observation_names": [
+        "at_predecessor_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_at_predecessor",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Installed proof must be strictly after the predecessor."
+    },
+    {
+      "name": "after_candidate_boundary",
+      "observation_names": [
+        "after_candidate_B",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_after_candidate",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "A later row cannot prove the earlier interval."
+    },
+    {
+      "name": "same_row_reused_for_return",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "B_return",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first",
+        "B_reuses_old_row"
+      ],
+      "expected": "refuse",
+      "reason": "One earlier row cannot prove the later B occurrence."
+    },
+    {
+      "name": "wrong_package_binding",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_package",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Package C source/digest/map cannot bind event B."
+    },
+    {
+      "name": "wrong_package_digest",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_digest",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Only the package receipt digest differs from B."
+    },
+    {
+      "name": "wrong_package_source",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_source",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Only the package receipt source revision differs from B."
+    },
+    {
+      "name": "wrong_package_programs",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_wrong_map",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Only the package receipt program map differs from B."
+    },
+    {
+      "name": "expected_package_only",
+      "observation_names": [
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_expected_only",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "No installed proof accompanies the expected package bytes."
+    },
+    {
+      "name": "source_only_acceptance",
+      "observation_names": [
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_source_only_acceptance",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Source-bound success booleans lack actual installed hashes."
+    },
+    {
+      "name": "acceptance_is_optional",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_with_optional_acceptance",
+        "C_first"
+      ],
+      "expected": "accept",
+      "reason": "Collector and package bindings prove B; extra human evidence is optional."
+    },
+    {
+      "name": "wrong_observed_hashes",
+      "observation_names": [
+        "same_time_C",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_claims_C_row",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Observed C bytes cannot prove B."
+    },
+    {
+      "name": "at_next_event_boundary",
+      "observation_names": [
+        "B_first",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_next_event_boundary",
+        "C_starts_at_B_sample"
+      ],
+      "expected": "refuse",
+      "reason": "B witness at 10 is not strictly before the next event at 10."
+    },
+    {
+      "name": "same_time_conflicting_identities",
+      "observation_names": [
+        "B_first",
+        "same_time_C",
+        "C_first",
+        "terminal_D"
+      ],
+      "event_names": [
+        "B_first",
+        "C_first"
+      ],
+      "expected": "refuse",
+      "reason": "Distinct observed identities at the same instant have unresolved order."
+    }
+  ]
+}

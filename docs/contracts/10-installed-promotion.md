@@ -3,9 +3,10 @@
 Status: **accepted 2026-10-13, revision 1** (operator, 2026-10-13: accepted, with a lag limit of seven days).
 Both operator decisions are made: the two-tier cadence is accepted, and the lag limit is seven days.
 
-The explicit install-gap amendment below is **proposed, not accepted**. Its contract PR,
-recorder implementation and LCS cutover require separate operator gates. It authorizes no live
-observation, gap, smoke or promotion write.
+The install-gap amendment was accepted at `6b50df3`; the collector-proof revision below is
+**proposed and requires re-acceptance**. Earlier acceptance does not cover this revision.
+Contract review, recorder implementation and LCS cutover remain separate operator gates.
+This proposal authorizes no live observation, gap, smoke or promotion write.
 
 Contract 09 and `docs/RELEASE_CONTRACT.md` define the *public* release, which is a GitHub release
 with installers. They say nothing about what runs on the operator's own machine. This contract adds
@@ -212,9 +213,12 @@ proposal.
 
 ## Proposed amendment — explicit evidence after unrecorded installs
 
-Status: **proposal only; operator acceptance pending**. The work order is: contract PR for
-oversight review and direct operator acceptance, then recorder implementation, then separately
-approved LCS cutover. Live records remain untouched until those gates are satisfied.
+Status: **revised proposal; exact-head oversight and operator re-acceptance pending**. The
+operator accepted `6b50df39b053a4c34fa597ae43d2f698b3754da8`. Oversight found the separate
+recorder PR at `1c33f1c65a67db3432d84e74eedc48ab744d56a5` NOT READY: the file-only rule rejects
+the real history, while a manifest omitting its unsupported prefix passes. That implementation
+stays unchanged until this revision is reviewed and re-accepted. The order is revised contract,
+recorder PR revision, then separately approved LCS cutover. No live records.
 
 ### G1 — Separate recorded history from the real previous install
 
@@ -238,63 +242,122 @@ historical promotions, edit old records or treat the candidate as a new starting
 
 ### G2 — An explicit, content-bound gap observation
 
-Use the existing `installed_demo` record envelope, with `source.type = "promotion_gap"` and
-the complete structured gap payload in `source.install_gap`. It is a separate retained record,
-not prose added to a promotion summary. A closed, versioned decoder at the promotion evidence
-owner admits this source variant before storage. No new dependency or top-level record kind is
-needed: existing readers accept this envelope, and `Record.identity()` already includes all of
-`source`. Changing any gap fact must change its content identity.
+Use the existing `installed_demo` envelope, `source.type = "promotion_gap"`, and the complete
+gap payload in `source.install_gap`. A closed, versioned model at the promotion evidence owner
+admits it on decode and append. Pin verdict `pass`, empty condition and task IDs, empty detail,
+and absent `source.check`; callers cannot attribute the gap to another check. No new dependency
+or top-level record kind is needed. `Record.identity()` already includes all of `source`, so
+changing a gap fact changes its identity.
 
 The required payload is:
 
 | Field | Required meaning |
 |---|---|
-| `version` | Integer literal `1`; booleans, unknown versions and unknown fields refuse |
+| `version` | Integer literal `2`; booleans, superseded file-only version `1`, unknown versions and unknown fields refuse new gap admission |
 | `app`, `repo`, `platform` | One catalogue app, its exact repository and `linux`; equal the enclosing record and candidate member |
-| `candidate_revision` | Full current candidate revision; equal the enclosing record's revision and participant |
-| `last_recorded_promotion_id` | Exact existing latest passing promotion for this app/platform, selected under the collection lock |
-| `unrecorded_installs` | Nonempty ordered array of the intervening install events, each naming its full revision, aware install time, package SHA-256, retained installed-program identity and hash-bound receipt references |
-| `history_attested_complete` | Literal `true`, attested by the human observer for the interval from the predecessor to the candidate install |
+| `candidate_revision` | Full candidate revision; equal the enclosing revision and participant |
+| `last_recorded_promotion_id` | Exact latest passing promotion for this app/platform, selected under the collection lock |
+| `unrecorded_installs` | Nonempty ordered events with full `revision`, aware `installed_at`, `package_sha256`, nonempty `program_hashes`, `receipts`, `installed_observation_record_ids`, and optional retained `package` path |
+| `history_attested_complete` | Literal `true`; the human attests otherwise unobserved history, subject to the mandatory collector cross-check below |
 
-The final array entry **is** the real previous install. Its package path is mandatory and names
-the retained fallback; earlier entries may identify packages through their retained receipts
-without requiring every earlier package still to exist. There is no second independently
-editable previous-install identity. Reinstalling the same revision is a distinct event only
-when its retained evidence establishes that event and order. Exclude the current candidate's
-install event; do not infer chronology from Git ancestry, directory names or file timestamps.
+The final event **is** the real previous install and must name its retained fallback package.
+Earlier events may use retained package receipts without keeping every package. There is no
+second editable previous-install identity. Exclude the current candidate's terminal install,
+not every earlier occurrence of its bytes. Never infer chronology from Git, filenames or mtimes.
 
-Each receipt reference contains a retained regular-file path and full SHA-256. The record also
-requires the existing nonblank human observer, aware observation time, artifact reference and
-the artifact's SHA-256. Short revisions or digests, missing or extra keys, empty identity maps,
-duplicate or conflicting event evidence, unknown order and unresolved history refuse. The
-recorder cannot discover every unrecorded action; completeness is an explicit human attestation,
-not a claim derived from absence of records. The recorder cannot synthesize that attestation
-from the existence of a gap record.
+Each event's `installed_observation_record_ids` is an array of exact retained store IDs, not
+paths or inline replacement records. It is nonempty for a collector-witnessed event; an empty
+array requires independent hash-bound installed proof under G3. Each file receipt reference
+has a retained regular-file path and full SHA-256. `receipts` may be empty only if a retained
+package supplies the package/source binding and collector rows supply installed proof.
+Required keys, literals, bounded ID/digest tokens and nonempty alternatives belong in the
+existing closed model. Cross-record/chronological rules belong in one named promotion evidence
+validator. A parallel regex or prose fallback cannot substitute for either mechanism.
 
-### G3 — Verify the real previous package against retained install evidence
+The enclosing record retains the existing human observer, aware observation time, artifact
+reference and artifact SHA-256. Short IDs/revisions/digests, missing/extra keys, empty identity
+maps, duplicate IDs, conflicting evidence and unresolved order refuse. Referenced observations
+must be retained before the gap; the recorder never manufactures a historical collector row.
 
-Retained evidence must establish installation, not just a successful build. Document the
-supported structured receipt layouts before implementing their adapters. A package receipt plus
-a source-bound installed-byte-equality receipt may jointly supply the identity; a builder's
-`installed` flag, free-form success summary or filename cannot substitute for installed evidence.
+**Completeness uses observed transitions, not a set of revisions.** Under the collection lock,
+inspect this app/repository/platform's collector observations strictly after the predecessor's
+recorded time and before the candidate observation (`source.observed_at`). This upper bound
+is not a claim of the package-manager install time. Order by aware `recorded_at`; conflicting
+identities at the same instant are unresolved and refuse. Identity means the whole observed
+program-path/hash map, not the row's revision label.
 
-The one promotion evidence owner parses those receipts and requires agreement on app/repository,
-platform, full revision, install observation, package hash and installed-program identity.
-Historical program inventories come from the retained install evidence, not an assumption that
-today's catalogue paths existed in every older package. Unsupported, ambiguous or contradictory
-receipts refuse. Do not silently drop an intervening entry that cannot be verified.
+Use the predecessor's program hashes as the start checkpoint and the independently verified
+current candidate hashes as the end checkpoint. Only the leading predecessor run and terminal
+candidate run are boundary states. The first sample of a terminal candidate run supplies its
+boundary; if there is no such row, use the current candidate observation time. Every intermediate
+observed identity run must map to a distinct manifest event, in order and within its time bounds.
+Event times strictly increase inside the predecessor-to-candidate boundary interval.
+Consecutive equal samples within one event may coalesce; never globally deduplicate. B -> C -> B
+requires three events and distinct references for the B occurrences, even with equal revisions
+or content hashes. Interior returns to predecessor bytes and earlier candidate bytes also count.
 
-For the final entry, require the actual retained fallback package. Hash it and parse its regular
-program payloads through the existing package reader; both must match the retained installed
-identity. A receipt's expected hashes alone are insufficient without its source-bound evidence
-that those bytes were installed. A missing or mismatched fallback blocks recording. Package
-identity is not database-restore authority or a new claim of rollback compatibility.
+Every complete observed map must agree with its assigned event. One event can cite several
+consecutive matching rows; a row cannot prove multiple events. Additional human-attested events
+require separate installed proof and cannot erase/reorder witnessed transitions. Separately
+witnessed events between equal samples split those samples into separate events. A tick with
+missing programs or hashing errors cannot prove installation or invent an identity, and cannot
+hide complete observations on either side. The human attestation covers what the collector
+never saw; it cannot override contrary hashes, omitted states, order or conflicting proof.
 
-Use structured file/package APIs. Hash and interpret the same admitted bytes, and fail or keep
-the verified open identity if a file is replaced between validation and use. Reject conflicting
-duplicate package members and special-file inputs. Never execute, source, evaluate or install a
-package, receipt or path supplied as evidence. Public references use aliases and hashes; no
-customer content, credentials or private configuration is copied into records or PRs.
+### G3 — Bind installed observations to package evidence and the real fallback
+
+Installed proof and package/source binding are separate facts, joined by exact program hashes.
+The existing `lcstatus/promotion.py:160-199` (`installed_observation`) produces `detail.installed`
+and an aware collector time. It supplies installed proof without claiming an unrecorded source revision
+or package. Those still require retained package evidence.
+
+Resolve every cited ID in the retained snapshot and require:
+
+- kind `installed_observation`, source type `installed_program_hashes`, matching app in source
+  and detail, repository and platform;
+- nonempty `detail.installed.hashes`, empty `missing` and `errors`, exactly equal to the event's
+  complete `program_hashes`, including historical program paths;
+- aware `recorded_at` strictly after the predecessor, at or after the event's `installed_at`,
+  and strictly before the next event's `installed_at`, or the candidate boundary for the final
+  event. `installed_at` is a witnessed install-observation bound, not an invented exact install
+  time. No observation appended after the gap may be cited retroactively;
+- a retained structured package receipt or parsed package binding the same full event revision,
+  package SHA-256 and program map. If the package does not encode source revision, require its
+  source-bound package receipt. Expected package hashes alone do not prove installation.
+
+An unrecorded observation may have an empty `revision`. Do not demand a promotion match,
+current catalogue fingerprint, today's program paths or green overall verdict: unrelated pin
+or history errors can make a row unavailable while its installed hashes are complete. Inspect
+the installed fields. Missing, wrong-kind, foreign-app/repo/platform, partial, conflicting,
+reused or out-of-window references refuse. Preserve the store's legitimate observation IDs:
+a return transition can have a distinct retained ID despite equal content identity. Do not
+require every retained ID to equal `Record.identity()` or rewrite old evidence to make it do so.
+
+The shared promotion evidence owner checks references, hash/time binding and ordered
+completeness as a **pure decision over retained records and admitted package identities**.
+Recording may read/hash receipt or package files to admit those identities. Matching a retained
+promotion never reopens files or live installed paths. G6 reuses this decision on the store
+prefix before that promotion's publication and its original observation interval; subsequent
+collector ticks cannot rewrite the historical interval or make a valid promotion stale.
+
+For events the collector never saw, retain the closed `installed-v1` receipt option: literal
+installed truth, app/repository/platform, full revision, aware install observation, package
+SHA-256 and actual installed program hashes must all agree. Inventory other structured layouts
+before adding an adapter. The source-only `ew-acceptance` receipt is optional supplemental human
+evidence, not hash-bound installed proof. Pairing its boolean with `ew-package` cannot replace
+collector references or an independent hash-bound installed receipt. A builder's `installed`
+flag, free-form summary or filename cannot substitute. Unsupported, ambiguous or contradictory
+proof refuses; never silently drop an unverifiable event.
+
+For the final event, hash the actual retained fallback package and parse its regular program
+payloads through the existing package reader. Package hash and program map must equal that
+event's admitted package and installed proof. Missing/mismatched fallback blocks recording;
+package identity is not database-restore authority or a new rollback-compatibility claim.
+
+Use structured file/package APIs. Hash and interpret the same admitted bytes; refuse or keep
+the verified open identity on replacement. Reject conflicting duplicate members and special
+files. Never execute, source, evaluate or install evidence. Public references use aliases and
+hashes; records and PRs contain no customer content, credentials or private configuration.
 
 ### G4 — The current candidate still passes the complete promotion gate
 
@@ -336,7 +399,8 @@ crash may leave a gap without a promotion; retain that partial truth, report fai
 That orphan must not change any installed label or supply any gate.
 
 An identical retry may explicitly select the retained gap ID. Revalidate its complete payload,
-receipt identities, current installed bytes and required gates under the lock. If the exact
+collector references/completeness, receipt identities, current installed bytes and required
+gates against the newly read snapshot under the lock. If the exact
 linked promotion is already the latest promotion for that app/platform, return its retained ID
 without duplicating the transition; that completed transition is not a stale-predecessor error.
 Otherwise the latest predecessor must still be the gap's recorded predecessor. A different
@@ -351,6 +415,9 @@ Record consumers use the admitted structured identity, not raw summaries or anot
 For a promotion with an install-gap reference, matching requires the referenced gap to exist,
 decode, have a content identity matching its payload and bind that exact app/platform,
 predecessor, candidate and fallback. A malformed or missing link cannot make P2 green.
+The pure G3 validator also checks collector references and complete transition order against
+that publication prefix, rather than trusting the write's human flag. A dangling or contradictory
+installed observation cannot supply historical proof.
 
 The gap observation itself is excluded from promotion matching, smoke, CI, standing gates,
 public-release proof and coupled-set proof. It has no such check or condition attribution.
@@ -366,8 +433,9 @@ fallback retention remains required; this amendment adds no evidence cleanup or 
 
 ### G7 — Work sequence and live boundary
 
-1. This PR changes this contract only. Obtain exact-head oversight review and direct operator
-   acceptance, recorded separately, before any recorder implementation.
+1. This PR changes this contract and public declarative fixture vectors only. Obtain fresh
+   exact-head oversight review and direct operator re-acceptance, recorded separately, before
+   revising the recorder PR. Earlier acceptance at `6b50df3` does not accept this revision.
 2. Implement the accepted behavior in a separate PR using isolated fixture stores and packages.
    No real observation, smoke, gap, promotion or manual edit of `records.jsonl` is authorized.
 3. Obtain separate operator approval for the LCS cutover. Contract 11 automatically deploys
@@ -390,24 +458,36 @@ All implementation tests use temporary fixture data roots, repositories, install
 and public synthetic receipts/packages. They never open the live evidence store or run a
 product, smoke command, model, GPU, mail operation or LCS deployment.
 
+[10-install-gap-fixtures.json](10-install-gap-fixtures.json) contains public declarative vectors
+and expected **history-admission** results, not executable recorder tests or proof the change
+works. Symbolic names expand to the file's full identity/event values; the later test harness
+materializes packages/receipts in its temporary root. Synthetic collector IDs use the existing
+Record/Store owner, including a return-transition ID. Other promotion gates are assumed valid
+in these vectors and retain their independent tests.
+
 | Requirement | Required fixture evidence |
 |---|---|
 | Truthful gap | Recorded A, unrecorded B/C, installed candidate D: gap names A and ordered B/C, fallback is verified C, linked D promotion passes; single and longer valid histories pass, including a repeated revision with separately witnessed install events |
-| Receipt inventory | Supported retained multi-receipt layouts establish installed identity; a builder-only flag, expected-only hashes, changed receipt, source mismatch or unsupported layout refuses |
-| Shape and completeness | Missing/mixed keys, unknown version, boolean version, false completeness, empty list/map, short hashes, duplicate/conflicting events and uncertain order refuse before any append |
+| Collector proof | By-ID B/C observations plus package receipts pass without acceptance receipts, even with empty observed revision or unrelated pin errors; wrong ID/kind/app/repo/platform, partial hashes, hash errors, reused references, wrong bytes and early/late rows refuse |
+| Package/receipt binding | Wrong package map/SHA/source refuses despite matching collector bytes; optional acceptance cannot rescue it; unseen events need complete hash-bound installed receipts |
+| Ordered completeness | Omitted B, omitted middle C, omitted return B, swapped order and equal B/C sets with wrong multiplicity refuse despite human attestation; adjacent samples coalesce only within an event; B/C/B and an interior return to predecessor bytes remain distinct |
+| Interval boundaries | Only leading predecessor and terminal candidate runs are boundaries; an earlier candidate or interior predecessor cannot be globally excluded; same-time conflicts and rows at predecessor/next-event boundaries cannot prove events |
+| Unobserved events | Extra attested events with hash-bound installed proof pass between witnesses; unsupported unseen events refuse and cannot excuse an omitted witnessed event |
+| Shape and completeness | Missing/mixed keys, version 1, unknown/boolean version, false completeness, empty proof alternatives/list/map, short hashes, duplicate/conflicting evidence and unknown order refuse before append |
 | Real fallback | Missing, corrupt, wrong-revision or older A fallback refuses; valid C passes; historical program paths may differ from today's catalogue without rejection by coincidence |
 | File/package boundaries | Replacement between hash and parse cannot validate different bytes; special files, duplicate/nonregular payload members and input-derived executable paths cannot bypass admission |
 | Current gates | Wrong installed bytes, off-main candidate, missing/latest-failed exact gate, wrong participant or failed smoke still refuses; a gap never supplies those gates |
 | Standing interval | A gate-triggering change between A and B, later reverted before D, still requires the standing gate for D |
-| Binding and labels | Wrong app/platform/predecessor/candidate/fallback, stale or dangling gap, tampered payload under an old ID and orphan gap cannot produce a promoted label |
-| Lock race | Another promotion lands while the recorder waits; it rereads after lock acquisition and refuses the stale predecessor without appending |
+| Binding and labels | Wrong app/platform/predecessor/candidate/fallback, stale/dangling gap or collector reference, tampered proof and orphan gap cannot make P2 green; later ticks do not change a retained interval |
+| Lock race | A promotion or intervening installed observation lands while the recorder waits; it rereads under the lock and refuses stale/incomplete history without append |
 | Crash and retry | Crash after gap append leaves an orphan and no promoted label; exact retry reuses retained IDs, while altered evidence or a changed predecessor refuses reuse |
 | Coupled set | One invalid member writes no new gaps/promotions; an orphan cannot stand in for the required single coupled promotion |
-| Compatibility | Ordinary and first promotions, legacy record identities, old-reader decoding and P2/P4/P5 behavior remain correct |
-| Mutations | Each must fail: use recorded A as C's fallback; accept receipt hash without installed proof; skip latest-predecessor check; narrow standing paths to C-to-D; ignore gap link; treat gap as smoke/promotion |
+| Compatibility | Ordinary/first promotions, legacy and return-observation IDs, old-reader decoding, the pinned no-attribution envelope and P2/P4/P5 remain correct |
+| Mutations | Each must fail: use A as C fallback; accept expected hashes or source-only success as install proof; skip by-ID hash/time binding or completeness; globally deduplicate or remove every predecessor/candidate identity; skip latest predecessor; narrow standing interval; ignore gap/proof links; treat gap as smoke/promotion |
 
 No implementation suite or mutation probe runs in this contract-only PR. Its checks are a cold
-readthrough, `git diff --check` and proof that the diff contains only this contract. The later
+readthrough, JSON/reference validation of public vectors, `git diff --check` and proof that the
+diff contains only this contract and its declarative fixture file. The later
 implementation requires its focused fixture tests, applicable full-suite gate, exact-head
 oversight and reconciled review findings. Operator acceptance and cutover authority remain
 separate from those technical results.
