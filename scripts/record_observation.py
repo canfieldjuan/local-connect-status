@@ -17,6 +17,7 @@ It waits for a running collection to finish before it reads or writes anything.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 import tarfile
@@ -32,7 +33,8 @@ from lcstatus.evidence import (  # noqa: E402
 )
 from lcstatus.sources import Mirrors  # noqa: E402
 from lcstatus.sources import Failure  # noqa: E402
-from lcstatus.promotion import installed_programs, package_programs, sha256_file  # noqa: E402
+from lcstatus.promotion import installed_programs, package_identity, read_regular  # noqa: E402
+from lcstatus import install_gap  # noqa: E402
 from lcstatus.rules import validate_promotion_member  # noqa: E402
 
 from lcstatus.paths import Paths, outside_code
@@ -121,6 +123,13 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
             raise ValueError("promotion requires pass, linux and a human --observed-by")
         packages = named_paths(args.package, apps)
         fallbacks = named_paths(args.rollback_package, apps)
+        gap_paths = named_paths(getattr(args, "install_gap", []), apps)
+        reuse = {}
+        for value in getattr(args, "gap_record", []):
+            app, sep, record_id = value.partition("=")
+            if not sep or app not in apps or app in reuse or app in gap_paths:
+                raise ValueError("gap inputs must be distinct app=path or app=record-id values")
+            reuse[app] = install_gap.hexadecimal(record_id, 24)
         if set(packages) != set(apps):
             raise ValueError("promotion requires one --package app=path for every app")
         expected_repos = [cat["apps"][app]["repo"] for app in apps]
@@ -128,8 +137,28 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
         mirrors = Mirrors(mirrors_root, cat["repos"])
         store = Store(data / "records.jsonl")
         records = store.all()
+        by_id = {r.record_id: r for r in records}
+        def latest(app):
+            return install_gap.latest_promotion(app, args.platform, records)
+        reused = {}
+        completed = set()
+        for app, record_id in reuse.items():
+            if record_id not in by_id:
+                raise ValueError("retained gap record is missing")
+            reused[app] = by_id[record_id]
+            install_gap.decode_record(reused[app])
+            previous = latest(app)
+            if previous and previous.detail["members"][app]["fallback"].get("install_gap_record_id") == record_id:
+                completed.add(previous.record_id)
+        if len(completed) > 1:
+            raise ValueError("retry spans different completed promotions")
+        completion = by_id[next(iter(completed))] if completed else None
+        if completion and (set(completion.detail["members"]) != set(apps) or completion.participants != parts):
+            raise ValueError("retry must cover the exact completed promotion set")
         members = {}
         revision_times = {}
+        gap_records = {}
+        new_gaps = []
         for app in apps:
             row = cat["apps"][app]
             repo, config = row["repo"], row["promotion"]
@@ -141,10 +170,35 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
             main = mirrors.main_first_parent(repo)
             if isinstance(main, Failure):
                 raise ValueError(main.why)
-            prior = [r for r in records if r.kind == "promotion" and r.verdict == "pass"
-                     and r.platform == args.platform and app in r.detail.get("members", {})]
-            previous = max(enumerate(prior), key=lambda pair: (
-                parse_aware_timestamp(pair[1].recorded_at, label="previous promotion time"), pair[0]))[1] if prior else None
+            current_previous = latest(app)
+            previous = current_previous
+            gap = None
+            if app in gap_paths or app in reused:
+                gap = (install_gap.decode_record(reused[app]) if app in reused else
+                       install_gap.Gap.decode(install_gap.json_bytes(read_regular(gap_paths[app]))))
+                if (gap.app, gap.repo, gap.platform, gap.candidate_revision) != (app, repo, args.platform, revision):
+                    raise ValueError("gap does not bind this promotion member")
+                previous = by_id.get(gap.last_recorded_promotion_id)
+                if (previous is None or previous.kind != "promotion" or previous.verdict != "pass" or
+                        previous.platform != args.platform or app not in previous.detail.get("members", {}) or
+                        previous.detail["members"][app].get("repo") != repo or
+                        previous.participants.get(repo) != previous.detail["members"][app].get("revision") or
+                        not previous.source.get("observed_by", "").strip() or
+                        not install_gap.valid_link(previous, app, records)):
+                    raise ValueError("gap predecessor is not a valid retained promotion")
+                expected_latest = completion if completion else previous
+                if current_previous is None or current_previous.record_id != expected_latest.record_id:
+                    raise ValueError("gap predecessor is stale")
+                for event in gap.installs:
+                    committed_event = mirrors.commit_time(repo, event.revision)
+                    if committed_event is None:
+                        raise ValueError("historical install revision missing from owned mirror")
+                    validate_observation_after_revisions(event.installed_at, {repo: committed_event})
+            elif completion:
+                if current_previous is None or current_previous.record_id != completion.record_id:
+                    raise ValueError("completed promotion is no longer latest")
+                previous_id = completion.detail["members"][app]["fallback"]["previous_record"]
+                previous = by_id.get(previous_id) if previous_id else None
             if previous is None:
                 paths = mirrors.files_at(repo, revision)
             else:
@@ -155,28 +209,47 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
             if isinstance(paths, Failure):
                 raise ValueError(paths.why)
             installed = installed_programs(config["programs"])
-            packaged_hashes = package_programs(packages[app], config["programs"])
+            package_sha, packaged_hashes = package_identity(packages[app], config["programs"])
             validate_promotion_member(app, row, revision, main, packaged_hashes, installed,
                                       args.gate_record, paths, records, cat, parts, args.platform)
-            fallback = fallbacks.get(app, packages[app] if previous is None else None)
-            if fallback is None:
-                raise ValueError("later promotions require the real previous install's fallback package")
-            fallback_sha = sha256_file(fallback)
-            if previous is None:
-                if fallback_sha != sha256_file(packages[app]):
-                    raise ValueError("starting-point fallback must be the currently installed package")
+            if gap is not None:
+                if app in fallbacks and str(fallbacks[app]) != gap.previous.package:
+                    raise ValueError("rollback argument overrides the admitted gap fallback")
+                gap_record = reused.get(app)
+                if gap_record is None:
+                    gap_record = install_gap.make_record(gap, observer=args.observed_by, observed_at=observed_at,
+                        artifact=Path(args.artifact), gate_ids=args.gate_record, revision_time=committed)
+                    if gap_record.record_id in by_id:
+                        raise ValueError("use --gap-record to retry a retained gap")
+                    new_gaps.append(gap_record)
+                if (gap_record.source["gate_record_ids"] != sorted(set(args.gate_record)) or
+                        gap_record.source["observed_by"] != args.observed_by or
+                        gap_record.source["artifact"] != args.artifact or
+                        parse_aware_timestamp(gap_record.recorded_at, label="gap time") !=
+                        parse_aware_timestamp(observed_at, label="promotion time")):
+                    raise ValueError("retry changed gap observation or gate inputs")
+                gap_records[app] = gap_record
+                fallback_info = install_gap.fallback(gap, gap_record)
             else:
-                old_member = previous.detail["members"][app]
-                if fallback_sha != old_member["package_sha256"] or package_programs(
-                        fallback, config["programs"]) != old_member["program_hashes"]:
-                    raise ValueError("fallback does not match the real previous install")
+                fallback_path = fallbacks.get(app, packages[app] if previous is None else None)
+                if fallback_path is None:
+                    raise ValueError("later promotions require the real previous install's fallback package")
+                fallback_sha, fallback_hashes = package_identity(fallback_path, config["programs"])
+                if previous is None:
+                    if fallback_sha != package_sha:
+                        raise ValueError("starting-point fallback must be the currently installed package")
+                else:
+                    old_member = previous.detail["members"][app]
+                    if fallback_sha != old_member["package_sha256"] or fallback_hashes != old_member["program_hashes"]:
+                        raise ValueError("fallback does not match the real previous install")
+                fallback_info = {"path": str(fallback_path), "sha256": fallback_sha,
+                                 "starting_point": previous is None,
+                                 "previous_record": previous.record_id if previous else None}
             members[app] = {"repo": repo, "revision": revision,
                             "config": check_fingerprint(config), "package": str(packages[app]),
-                            "package_sha256": sha256_file(packages[app]),
+                            "package_sha256": package_sha,
                             "program_hashes": installed["hashes"],
-                            "fallback": {"path": str(fallback), "sha256": fallback_sha,
-                                         "starting_point": previous is None,
-                                         "previous_record": previous.record_id if previous else None}}
+                            "fallback": fallback_info}
         validate_observation_after_revisions(observed_at, revision_times)
         by_id = {r.record_id: r for r in records}
         for record_id in args.gate_record:
@@ -188,8 +261,36 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
                         platform=args.platform, recorded_at=observed_at, summary=args.summary,
                         source={"type": "promotion", "observed_by": args.observed_by,
                                 "observed_at": observed_at, "artifact": args.artifact},
-                        detail={"members": members, "gate_record_ids": args.gate_record})
+                        detail={"members": members, "gate_record_ids": sorted(set(args.gate_record)) if gap_records else args.gate_record})
+        for app, member in members.items():
+            config = cat["apps"][app]["promotion"]
+            if installed_programs(config["programs"])["hashes"] != member["program_hashes"]:
+                raise ValueError("installed programs changed before publication")
+            for path, digest in [(member["package"], member["package_sha256"]),
+                                 (member["fallback"]["path"], member["fallback"]["sha256"])]:
+                if hashlib.sha256(read_regular(Path(path))).hexdigest() != digest:
+                    raise ValueError("package changed before publication")
+        for gap_record in gap_records.values():
+            gap = install_gap.decode_record(gap_record)
+            gap.verify_history(by_id[gap.last_recorded_promotion_id], gap_record.recorded_at, records,
+                               members[gap.app]["program_hashes"], gap_record_id=gap_record.record_id)
+            if hashlib.sha256(read_regular(Path(gap_record.source["artifact"]))).hexdigest() != gap_record.source["artifact_sha256"]:
+                raise ValueError("human-reviewed artifact changed")
+        if completion:
+            if record.identity() != completion.identity():
+                raise ValueError("retry changed completed promotion inputs")
+            print("already recorded " + completion.record_id)
+            return 0
+        if any(not install_gap.valid_link(record, app, records + new_gaps + [record]) for app in gap_records):
+            raise ValueError("gap promotion linkage failed")
+        for gap_record in new_gaps:
+            store.add(gap_record)
+            print("retained gap " + gap_record.record_id)
         print("stored" if store.add(record) else "already recorded (identical)")
+        if gap_records:
+            retained = {r.record_id: r for r in Store(data / "records.jsonl").all()}
+            if record.record_id not in retained or any(r.record_id not in retained for r in gap_records.values()):
+                raise OSError("gap/promotion identities were not retained")
         return 0
     except (ValueError, OSError, tarfile.TarError) as exc:
         print(str(exc), file=sys.stderr)
@@ -204,6 +305,8 @@ def main() -> int:
     ap.add_argument("--package", action="append", default=[], metavar="app=path")
     ap.add_argument("--rollback-package", action="append", default=[], metavar="app=path")
     ap.add_argument("--gate-record", action="append", default=[])
+    ap.add_argument("--install-gap", action="append", default=[], metavar="app=manifest.json")
+    ap.add_argument("--gap-record", action="append", default=[], metavar="app=record-id")
     ap.add_argument("--data", type=Path, default=DATA if DATA != DEFAULT_DATA else None)
     ap.add_argument("--catalogue", type=Path, default=CATALOGUE)
     ap.add_argument("--mirrors", type=Path, default=MIRRORS if MIRRORS != DEFAULT_MIRRORS else None)
@@ -217,6 +320,8 @@ def main() -> int:
     a = ap.parse_args()
     if a.kind == "installed_demo" and not a.check:
         ap.error("--check is required for installed_demo")
+    if a.kind != "promotion" and (a.install_gap or a.gap_record):
+        ap.error("gap inputs require --kind promotion")
     try:
         observed_at = normalize_observed_at(a.observed_at)
     except ValueError as exc:

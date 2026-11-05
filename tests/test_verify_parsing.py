@@ -341,8 +341,12 @@ def test_cross_app_runner_rejects_zero_exit_without_complete_proof(tmp_path: Pat
 
 
 def assert_harness_summary(record, expected):
-    assert record.summary == "harness fault: " + expected
-    assert record.detail["harness_reason"] == expected
+    from lcstatus.outcomes import stable_harness_reason
+    stable = stable_harness_reason(expected)
+    assert record.summary == "harness fault: " + stable
+    assert record.detail["harness_reason"] == stable
+    if stable != expected:
+        assert record.detail["harness_diagnostic"] == expected
 
 
 def _failure_receipt(runner, check):
@@ -1529,3 +1533,15 @@ def test_pdf_proof_home_removal_failure_is_said_out_loud(tmp_path: Path, monkeyp
     assert record.verdict == "pass"                              # the result is still recorded
     assert "could not remove the proof's isolated home" in capsys.readouterr().err
 
+
+
+def test_harness_summary_is_independent_of_timestamped_fixture_root():
+    from types import SimpleNamespace
+    from lcstatus.outcomes import classify_execution
+    raw = "missing fixture /runs/20261105T033739261959Z/input.json"
+    result = classify_execution("pytest", reason=raw)
+    record = SimpleNamespace(summary=result["summary"], detail=result["detail"])
+    assert_harness_summary(record, raw)
+    assert record.summary == "harness fault: missing fixture /runs/<timestamp>/input.json"
+    assert record.detail["harness_reason"] == "missing fixture /runs/<timestamp>/input.json"
+    assert record.detail["harness_diagnostic"] == raw

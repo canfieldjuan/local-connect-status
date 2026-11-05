@@ -38,6 +38,7 @@ from fnmatch import fnmatchcase
 from typing import Any
 
 from .catalogue import declared_participants, participants_required
+from .install_gap import valid_link, eligible_for_check
 from .evidence import (
     Record, check_fingerprint, condition_fingerprint, instant_key,
     record_check_fingerprint, record_condition_fingerprint, resolve_check_fingerprint,
@@ -63,7 +64,8 @@ def promotion_records(app: str, row: dict[str, Any], records: list[Record], plat
             and r.platform == platform and row["repo"] in r.participants
             and r.source.get("observed_by", "").strip()
             and app in r.detail.get("members", {})
-            and r.detail["members"][app].get("config") == check_fingerprint(row["promotion"])]
+            and r.detail["members"][app].get("config") == check_fingerprint(row["promotion"])
+            and valid_link(r, app, records)]
 
 
 def matching_promotion(app: str, row: dict[str, Any], records: list[Record], observed: dict[str, Any],
@@ -103,7 +105,7 @@ def validate_promotion_member(app: str, row: dict[str, Any], revision: str, main
     supplied = [by_id[record_id] for record_id in gate_ids]
     for check_id in required_promotion_checks(row["promotion"], paths):
         check = catalogue["checks"][check_id]
-        candidates = [r for r in records if r.source.get("check") == check_id
+        candidates = [r for r in records if eligible_for_check(r) and r.source.get("check") == check_id
                       and r.repo == check["repo"] and r.revision == revision
                       and r.platform == check.get("platform", platform)
                       and resolve_check_fingerprint(record_check_fingerprint(r)) == check_fingerprint(check)]
@@ -301,7 +303,7 @@ def condition_status(
     expected_condition_fingerprint = condition_fingerprint(cond)
     same_check = [
         r for r in records
-        if cond["id"] in r.condition_ids
+        if eligible_for_check(r) and cond["id"] in r.condition_ids
         and r.kind == kind
         and r.source.get("check") == cond["check"]
     ]

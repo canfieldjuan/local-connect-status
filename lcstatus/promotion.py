@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
+import stat
 import subprocess
 import tarfile
 import tomllib
@@ -47,17 +49,39 @@ def package_programs(package: Path, programs: list[str]) -> dict[str, str]:
     to the root. Tar support also lets fixture tests exercise package matching without installs.
     Duplicate, nonregular or missing program members cannot supply an install identity.
     """
-    package = Path(package)
-    with package.open("rb") as stream:
-        magic = stream.read(8)
-    if magic == b"!<arch>\n":
-        result = subprocess.run(["dpkg-deb", "--fsys-tarfile", str(package)],
+    return package_identity(package, programs)[1]
+
+
+def read_regular(path: Path) -> bytes:
+    """Snapshot one regular input; never block on a FIFO or reopen it for interpretation."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("evidence input must be a regular file")
+        content = stream.read()
+        after = os.fstat(stream.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError("evidence input changed while reading")
+        return content
+
+
+def package_identity(package: Path, programs: list[str]) -> tuple[str, dict[str, str]]:
+    content = read_regular(package)
+    return hashlib.sha256(content).hexdigest(), package_programs_bytes(content, programs)
+
+
+def package_programs_bytes(content: bytes, programs: list[str]) -> dict[str, str]:
+    """Interpret precisely the snapshot whose digest supplied the package identity."""
+    if content.startswith(b"!<arch>\n"):
+        result = subprocess.run(["dpkg-deb", "--fsys-tarfile", "-"], input=content,
                                 capture_output=True, timeout=120, check=False)
         if result.returncode:
             raise ValueError("cannot read Debian package payload")
         archive = tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:*")
     else:
-        archive = tarfile.open(package, mode="r:*")
+        archive = tarfile.open(fileobj=io.BytesIO(content), mode="r:*")
     wanted = {str(PurePosixPath(p)).lstrip("/"): p for p in programs}
     hashes: dict[str, str] = {}
     with archive:

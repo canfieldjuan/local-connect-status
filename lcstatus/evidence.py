@@ -447,6 +447,9 @@ class Store:
         the semantic fingerprint collapses onto the same result stored under the whole-dict one.
         A row whose instants are not timezone-aware is refused (ValueError) and never written.
         """
+        if rec.source.get("type") == "promotion_gap":
+            from .install_gap import decode_record
+            decode_record(rec)
         validate_record_instants(rec)
         previous = self.latest_in_series(rec)
         if previous is not None and previous.observation_identity() == rec.observation_identity():
