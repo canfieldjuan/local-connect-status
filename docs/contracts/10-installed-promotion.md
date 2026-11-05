@@ -307,7 +307,7 @@ never saw; it cannot override contrary hashes, omitted states, order or conflict
 ### G3 — Bind installed observations to package evidence and the real fallback
 
 Installed proof and package/source binding are separate facts, joined by exact program hashes.
-The existing `lcstatus/promotion.py:160-199` (`installed_observation`) produces `detail.installed`
+The existing `lcstatus/promotion.py:153-199` (attribution and `installed_observation`) produces `detail.installed`
 and an aware collector time. It supplies installed proof without claiming an unrecorded source revision
 or package. Those still require retained package evidence.
 

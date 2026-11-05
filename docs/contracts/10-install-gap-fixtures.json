@@ -17,6 +17,7 @@
       "installed_receipt=installed-v1 materializes the full closed receipt from the event identity/time, with installed=true.",
       "supplemental_acceptance materializes only source/time/equality/PASS flags and carries no installed hashes.",
       "Package fixtures are deterministic USTAR archives with UTF-8 members, uid/gid/mtime zero, mode 0755 and member order as listed.",
+      "members_utf8 keys are literal relative POSIX archive names; program_hashes keys are absolute installed paths. Write member names exactly as supplied, without stripping or normalizing them.",
       "Observation rows include the admission fields of real Record objects; omitted Record fields use existing defaults.",
       "Per-case observation subsets are synthetic snapshots, not the live store. IDs were minted by the existing Store, including return IDs.",
       "All current candidate gates are assumed valid. Outcomes concern history admission only."
@@ -35,8 +36,8 @@
         "mtime": 0,
         "mode": 493,
         "members_utf8": {
-          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE A eom-email-watcher-desktop\n",
-          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE A eom-mail-engine\n"
+          "usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE A eom-email-watcher-desktop\n",
+          "usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE A eom-mail-engine\n"
         }
       }
     },
@@ -52,8 +53,8 @@
         "mtime": 0,
         "mode": 493,
         "members_utf8": {
-          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE B eom-email-watcher-desktop\n",
-          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE B eom-mail-engine\n"
+          "usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE B eom-email-watcher-desktop\n",
+          "usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE B eom-mail-engine\n"
         }
       }
     },
@@ -69,8 +70,8 @@
         "mtime": 0,
         "mode": 493,
         "members_utf8": {
-          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE C eom-email-watcher-desktop\n",
-          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE C eom-mail-engine\n"
+          "usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE C eom-email-watcher-desktop\n",
+          "usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE C eom-mail-engine\n"
         }
       }
     },
@@ -86,8 +87,8 @@
         "mtime": 0,
         "mode": 493,
         "members_utf8": {
-          "/usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE D eom-email-watcher-desktop\n",
-          "/usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE D eom-mail-engine\n"
+          "usr/bin/eom-email-watcher-desktop": "PUBLIC CONTRACT FIXTURE D eom-email-watcher-desktop\n",
+          "usr/bin/eom-mail-engine": "PUBLIC CONTRACT FIXTURE D eom-mail-engine\n"
         }
       }
     }
