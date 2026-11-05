@@ -44,6 +44,21 @@ def package(path: Path, programs: dict[str, bytes]) -> Path:
     return path
 
 
+def debian_package(root: Path, programs: dict[str, bytes], revision: str | None = None) -> Path:
+    """Build a public fixture with Debian-required permissions, independent of caller umask."""
+    build = root / "deb-tree"
+    control = build / "DEBIAN";control.mkdir(parents=True);control.chmod(0o755)
+    text = "Package: fixture\nVersion: 1\nArchitecture: all\nMaintainer: Fixture <fixture@example.invalid>\nDescription: public fixture\n"
+    if revision is not None:
+        text += "X-Built-From: " + revision + "\n"
+    (control / "control").write_text(text)
+    for name, content in programs.items():
+        path = build / name.lstrip("/");path.parent.mkdir(parents=True, exist_ok=True);path.write_bytes(content)
+    result = root / "fixture.deb"
+    subprocess.run(["dpkg-deb", "--build", str(build), str(result)], capture_output=True, check=True)
+    return result
+
+
 class GitHub:
     def __init__(self):
         self.labels = {}

@@ -16,7 +16,7 @@ from lcstatus.evidence import Record, Store, check_fingerprint, collection_lock
 from lcstatus.promotion import installed_programs, package_identity
 from lcstatus.rules import matching_promotion, validate_promotion_member
 from scripts import record_observation as recorder
-from test_promotion import fixture, args, gates_at, git, package, rows, NOW
+from test_promotion import fixture, args, gates_at, git, package, debian_package, rows, NOW
 
 
 def sha(path):
@@ -50,12 +50,12 @@ def gap_case(fixture, request):
         receipt = f.root / f"installed-{day}.json"
         receipt.write_text(json.dumps({"version": 1, "app": "fixture", "repo": "fixture",
                                       "platform": "linux", "installed": True, **event}))
-        events.append({**event, "package": str(pkg), "receipts": [
+        events.append({**event, "package": str(pkg), "installed_observation_record_ids": [], "receipts": [
             {"format": "installed-v1", "path": str(receipt), "sha256": sha(receipt)}]})
     git(f.mirrors.path("fixture"), "fetch", "origin")
     f.gate_ids = gates_at(f, f.revision)
     f.previous_package = events[-1]["package"]
-    f.payload = {"version": 1, "app": "fixture", "repo": "fixture", "platform": "linux",
+    f.payload = {"version": 2, "app": "fixture", "repo": "fixture", "platform": "linux",
                  "candidate_revision": f.revision,
                  "last_recorded_promotion_id": f.predecessor.record_id,
                  "unrecorded_installs": events, "history_attested_complete": True}
@@ -97,11 +97,35 @@ def assert_refused(f, **changes):
     assert (f.data / "records.jsonl").read_bytes() == before
 
 
-@pytest.mark.parametrize("damage", ["bool-version", "zero-version", "string-version", "incomplete", "empty",
+def test_recorder_rejects_omitted_collector_install(gap_case):
+    f = gap_case
+    first = f.payload["unrecorded_installs"][0]
+    Store(f.data / "records.jsonl").add(Record(
+        kind="installed_observation", repo="fixture", revision="", verdict="pass", platform="linux",
+        source={"type": "installed_program_hashes", "app": "fixture"},
+        detail={"app": "fixture", "installed": {"hashes": first["program_hashes"], "missing": [], "errors": {}}},
+        recorded_at=first["installed_at"]))
+    f.payload["unrecorded_installs"] = f.payload["unrecorded_installs"][1:]
+    assert_refused(f)
+
+
+def test_witnessed_event_cannot_claim_to_be_unobserved(gap_case):
+    f = gap_case
+    event = f.payload["unrecorded_installs"][-1]
+    Store(f.data / "records.jsonl").add(Record(
+        kind="installed_observation", repo="fixture", revision="", verdict="pass", platform="linux",
+        source={"type": "installed_program_hashes", "app": "fixture"},
+        detail={"app": "fixture", "installed": {"hashes": event["program_hashes"], "missing": [], "errors": {}}},
+        recorded_at=event["installed_at"]))
+    assert_refused(f)
+
+
+@pytest.mark.parametrize("damage", ["legacy-version", "bool-version", "zero-version", "string-version", "incomplete", "empty",
     "extra", "missing", "programs", "short-digest", "order", "duplicate", "platform", "candidate", "predecessor", "no-fallback"])
 def test_closed_gap_refuses_before_append(gap_case, damage):
     f = gap_case; p = f.payload
-    if damage == "bool-version": p["version"] = True
+    if damage == "legacy-version": p["version"] = 1
+    elif damage == "bool-version": p["version"] = True
     elif damage == "zero-version": p["version"] = 0
     elif damage == "string-version": p["version"] = "1"
     elif damage == "incomplete": p["history_attested_complete"] = False
@@ -180,9 +204,13 @@ def test_new_recorded_predecessor_refuses_stale_gap(gap_case):
     assert_refused(f)
 
 
-def test_waiting_recorder_rereads_predecessor_after_real_lock(gap_case):
+@pytest.mark.parametrize("update", ["promotion", "collector"])
+def test_waiting_recorder_rereads_predecessor_after_real_lock(gap_case, update):
     from test_record_observation import read_line
-    f = gap_case;f.gap_file.write_text(json.dumps(f.payload))
+    f = gap_case
+    omitted = f.payload["unrecorded_installs"][0]
+    if update == "collector": f.payload["unrecorded_installs"] = f.payload["unrecorded_installs"][1:]
+    f.gap_file.write_text(json.dumps(f.payload))
     catalogue = f.root / "catalogue.json";catalogue.write_text(json.dumps(f.cat))
     command = [sys.executable, str(Path(recorder.__file__)), "--kind", "promotion", "--app", "fixture",
                "--participant", "fixture=" + f.revision, "--package", "fixture=" + str(f.pkg),
@@ -197,11 +225,16 @@ def test_waiting_recorder_rereads_predecessor_after_real_lock(gap_case):
         assert "waiting for the collection lock" in read_line(child.stderr)
         newer = replace(f.predecessor, source={"observed_by": "concurrent fixture human"},
                         recorded_at="2026-10-10T12:04:00Z", record_id="")
+        if update == "collector":
+            newer = Record(kind="installed_observation", repo="fixture", revision="", verdict="pass", platform="linux",
+                source={"type": "installed_program_hashes", "app": "fixture"},
+                detail={"app": "fixture", "installed": {"hashes": omitted["program_hashes"], "missing": [], "errors": {}}},
+                recorded_at=omitted["installed_at"])
         Store(f.data / "records.jsonl").add(newer)
         before = (f.data / "records.jsonl").read_bytes()
         held.close()
         out, err = child.communicate(timeout=20)
-        assert child.returncode == 2 and "stale" in err, (out, err)
+        assert child.returncode == 2 and ("stale" if update == "promotion" else "observed") in err, (out, err)
         assert (f.data / "records.jsonl").read_bytes() == before
     finally:
         held.close()
@@ -307,7 +340,7 @@ print(json.dumps({'match':matched.record_id,'orphan':None if orphan is None else
 
 
 @pytest.mark.parametrize("layout", ["program-map", "named-programs"])
-@pytest.mark.parametrize("damage", [None, "package-only", "not-installed", "source", "ambiguous"])
+@pytest.mark.parametrize("damage", [None, "package-only", "not-installed", "source", "ambiguous", "no-observation"])
 def test_retained_ew_receipt_adapters_are_source_bound(gap_case, layout, damage):
     f = gap_case;payload = copy.deepcopy(f.payload)
     payload.update(app="email-watcher", repo="eom-email-watcher")
@@ -334,11 +367,19 @@ def test_retained_ew_receipt_adapters_are_source_bound(gap_case, layout, damage)
         if format == "ew-acceptance" and damage == "package-only": continue
         path = f.root / (format + ".json");path.write_text(json.dumps(content))
         event["receipts"].append({"format": format, "path": str(path), "sha256": sha(path)})
-    gap = install_gap.Gap.decode(payload)
-    if damage is None:
-        gap.verify_history(f.predecessor, NOW)
+    witness = Record(kind="installed_observation", repo="eom-email-watcher", revision="", verdict="pass", platform="linux",
+                     source={"type": "installed_program_hashes", "app": "email-watcher"},
+                     detail={"app": "email-watcher", "installed": {"hashes": event["program_hashes"], "missing": [], "errors": {}}},
+                     recorded_at=event["installed_at"])
+    event["installed_observation_record_ids"] = [] if damage == "no-observation" else [witness.record_id]
+    base = replace(f.predecessor, detail={"members": {"email-watcher": f.predecessor.detail["members"]["fixture"]}})
+    candidate = {k: "d" * 64 for k in event["program_hashes"]}
+    def verify():
+        install_gap.Gap.decode(payload).verify_history(base, NOW, [base, witness], candidate)
+    if damage in (None, "package-only"):
+        verify()
     else:
-        with pytest.raises(ValueError): gap.verify_history(f.predecessor, NOW)
+        with pytest.raises(ValueError): verify()
 
 
 @pytest.mark.parametrize("damage", ["missing", "wrong-app", "payload", "fallback", "empty-link", "removed-link", "identity", "window", "stale"])
@@ -386,11 +427,7 @@ def test_package_snapshot_is_the_bytes_that_are_interpreted(tmp_path, monkeypatc
 
 
 def test_real_debian_package_snapshot_uses_stdin(tmp_path):
-    build = tmp_path / "build"; (build / "DEBIAN").mkdir(parents=True)
-    (build / "DEBIAN/control").write_text("Package: fixture\nVersion: 1\nArchitecture: all\nMaintainer: Fixture <fixture@example.invalid>\nDescription: fixture only\n")
-    (build / "usr/bin").mkdir(parents=True);(build / "usr/bin/fixture").write_bytes(b"not executable")
-    package_path = tmp_path / "fixture.deb"
-    subprocess.run(["dpkg-deb", "--build", str(build), str(package_path)], check=True, capture_output=True)
+    package_path = debian_package(tmp_path, {"/usr/bin/fixture": b"not executable"})
     digest, hashes = package_identity(package_path, ["/usr/bin/fixture"])
     assert digest == sha(package_path)
     assert hashes == {"/usr/bin/fixture": hashlib.sha256(b"not executable").hexdigest()}
@@ -436,3 +473,33 @@ def test_long_valid_reinstall_history_is_admitted(gap_case):
         extra.append(event)
     f.payload["unrecorded_installs"] = [first, *extra, last]
     assert record_gap(f) == 0
+
+
+@pytest.mark.parametrize("damage", [None, "missing", "hash", "time", "after-gap", "later-tick", "late-backdated"])
+def test_collector_link_is_pure_and_bounded_to_publication(gap_case, damage, monkeypatch):
+    f = gap_case
+    witnesses = []
+    for event in f.payload["unrecorded_installs"]:
+        row = Record(kind="installed_observation", repo="fixture", revision="", verdict="pass", platform="linux",
+            source={"type": "installed_program_hashes", "app": "fixture"},
+            detail={"app": "fixture", "installed": {"hashes": event["program_hashes"], "missing": [], "errors": {}}},
+            recorded_at=event["installed_at"])
+        Store(f.data / "records.jsonl").add(row)
+        event["installed_observation_record_ids"] = [row.record_id]
+        witnesses.append(row.record_id)
+    assert record_gap(f) == 0
+    retained = rows(f)
+    witness = next(r for r in retained if r.record_id == witnesses[0])
+    if damage == "missing": retained.remove(witness)
+    elif damage == "hash": witness.detail["installed"]["hashes"] = {str(f.install): "f" * 64}
+    elif damage == "time": witness.recorded_at = "2026-11-01T00:00:00Z"
+    elif damage == "after-gap":
+        retained.remove(witness);retained.insert(-1, witness)
+    elif damage in ("later-tick", "late-backdated"):
+        later = replace(witness, recorded_at="2026-11-01T00:00:00Z" if damage == "later-tick" else witness.recorded_at,
+                        detail={"app": "fixture", "installed": {"hashes": {str(f.install): "f" * 64}, "missing": [], "errors": {}}}, record_id="")
+        retained.append(later)
+    def no_file(*_): raise AssertionError("stored matching reopened a receipt")
+    monkeypatch.setattr(install_gap, "read_regular", no_file)
+    match = matching_promotion("fixture", f.cat["apps"]["fixture"], retained, installed_programs([str(f.install)]))
+    assert (match is not None) == (damage in (None, "later-tick", "late-backdated"))

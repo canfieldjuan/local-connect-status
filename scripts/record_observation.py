@@ -272,7 +272,8 @@ def record_promotion(args, cat: dict, observed_at: str, data: Path, mirrors_root
                     raise ValueError("package changed before publication")
         for gap_record in gap_records.values():
             gap = install_gap.decode_record(gap_record)
-            gap.verify_history(by_id[gap.last_recorded_promotion_id], gap_record.recorded_at)
+            gap.verify_history(by_id[gap.last_recorded_promotion_id], gap_record.recorded_at, records,
+                               members[gap.app]["program_hashes"], gap_record_id=gap_record.record_id)
             if hashlib.sha256(read_regular(Path(gap_record.source["artifact"]))).hexdigest() != gap_record.source["artifact_sha256"]:
                 raise ValueError("human-reviewed artifact changed")
         if completion:

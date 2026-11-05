@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import subprocess
 
 from .evidence import Record, instant_key
 from .promotion import read_regular, package_programs_bytes
@@ -108,21 +109,31 @@ class Install:
     package_sha256: str
     program_hashes: tuple[tuple[str, str], ...]
     receipts: tuple[Receipt, ...]
+    observation_ids: tuple[str, ...]
     package: str | None
 
     @classmethod
     def decode(cls, value):
-        closed(value, {"revision", "installed_at", "package_sha256", "program_hashes", "receipts"}, {"package"})
+        closed(value, {"revision", "installed_at", "package_sha256", "program_hashes", "receipts",
+                       "installed_observation_record_ids"}, {"package"})
         refs = value["receipts"]
-        if type(refs) is not list or not refs:
-            raise ValueError("installed receipt references must be nonempty")
+        ids = value["installed_observation_record_ids"]
+        if type(refs) is not list or type(ids) is not list:
+            raise ValueError("installed evidence references must be arrays")
+        decoded = tuple(Receipt.decode(r) for r in refs)
+        observed = tuple(hexadecimal(v, 24) for v in ids)
+        if len(observed) != len(set(observed)) or not observed and not any(r.format == "installed-v1" for r in decoded):
+            raise ValueError("event requires collector IDs or hash-bound installed receipt")
+        if not decoded and "package" not in value:
+            raise ValueError("event requires source-bound package evidence")
         return cls(hexadecimal(value["revision"], 40), aware(value["installed_at"]),
                    hexadecimal(value["package_sha256"], 64), programs(value["program_hashes"]),
-                   tuple(Receipt.decode(r) for r in refs), absolute(value["package"]) if "package" in value else None)
+                   decoded, observed, absolute(value["package"]) if "package" in value else None)
 
     def wire(self):
         result = {"revision": self.revision, "installed_at": self.installed_at,
                   "package_sha256": self.package_sha256, "program_hashes": dict(self.program_hashes),
+                  "installed_observation_record_ids": list(self.observation_ids),
                   "receipts": [dict(format=r.format, path=r.path, sha256=r.sha256) for r in self.receipts]}
         if self.package is not None:
             result["package"] = self.package
@@ -142,7 +153,7 @@ class Gap:
     def decode(cls, value):
         closed(value, {"version", "app", "repo", "platform", "candidate_revision",
                        "last_recorded_promotion_id", "unrecorded_installs", "history_attested_complete"})
-        if type(value["version"]) is not int or value["version"] != 1 or value["history_attested_complete"] is not True:
+        if type(value["version"]) is not int or value["version"] != 2 or value["history_attested_complete"] is not True:
             raise ValueError("unsupported gap version or missing human completeness attestation")
         if value["platform"] != "linux":
             raise ValueError("install gaps support linux only")
@@ -154,14 +165,16 @@ class Gap:
             raise ValueError("real previous install requires its retained package")
         times = [instant_key(e.installed_at)[1] for e in events]
         refs = [(r.path, r.sha256) for e in events for r in e.receipts]
-        if any(a >= b for a, b in zip(times, times[1:])) or len(refs) != len(set(refs)):
+        ids = [v for e in events for v in e.observation_ids]
+        if (any(a >= b for a, b in zip(times, times[1:])) or len(refs) != len(set(refs)) or
+                len(ids) != len(set(ids))):
             raise ValueError("duplicate or unordered installed evidence")
         return cls(text(value["app"]), text(value["repo"]), "linux",
                    hexadecimal(value["candidate_revision"], 40),
                    hexadecimal(value["last_recorded_promotion_id"], 24), events)
 
     def wire(self):
-        return {"version": 1, "app": self.app, "repo": self.repo, "platform": self.platform,
+        return {"version": 2, "app": self.app, "repo": self.repo, "platform": self.platform,
                 "candidate_revision": self.candidate_revision,
                 "last_recorded_promotion_id": self.last_recorded_promotion_id,
                 "unrecorded_installs": [e.wire() for e in self.installs], "history_attested_complete": True}
@@ -173,13 +186,83 @@ class Gap:
     def verify_window(self, predecessor, observed_at):
         start = instant_key(predecessor.recorded_at)[1]
         end = instant_key(aware(observed_at))[1]
-        if not start <= instant_key(self.installs[0].installed_at)[1] < end or instant_key(self.previous.installed_at)[1] >= end:
+        if not start < instant_key(self.installs[0].installed_at)[1] < end or instant_key(self.previous.installed_at)[1] >= end:
             raise ValueError("gap history is outside its recorded predecessor/candidate interval")
 
-    def verify_history(self, predecessor, observed_at):
+    def validate_observations(self, predecessor, observed_at, records, candidate_programs, *, gap_record_id=None):
+        """Pure by-ID proof and ordered completeness, shared by writes and retained matching."""
+        self.verify_window(predecessor, observed_at)
+        start = instant_key(aware(predecessor.recorded_at))[1]
+        end = instant_key(aware(observed_at))[1]
+        candidate = programs(candidate_programs)
+        previous = programs(predecessor.detail["members"][self.app]["program_hashes"])
+        indexed = {r.record_id: (i, r) for i, r in enumerate(records)}
+        if len(indexed) != len(records):
+            raise ValueError("ambiguous retained observation IDs")
+        reference_limit = indexed[gap_record_id][0] if gap_record_id in indexed else len(records)
+
+        def identity(row):
+            if (type(row.source) is not dict or type(row.detail) is not dict or
+                    row.kind != "installed_observation" or row.repo != self.repo or row.platform != self.platform or
+                    row.source.get("type") != "installed_program_hashes" or row.source.get("app") != self.app or
+                    row.detail.get("app") != self.app):
+                raise ValueError("installed observation attribution mismatch")
+            installed = closed(row.detail.get("installed"), {"hashes", "missing", "errors"})
+            if type(installed["missing"]) is not list or type(installed["errors"]) is not dict:
+                raise ValueError("invalid installed observation result")
+            if installed["missing"] or installed["errors"]:
+                return None
+            return programs(installed["hashes"])
+
+        samples = []
+        for i, row in enumerate(records):
+            if (row.kind == "installed_observation" and row.repo == self.repo and row.platform == self.platform and
+                    type(row.source) is dict and
+                    row.source.get("type") == "installed_program_hashes" and row.source.get("app") == self.app):
+                at = instant_key(aware(row.recorded_at))[1]
+                if start < at < end:
+                    value = identity(row)
+                    if value is not None:
+                        samples.append((at, i, value))
+        samples.sort()
+        if any(a[0] == b[0] and a[2] != b[2] for a, b in zip(samples, samples[1:])):
+            raise ValueError("conflicting installed identities at one instant")
+        boundary = end
+        for at, _, value in reversed(samples):
+            if value != candidate:
+                break
+            boundary = at
+        times = [instant_key(e.installed_at)[1] for e in self.installs]
+        if times[-1] >= boundary:
+            raise ValueError("gap event reaches the terminal candidate boundary")
+        for index, event in enumerate(self.installs):
+            upper = times[index + 1] if index + 1 < len(times) else boundary
+            for record_id in event.observation_ids:
+                if record_id not in indexed or indexed[record_id][0] >= reference_limit:
+                    raise ValueError("installed observation is missing or was retained after the gap")
+                row = indexed[record_id][1]
+                at = instant_key(aware(row.recorded_at))[1]
+                if not start < at or not times[index] <= at < upper or identity(row) != event.program_hashes:
+                    raise ValueError("installed observation hash/time binding mismatch")
+        # Time intervals preserve repeated transitions, including an unseen event between equal samples.
+        event_index = -1
+        for at, _, value in samples:
+            if at >= boundary:
+                continue
+            while event_index + 1 < len(times) and times[event_index + 1] <= at:
+                event_index += 1
+            if event_index < 0:
+                if value != previous:
+                    raise ValueError("observed installed identity omitted from gap")
+            elif value != self.installs[event_index].program_hashes:
+                raise ValueError("observed installed identity omitted or reordered")
+            elif not self.installs[event_index].observation_ids:
+                raise ValueError("collector-witnessed event requires retained observation IDs")
+
+    def verify_history(self, predecessor, observed_at, records, candidate_programs, *, gap_record_id=None):
         self.verify_window(predecessor, observed_at)
         for event in self.installs:
-            installed = package_seen = acceptance = False
+            installed = package_seen = False
             for ref in event.receipts:
                 receipt = ref.read()
                 if ref.format == "installed-v1":
@@ -199,7 +282,6 @@ class Gap:
                         if (receipt.get("installed_bytes_match") is not True or receipt.get("linux_installed_acceptance") != "PASS"
                                 or aware(receipt.get("verified_at")) != event.installed_at):
                             raise ValueError("receipt does not establish installed-byte equality")
-                        acceptance = True
                     else:
                         old_fields = {"package_sha256", "program_hashes"}
                         new_fields = {"deb_sha256", "desktop_sha256", "engine_sha256"}
@@ -224,13 +306,22 @@ class Gap:
                         if digest != event.package_sha256 or programs(hashes) != event.program_hashes:
                             raise ValueError("package receipt identity mismatch")
                         package_seen = True
-            if not (installed or package_seen and acceptance):
-                raise ValueError("expected package hashes alone are not installed evidence")
             if event.package is not None:
                 raw = read_regular(Path(event.package))
                 if (hashlib.sha256(raw).hexdigest() != event.package_sha256 or
                         package_programs_bytes(raw, list(dict(event.program_hashes))) != dict(event.program_hashes)):
                     raise ValueError("retained fallback/package identity mismatch")
+                if not installed and not package_seen:
+                    if not raw.startswith(b"!<arch>\n"):
+                        raise ValueError("package requires source-bound receipt")
+                    result = subprocess.run(["dpkg-deb", "--field", "-", "X-Built-From"], input=raw,
+                                            capture_output=True, timeout=120, check=False)
+                    if result.returncode or result.stdout.decode().strip() != event.revision:
+                        raise ValueError("package source revision mismatch")
+                    package_seen = True
+            if not installed and not package_seen:
+                raise ValueError("event lacks source-bound package evidence")
+        self.validate_observations(predecessor, observed_at, records, candidate_programs, gap_record_id=gap_record_id)
 
 
 SOURCE_KEYS = {"type", "observed_by", "observed_at", "artifact", "artifact_sha256", "install_gap", "gate_record_ids"}
@@ -299,7 +390,8 @@ def valid_link(promotion, app, records):
             base_index, base = indexed[gap.last_recorded_promotion_id]
             promotion_index = indexed[promotion.record_id][0]
             latest = latest_promotion(app, gap.platform, records[:promotion_index])
-            gap.verify_window(base, record.recorded_at)
+            gap.validate_observations(base, record.recorded_at, records[:promotion_index], member["program_hashes"],
+                                      gap_record_id=record.record_id)
             if not (base_index < gap_index < promotion_index and latest is not None and latest.record_id == base.record_id and
                     base.platform == promotion.platform == gap.platform and base.source.get("observed_by", "").strip() and
                     base.detail["members"][app]["repo"] == gap.repo and
